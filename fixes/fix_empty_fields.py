@@ -2,6 +2,9 @@ import os
 import sqlite3
 import sys
 
+# 将项目根目录加入 sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # 导入公共配置和公共元数据解析函数
 from config import DB_PATHS
 from utils.metadata_parser import parse_link_metadata

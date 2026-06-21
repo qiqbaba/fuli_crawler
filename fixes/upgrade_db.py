@@ -1,6 +1,10 @@
 import os
 import re
+import sys
 import sqlite3
+
+# 将项目根目录加入 sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 兼容的数据库路径列表
 DB_PATHS = [

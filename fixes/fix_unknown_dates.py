@@ -6,6 +6,9 @@ import random
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
 
+# 将项目根目录加入 sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from config import get_db_path, USER_AGENTS
 from utils.date_parser import parse_date
 

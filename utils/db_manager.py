@@ -1,11 +1,13 @@
 import sqlite3
+import threading
 
 class DBManager:
     """本地 SQLite 数据库管理器（本地开发使用）"""
     def __init__(self, db_path):
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path, isolation_level=None)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
         self.cursor = self.conn.cursor()
+        self.lock = threading.Lock()
         self.init_db()
 
     def init_db(self):
@@ -46,8 +48,9 @@ class DBManager:
 
     def check_url_exists(self, url):
         """检查 URL 是否已存在于数据库"""
-        self.cursor.execute("SELECT 1 FROM resources WHERE url = ?", (url,))
-        return self.cursor.fetchone() is not None
+        with self.lock:
+            self.cursor.execute("SELECT 1 FROM resources WHERE url = ?", (url,))
+            return self.cursor.fetchone() is not None
 
     def insert_resource(self, data):
         """
@@ -56,41 +59,44 @@ class DBManager:
             True: 写入成功
             False: 因为已存在被 IGNORE
         """
-        self.cursor.execute('''
-            INSERT OR IGNORE INTO resources (
-                title, publish_time, category, resource_link, pikpak_link, 
-                size, resource_format, link_type, url, pdf_path, source
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            data.get('title'),
-            data.get('publish_time'),
-            data.get('category'),
-            data.get('resource_link'),
-            data.get('pikpak_link'),
-            data.get('size'),
-            data.get('resource_format'),
-            data.get('link_type', ''),
-            data.get('url'),
-            data.get('pdf_path', ''),
-            data.get('source')
-        ))
-        
-        if self.cursor.rowcount == 0:
-            return False
-        return True
+        with self.lock:
+            self.cursor.execute('''
+                INSERT OR IGNORE INTO resources (
+                    title, publish_time, category, resource_link, pikpak_link, 
+                    size, resource_format, link_type, url, pdf_path, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                data.get('title'),
+                data.get('publish_time'),
+                data.get('category'),
+                data.get('resource_link'),
+                data.get('pikpak_link'),
+                data.get('size'),
+                data.get('resource_format'),
+                data.get('link_type', ''),
+                data.get('url'),
+                data.get('pdf_path', ''),
+                data.get('source')
+            ))
+            
+            if self.cursor.rowcount == 0:
+                return False
+            return True
 
     def commit(self):
         """手动提交"""
-        self.conn.commit()
+        with self.lock:
+            self.conn.commit()
 
     def close(self):
         """关闭数据库连接"""
-        if self.conn:
-            try:
-                self.conn.commit()
-            except:
-                pass
-            self.conn.close()
+        with self.lock:
+            if self.conn:
+                try:
+                    self.conn.commit()
+                except:
+                    pass
+                self.conn.close()
 
 
 class SupabaseDBManager:

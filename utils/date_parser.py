@@ -17,7 +17,7 @@ def parse_date(date_str):
         return year, f"{year}-{month}-{day}"
         
     # 格式2: X个月前
-    match_month_ago = re.search(r'(\d+)\s*个月前[（$](\d{1,2})[^\d]+(\d{1,2})[）$]?', date_str)
+    match_month_ago = re.search(r'(\d+)\s*个月前[（(]?(\d{1,2})[^\d]+(\d{1,2})[）)]?', date_str)
     if match_month_ago:
         months_ago = int(match_month_ago.group(1))
         month = match_month_ago.group(2).zfill(2)

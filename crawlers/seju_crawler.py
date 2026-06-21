@@ -1,5 +1,6 @@
 import os
 import re
+import threading
 import time
 import random
 from urllib.parse import urlparse, urljoin
@@ -19,24 +20,33 @@ class SejuCrawler(BaseCrawler):
         super().__init__(db_manager, "seju")
         self.base_url = "https://seju.life/page/{}/"
         self.target_domain = "seju.life"
-        self.playwright = None
-        self.browser = None
-        self.context = None
-        self.list_page = None
         self.r2_uploader = None
+        self.thread_local = threading.local()
+        self._active_resources = []
+        self._resources_lock = threading.Lock()
+
+    def _get_thread_resources(self):
+        """获取当前线程特有的 Playwright, Browser 和 Context"""
+        if not hasattr(self.thread_local, "playwright"):
+            p = sync_playwright().start()
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent=random.choice(USER_AGENTS),
+                viewport={'width': 1920, 'height': 1080}
+            )
+            context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            self.thread_local.playwright = p
+            self.thread_local.browser = browser
+            self.thread_local.context = context
+            
+            with self._resources_lock:
+                self._active_resources.append((p, browser, context))
+                
+        return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
 
     def on_start(self):
-        """初始化 Playwright 环境 & R2 上传器"""
-        self.playwright = sync_playwright().start()
-        self.browser = self.playwright.chromium.launch(headless=True)
-        self.context = self.browser.new_context(
-            user_agent=random.choice(USER_AGENTS),
-            viewport={'width': 1920, 'height': 1080}
-        )
-        self.context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        self.list_page = self.context.new_page()
-
-        # 初始化 R2 上传器（仅在环境变量配置后才启用）
+        """初始化 R2 上传器"""
         self.r2_uploader = get_r2_uploader()
         if self.r2_uploader:
             print("[*] Cloudflare R2 上传器已启用")
@@ -47,17 +57,19 @@ class SejuCrawler(BaseCrawler):
                 print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录")
 
     def on_finish(self):
-        """释放 Playwright 资源"""
-        if self.browser:
-            try:
-                self.browser.close()
-            except Exception as e:
-                print(f"[-] 关闭浏览器失败: {e}")
-        if self.playwright:
-            try:
-                self.playwright.stop()
-            except Exception as e:
-                print(f"[-] 停止 Playwright 失败: {e}")
+        """释放所有线程的 Playwright 资源"""
+        print("[*] 正在释放所有线程的 Playwright 资源...")
+        with self._resources_lock:
+            for p, browser, context in self._active_resources:
+                try:
+                    browser.close()
+                except Exception as e:
+                    print(f"[-] 关闭浏览器失败: {e}")
+                try:
+                    p.stop()
+                except Exception as e:
+                    print(f"[-] 停止 Playwright 失败: {e}")
+            self._active_resources.clear()
         self.db_manager.commit()
 
     def fetch_list_page(self, page_num):
@@ -65,9 +77,12 @@ class SejuCrawler(BaseCrawler):
         list_url = self.base_url.format(page_num)
         print(f"[*] 正在访问列表页: {list_url}")
         try:
-            self.list_page.goto(list_url, timeout=60000, wait_until="domcontentloaded")
+            _, _, context = self._get_thread_resources()
+            if not hasattr(self.thread_local, "list_page") or self.thread_local.list_page.is_closed():
+                self.thread_local.list_page = context.new_page()
+            self.thread_local.list_page.goto(list_url, timeout=60000, wait_until="domcontentloaded")
             time.sleep(random.uniform(2, 4))
-            return self.list_page
+            return self.thread_local.list_page
         except Exception as e:
             print(f"[-] 列表页 {list_url} 加载失败: {e}")
             return None
@@ -153,7 +168,8 @@ class SejuCrawler(BaseCrawler):
 
         sub_page = None
         try:
-            sub_page = self.context.new_page()
+            _, _, context = self._get_thread_resources()
+            sub_page = context.new_page()
             sub_page.goto(sub_url, timeout=60000, wait_until="domcontentloaded")
             sub_page.wait_for_load_state("load", timeout=10000)
             time.sleep(random.uniform(1.5, 3.5))
