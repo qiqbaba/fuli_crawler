@@ -1,6 +1,7 @@
 import sqlite3
 
 class DBManager:
+    """本地 SQLite 数据库管理器（本地开发使用）"""
     def __init__(self, db_path):
         self.db_path = db_path
         self.conn = sqlite3.connect(db_path, isolation_level=None)
@@ -39,7 +40,6 @@ class DBManager:
             try:
                 self.cursor.execute(f"ALTER TABLE resources ADD COLUMN {col_name} {col_type}")
             except sqlite3.OperationalError:
-                # 列已存在，忽略
                 pass
                 
         self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_url ON resources(url)")
@@ -80,7 +80,7 @@ class DBManager:
         return True
 
     def commit(self):
-        """手动提交（防止部分操作需要手动提交）"""
+        """手动提交"""
         self.conn.commit()
 
     def close(self):
@@ -91,3 +91,71 @@ class DBManager:
             except:
                 pass
             self.conn.close()
+
+
+class SupabaseDBManager:
+    """Supabase PostgreSQL 数据库管理器（云端 GitHub Actions 使用）"""
+
+    def __init__(self, supabase_url, supabase_key):
+        from supabase import create_client
+        self.client = create_client(supabase_url, supabase_key)
+        self.table = "resources"
+        print(f"[*] 已连接 Supabase: {supabase_url}")
+
+    def check_url_exists(self, url):
+        """检查 URL 是否已存在于 Supabase 表中"""
+        try:
+            resp = (
+                self.client.table(self.table)
+                .select("id")
+                .eq("url", url)
+                .limit(1)
+                .execute()
+            )
+            return len(resp.data) > 0
+        except Exception as e:
+            print(f"[-] Supabase check_url_exists 失败: {e}")
+            return False
+
+    def insert_resource(self, data):
+        """
+        向 Supabase 表写入数据字典（upsert，url 为唯一键）
+        返回：
+            True: 写入成功（新记录）
+            False: 已存在（被 ignore）或写入失败
+        """
+        record = {
+            "title":           data.get("title"),
+            "publish_time":    data.get("publish_time"),
+            "category":        data.get("category"),
+            "resource_link":   data.get("resource_link"),
+            "pikpak_link":     data.get("pikpak_link"),
+            "size":            data.get("size"),
+            "resource_format": data.get("resource_format"),
+            "link_type":       data.get("link_type", ""),
+            "url":             data.get("url"),
+            "pdf_path":        data.get("pdf_path", ""),
+            "source":          data.get("source"),
+        }
+        try:
+            # 使用 upsert + ignore_duplicates=True 实现幂等插入
+            resp = (
+                self.client.table(self.table)
+                .upsert(record, on_conflict="url", ignore_duplicates=True)
+                .execute()
+            )
+            # 若 data 为空列表，表示已存在被忽略
+            if resp.data:
+                return True
+            return False
+        except Exception as e:
+            print(f"[-] Supabase insert_resource 失败: {e}")
+            return False
+
+    def commit(self):
+        """兼容接口，Supabase 自动提交，此处为空操作"""
+        pass
+
+    def close(self):
+        """兼容接口，Supabase HTTP 无需显式关闭"""
+        pass

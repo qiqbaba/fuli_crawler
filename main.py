@@ -1,7 +1,7 @@
 import sys
 import argparse
-from config import get_db_path
-from utils.db_manager import DBManager
+from config import get_db_path, use_supabase, SUPABASE_URL, SUPABASE_KEY
+from utils.db_manager import DBManager, SupabaseDBManager
 from crawlers.seju_crawler import SejuCrawler
 from crawlers.u3c3_crawler import U3c3Crawler
 
@@ -23,7 +23,7 @@ def main():
         help="指定运行哪一个网站的爬虫 (seju 或 u3c3)"
     )
     
-    # 互斥参数：测试模式或正式爬取模式必须选择一个（默认是测试模式，为了防止手误直接开爬）
+    # 互斥参数：测试模式或正式爬取模式
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument(
         "--test", "-t",
@@ -52,10 +52,14 @@ def main():
     
     args = parser.parse_args()
     
-    # 获取数据库路径并初始化
-    db_path = get_db_path()
-    print(f"[*] 正在初始化数据库管理，使用数据库文件: {db_path}")
-    db_manager = DBManager(db_path)
+    # 根据环境变量自动选择数据库后端
+    if use_supabase():
+        print(f"[*] 检测到 Supabase 配置，使用 Supabase PostgreSQL 数据库")
+        db_manager = SupabaseDBManager(SUPABASE_URL, SUPABASE_KEY)
+    else:
+        db_path = get_db_path()
+        print(f"[*] 未检测到 Supabase 配置，使用本地 SQLite 数据库: {db_path}")
+        db_manager = DBManager(db_path)
     
     # 动态匹配爬虫
     crawler = None
@@ -76,9 +80,6 @@ def main():
     start_page = args.start
     end_page = args.end if args.end is not None else default_end
     
-    # 判断运行模式
-    # 如果用户显式传入了 --crawl，则 args.test 会因为互斥组自动为 False
-    # 如果没有传 --crawl，根据互斥组默认值，args.test 将会是 True
     is_test = args.test
     if args.crawl:
         is_test = False

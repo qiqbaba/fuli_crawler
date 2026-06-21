@@ -1,0 +1,55 @@
+name: 定时爬虫任务
+
+on:
+  schedule:
+    # 每天 UTC 18:00 = 北京时间次日凌晨 02:00
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    # 允许在 GitHub 页面手动触发
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 最长运行 6 小时
+
+    env:
+      SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:          ${{ secrets.SUPABASE_KEY }}
+      R2_ACCOUNT_ID:         ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID:      ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY:  ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET_NAME:        ${{ secrets.R2_BUCKET_NAME }}
+      R2_ENDPOINT_URL:       ${{ secrets.R2_ENDPOINT_URL }}
+      # 云端临时 PDF 目录（上传 R2 后自动删除）
+      PDF_BASE_DIR:          /tmp/seju_pdfs
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装 Python 依赖
+        run: pip install -r requirements.txt
+
+      - name: 安装 Playwright Chromium 浏览器
+        run: playwright install chromium --with-deps
+
+      - name: 创建临时 PDF 目录
+        run: mkdir -p /tmp/seju_pdfs
+
+      - name: 运行 seju 爬虫
+        run: python main.py --crawler seju --crawl
+        continue-on-error: true  # seju 失败不影响 u3c3 执行
+
+      - name: 运行 u3c3 爬虫
+        run: python main.py --crawler u3c3 --crawl
+        continue-on-error: true
+
+      - name: 清理临时 PDF 目录
+        if: always()
+        run: rm -rf /tmp/seju_pdfs

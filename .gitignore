@@ -28,3 +28,10 @@ Thumbs.db
 
 # PDF output
 pdf/
+
+# 本地环境变量（含密钥，禁止提交）
+.env
+
+# 日志
+logs/
+*.log
