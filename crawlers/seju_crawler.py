@@ -4,7 +4,7 @@ import time
 import random
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
-from config import USER_AGENTS
+from config import USER_AGENTS, is_local_mode
 from crawlers.base_crawler import BaseCrawler
 from utils.r2_uploader import get_r2_uploader
 
@@ -41,7 +41,10 @@ class SejuCrawler(BaseCrawler):
         if self.r2_uploader:
             print("[*] Cloudflare R2 上传器已启用")
         else:
-            print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录")
+            if is_local_mode():
+                print("[*] 本地模式已激活，PDF 将保存到本地目录")
+            else:
+                print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录")
 
     def on_finish(self):
         """释放 Playwright 资源"""

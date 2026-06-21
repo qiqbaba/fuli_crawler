@@ -1,6 +1,6 @@
 import sys
 import argparse
-from config import get_db_path, use_supabase, SUPABASE_URL, SUPABASE_KEY
+from config import get_db_path, use_supabase, SUPABASE_URL, SUPABASE_KEY, is_local_mode
 from utils.db_manager import DBManager, SupabaseDBManager
 from crawlers.seju_crawler import SejuCrawler
 from crawlers.u3c3_crawler import U3c3Crawler
@@ -18,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description="多网站通用数据爬虫统一入口")
     parser.add_argument(
         "--crawler", "-c",
-        required=True,
+        required=False,
         choices=["seju", "u3c3"],
         help="指定运行哪一个网站的爬虫 (seju 或 u3c3)"
     )
@@ -28,13 +28,13 @@ def main():
     mode_group.add_argument(
         "--test", "-t",
         action="store_true",
-        default=True,
-        help="运行测试模式，提取前 5 条测试数据解析并输出，不入库 (默认激活)"
+        default=False,
+        help="运行测试模式，提取前 5 条测试数据解析并输出，不入库"
     )
     mode_group.add_argument(
         "--crawl",
         action="store_true",
-        help="运行正式爬取模式，保存数据至数据库"
+        help="运行正式爬取模式，保存数据至数据库 (默认激活)"
     )
     
     parser.add_argument(
@@ -49,16 +49,45 @@ def main():
         default=None,
         help="结束页码 (seju默认: 4, u3c3默认: 20)"
     )
+    parser.add_argument(
+        "--mode", "-m",
+        choices=["auto", "local", "cloud"],
+        default="auto",
+        help="运行模式: auto (Action环境为cloud, 否则为local), local (强制本地模式), cloud (强制云端模式) (默认: auto)"
+    )
     
     args = parser.parse_args()
     
-    # 根据环境变量自动选择数据库后端
+    # 如果没有指定 --crawler，进行交互式交互询问
+    if not args.crawler:
+        print("[*] 未通过命令行指定爬虫模块，请选择要运行的爬虫：")
+        print("    1. seju (默认)")
+        print("    2. u3c3")
+        try:
+            choice = input("请输入序号 [1/2] (直接回车默认 1): ").strip()
+            if choice == "2":
+                args.crawler = "u3c3"
+            else:
+                args.crawler = "seju"
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] 运行已取消")
+            sys.exit(0)
+    
+    # 设定全局运行模式
+    if args.mode != "auto":
+        from config import set_run_mode
+        set_run_mode(args.mode)
+    
+    # 根据环境变量和模式自动选择数据库后端
     if use_supabase():
         print(f"[*] 检测到 Supabase 配置，使用 Supabase PostgreSQL 数据库")
         db_manager = SupabaseDBManager(SUPABASE_URL, SUPABASE_KEY)
     else:
         db_path = get_db_path()
-        print(f"[*] 未检测到 Supabase 配置，使用本地 SQLite 数据库: {db_path}")
+        if is_local_mode():
+            print(f"[*] 本地模式已激活，使用本地 SQLite 数据库: {db_path}")
+        else:
+            print(f"[*] 未检测到 Supabase 配置，使用本地 SQLite 数据库: {db_path}")
         db_manager = DBManager(db_path)
     
     # 动态匹配爬虫

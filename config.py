@@ -7,6 +7,24 @@ try:
 except ImportError:
     pass
 
+# ========== 运行模式配置 ==========
+_force_mode = None  # 可选值为 'local' 或 'cloud'
+
+def set_run_mode(mode):
+    """设置运行模式（通常由 main.py 命令行参数指定）"""
+    global _force_mode
+    if mode in ('local', 'cloud'):
+        _force_mode = mode
+
+def is_local_mode():
+    """判断当前是否为本地模式"""
+    if _force_mode == 'local':
+        return True
+    if _force_mode == 'cloud':
+        return False
+    # 默认 auto 模式：如果未检测到 GitHub Actions 环境，则判定为本地模式
+    return os.environ.get("GITHUB_ACTIONS") != "true"
+
 # ========== 数据库配置 ==========
 # 优先读取环境变量（云端运行）；若无则使用本地 SQLite 路径（本地开发）
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -28,6 +46,8 @@ def get_db_path():
 
 def use_supabase():
     """判断是否使用 Supabase（通过环境变量是否配置来决定）"""
+    if is_local_mode():
+        return False
     return bool(SUPABASE_URL and SUPABASE_KEY)
 
 # ========== Cloudflare R2 配置 ==========
@@ -39,10 +59,29 @@ R2_ENDPOINT_URL    = os.environ.get("R2_ENDPOINT_URL", "")
 
 def use_r2():
     """判断是否使用 Cloudflare R2 存储 PDF"""
+    if is_local_mode():
+        return False
     return bool(R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY and R2_BUCKET_NAME and R2_ENDPOINT_URL)
 
-# PDF 本地临时存储目录（云端使用 /tmp，本地使用本地路径）
-PDF_BASE_DIR = os.environ.get("PDF_BASE_DIR", r"d:\seju\pdf")
+# PDF 本地存储目录
+def _get_default_pdf_base_dir():
+    pdf_dir = os.environ.get("PDF_BASE_DIR")
+    if pdf_dir:
+        return pdf_dir
+    # 否则，如果是本地模式，检查默认的几个备选路径
+    _LOCAL_PDF_PATHS = [
+        r"d:\programme\seju\pdf",
+        r"d:\seju\pdf"
+    ]
+    for path in _LOCAL_PDF_PATHS:
+        drive = os.path.splitdrive(path)[0]
+        if drive and os.path.exists(drive):
+            return path
+    # 默认 fallback 到当前目录下的 pdf 子目录
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(current_dir, "pdf")
+
+PDF_BASE_DIR = _get_default_pdf_base_dir()
 
 # ========== 反爬 User-Agent 列表 ==========
 USER_AGENTS = [

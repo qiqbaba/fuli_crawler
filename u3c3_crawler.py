@@ -17,9 +17,9 @@ def main():
     db_manager = DBManager(db_path)
     crawler = U3c3Crawler(db_manager)
     
-    is_test = True
-    if len(sys.argv) > 1 and sys.argv[1] == '--crawl':
-        is_test = False
+    is_test = False
+    if len(sys.argv) > 1 and sys.argv[1] == '--test':
+        is_test = True
         
     start = 1
     end = 12865
