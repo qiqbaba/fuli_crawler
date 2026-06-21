@@ -47,7 +47,7 @@ def main():
         "--end",
         type=int,
         default=None,
-        help="结束页码 (seju默认: 56, u3c3默认: 12865)"
+        help="结束页码 (seju默认: 4, u3c3默认: 20)"
     )
     
     args = parser.parse_args()
@@ -67,10 +67,10 @@ def main():
     
     if args.crawler == "seju":
         crawler = SejuCrawler(db_manager)
-        default_end = 56
+        default_end = 4
     elif args.crawler == "u3c3":
         crawler = U3c3Crawler(db_manager)
-        default_end = 12865
+        default_end = 20
         
     if crawler is None:
         print(f"[-] 找不到指定的爬虫: {args.crawler}")
