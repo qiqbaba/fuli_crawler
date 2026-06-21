@@ -35,6 +35,8 @@ _LOCAL_DB_PATHS = [
     r"d:\programme\seju\all_data.db",
     r"d:\seju\all_data.db"
 ]
+DB_PATHS = _LOCAL_DB_PATHS
+
 
 def get_db_path():
     """获取有效的本地 SQLite 数据库路径（仅在未配置 Supabase 时使用）"""
@@ -74,8 +76,7 @@ def _get_default_pdf_base_dir():
         r"d:\seju\pdf"
     ]
     for path in _LOCAL_PDF_PATHS:
-        drive = os.path.splitdrive(path)[0]
-        if drive and os.path.exists(drive):
+        if os.path.exists(path):
             return path
     # 默认 fallback 到当前目录下的 pdf 子目录
     current_dir = os.path.dirname(os.path.abspath(__file__))

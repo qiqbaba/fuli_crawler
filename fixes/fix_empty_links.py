@@ -6,6 +6,9 @@ import random
 import sqlite3
 from playwright.sync_api import sync_playwright
 
+# 将项目根目录加入 sys.path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from config import get_db_path, USER_AGENTS
 
 resource_patterns = [

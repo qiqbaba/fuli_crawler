@@ -80,6 +80,7 @@ class BaseCrawler:
         self.on_start()
         
         consecutive_count = 0
+        max_workers = 3 if self.source_name == "seju" else 5
         
         try:
             if is_test:
@@ -116,6 +117,8 @@ class BaseCrawler:
                 print("\n[+] 测试完毕。")
                 return
 
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
             # 正式爬取模式
             for page_num in range(start_page, end_page + 1):
                 print(f"\n================ 正在抓取第 {page_num}/{end_page} 页 ================")
@@ -132,41 +135,78 @@ class BaseCrawler:
                 
                 print(f"[+] 本页共解析到 {len(raw_items)} 条记录。")
                 
-                inserted_count = 0
+                # 1. 预检查过滤：在主线程进行快速去重校验，同时更新连续计数和判断早停条件
+                items_to_process = []
                 skipped_count = 0
+                early_stop_triggered = False
                 
                 for idx, raw_item in enumerate(raw_items, 1):
-                    res = self.process_sub_page_if_needed(raw_item, idx)
-                    if not res:
-                        continue
-                    is_existing, data = res
-                    if not data:
-                        continue
+                    url = raw_item if isinstance(raw_item, str) else raw_item.get('url')
+                    is_existing = self.db_manager.check_url_exists(url)
                     
                     if is_existing:
                         skipped_count += 1
                         consecutive_count += 1
+                        print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
                         print(f"[*] 连续发现已存在数据: {consecutive_count}/{self.max_consecutive_existing}")
                         if consecutive_count >= self.max_consecutive_existing:
                             print(f"\n[触发停止条件] 连续 {self.max_consecutive_existing} 条数据已存在，停止处理当前页！")
+                            early_stop_triggered = True
                             break
                     else:
-                        # 尝试写入数据库
+                        items_to_process.append((idx, raw_item))
+                        consecutive_count = 0  # 发现新数据，重置连续已存在计数
+                
+                if not items_to_process:
+                    print(f"[+] 页面 {page_num} 所有项均已被跳过。")
+                    if early_stop_triggered or consecutive_count >= self.max_consecutive_existing:
+                        print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
+                        break
+                    continue
+                
+                print(f"[*] 开始并发处理 {len(items_to_process)} 条新纪录 (并发线程数: {max_workers})...")
+                
+                inserted_count = 0
+                results = []
+                
+                # 2. 使用线程池并发抓取与解析子网页
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # 提交任务，并记录索引
+                    future_to_idx = {
+                        executor.submit(self.process_sub_page_if_needed, raw_item, idx): idx
+                        for idx, raw_item in items_to_process
+                    }
+                    
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        try:
+                            res = future.result()
+                            if res:
+                                _, data = res
+                                if data:
+                                    results.append(data)
+                        except Exception as e:
+                            print(f"[-] 线程处理索引为 [{idx}] 的项目时发生异常: {e}")
+                
+                # 3. 主线程顺序入库并处理早停
+                if results:
+                    print(f"[*] 正在写入 {len(results)} 条新纪录到数据库...")
+                    for data in results:
                         success = self.db_manager.insert_resource(data)
                         if success:
                             inserted_count += 1
-                            consecutive_count = 0  # 写入新数据，计数清零
+                            consecutive_count = 0  # 成功写入一条新数据，计数重置
                         else:
                             skipped_count += 1
                             consecutive_count += 1
-                            print(f"[*] 连续发现已存在数据 (DB IGNORE): {consecutive_count}/{self.max_consecutive_existing}")
+                            print(f"[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
                             if consecutive_count >= self.max_consecutive_existing:
-                                print(f"\n[触发停止条件] 连续 {self.max_consecutive_existing} 条数据已存在，停止当前页处理！")
+                                early_stop_triggered = True
                                 break
                                 
                 print(f"[+] 页面 {page_num} 处理完成：写入 {inserted_count} 条，跳过 {skipped_count} 条。")
                 
-                if consecutive_count >= self.max_consecutive_existing:
+                if early_stop_triggered or consecutive_count >= self.max_consecutive_existing:
                     print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                     break
                     
