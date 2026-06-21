@@ -16,6 +16,8 @@ class U3c3Crawler(BaseCrawler):
     def __init__(self, db_manager):
         super().__init__(db_manager, "u3c3")
         self.base_url = "https://u3c3.com/?p={}"
+        self.max_consecutive_existing = None
+        self.max_consecutive_duplicate_pages = 3
 
     def fetch_list_page(self, page_num):
         """抓取页面 HTML 内容，包含重试逻辑"""

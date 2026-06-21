@@ -8,6 +8,7 @@ class BaseCrawler:
         self.db_manager = db_manager
         self.source_name = source_name
         self.max_consecutive_existing = 20
+        self.max_consecutive_duplicate_pages = None
 
     def on_start(self):
         """生命周期钩子：爬网开始前（子类可选覆盖）"""
@@ -80,6 +81,7 @@ class BaseCrawler:
         self.on_start()
         
         consecutive_count = 0
+        consecutive_duplicate_pages = 0
         max_workers = 3 if self.source_name == "seju" else 5
         
         try:
@@ -146,20 +148,35 @@ class BaseCrawler:
                     
                     if is_existing:
                         skipped_count += 1
-                        consecutive_count += 1
-                        print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
-                        print(f"[*] 连续发现已存在数据: {consecutive_count}/{self.max_consecutive_existing}")
-                        if consecutive_count >= self.max_consecutive_existing:
-                            print(f"\n[触发停止条件] 连续 {self.max_consecutive_existing} 条数据已存在，停止处理当前页！")
-                            early_stop_triggered = True
-                            break
+                        if self.max_consecutive_existing is not None:
+                            consecutive_count += 1
+                            print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
+                            print(f"[*] 连续发现已存在数据: {consecutive_count}/{self.max_consecutive_existing}")
+                            if consecutive_count >= self.max_consecutive_existing:
+                                print(f"\n[触发停止条件] 连续 {self.max_consecutive_existing} 条数据已存在，停止处理当前页！")
+                                early_stop_triggered = True
+                                break
+                        else:
+                            print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
                     else:
                         items_to_process.append((idx, raw_item))
                         consecutive_count = 0  # 发现新数据，重置连续已存在计数
                 
+                # 检查整页重复情况
+                if not early_stop_triggered:
+                    is_page_duplicate = (skipped_count == len(raw_items))
+                    if is_page_duplicate:
+                        if self.max_consecutive_duplicate_pages is not None:
+                            consecutive_duplicate_pages += 1
+                            print(f"[*] 当前页所有数据均已重复。连续重复页数: {consecutive_duplicate_pages}/{self.max_consecutive_duplicate_pages}")
+                            if consecutive_duplicate_pages >= self.max_consecutive_duplicate_pages:
+                                early_stop_triggered = True
+                    else:
+                        consecutive_duplicate_pages = 0
+                
                 if not items_to_process:
                     print(f"[+] 页面 {page_num} 所有项均已被跳过。")
-                    if early_stop_triggered or consecutive_count >= self.max_consecutive_existing:
+                    if early_stop_triggered or (self.max_consecutive_existing is not None and consecutive_count >= self.max_consecutive_existing):
                         print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                         break
                     continue
@@ -198,15 +215,18 @@ class BaseCrawler:
                             consecutive_count = 0  # 成功写入一条新数据，计数重置
                         else:
                             skipped_count += 1
-                            consecutive_count += 1
-                            print(f"[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
-                            if consecutive_count >= self.max_consecutive_existing:
-                                early_stop_triggered = True
-                                break
+                            if self.max_consecutive_existing is not None:
+                                consecutive_count += 1
+                                print(f"[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
+                                if consecutive_count >= self.max_consecutive_existing:
+                                    early_stop_triggered = True
+                                    break
+                            else:
+                                print(f"[*] 写入失败或重复 (DB IGNORE)")
                                 
                 print(f"[+] 页面 {page_num} 处理完成：写入 {inserted_count} 条，跳过 {skipped_count} 条。")
                 
-                if early_stop_triggered or consecutive_count >= self.max_consecutive_existing:
+                if early_stop_triggered or (self.max_consecutive_existing is not None and consecutive_count >= self.max_consecutive_existing):
                     print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                     break
                     
