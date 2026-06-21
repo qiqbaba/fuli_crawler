@@ -98,9 +98,15 @@ class SupabaseDBManager:
 
     def __init__(self, supabase_url, supabase_key):
         from supabase import create_client
-        self.client = create_client(supabase_url, supabase_key)
+        from urllib.parse import urlparse
+        
+        # 清洗 URL，防止因带有 /rest/v1 等路径或末尾斜杠导致 PostgREST (PGRST125) 404 错误
+        parsed = urlparse(supabase_url.strip())
+        clean_url = f"{parsed.scheme}://{parsed.netloc}"
+        
+        self.client = create_client(clean_url, supabase_key)
         self.table = "resources"
-        print(f"[*] 已连接 Supabase: {supabase_url}")
+        print(f"[*] 已连接 Supabase: {clean_url}")
 
     def check_url_exists(self, url):
         """检查 URL 是否已存在于 Supabase 表中"""

@@ -10,6 +10,7 @@ class R2Uploader:
     """
 
     def __init__(self, endpoint_url, access_key_id, secret_access_key, bucket_name):
+        from botocore.config import Config
         self.bucket_name = bucket_name
         self.s3 = boto3.client(
             "s3",
@@ -17,6 +18,7 @@ class R2Uploader:
             aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key,
             region_name="auto",  # R2 固定使用 auto
+            config=Config(s3={'addressing_style': 'path'}),
         )
         print(f"[*] R2Uploader 已初始化，Bucket: {bucket_name}")
 
