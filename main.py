@@ -40,7 +40,7 @@ def main():
     parser.add_argument(
         "--start",
         type=int,
-        default=1,
+        default=None,
         help="起始页码 (默认: 1)"
     )
     parser.add_argument(
@@ -107,7 +107,48 @@ def main():
         sys.exit(1)
         
     start_page = args.start
-    end_page = args.end if args.end is not None else default_end
+    if start_page is None:
+        if sys.stdin.isatty():
+            try:
+                val = input("[*] 请输入起始页码 (直接回车默认 1): ").strip()
+                if val:
+                    start_page = int(val)
+                else:
+                    start_page = 1
+            except (KeyboardInterrupt, EOFError):
+                print("\n[-] 运行已取消")
+                sys.exit(0)
+            except ValueError:
+                print("[-] 输入无效，使用默认起始页码: 1")
+                start_page = 1
+        else:
+            start_page = 1
+
+    end_page = args.end
+    if end_page is None:
+        if sys.stdin.isatty():
+            try:
+                val = input(f"[*] 请输入结束页码 (直接回车默认 {default_end}): ").strip()
+                if val:
+                    end_page = int(val)
+                else:
+                    end_page = default_end
+            except (KeyboardInterrupt, EOFError):
+                print("\n[-] 运行已取消")
+                sys.exit(0)
+            except ValueError:
+                print(f"[-] 输入无效，使用默认结束页码: {default_end}")
+                end_page = default_end
+        else:
+            end_page = default_end
+
+    # 做基本的验证
+    if start_page < 1:
+        print("[!] 起始页码不能小于 1，已自动设为 1")
+        start_page = 1
+    if end_page < start_page:
+        print(f"[!] 结束页码不能小于起始页码 ({start_page})，已自动设为 {start_page}")
+        end_page = start_page
     
     is_test = args.test
     if args.crawl:
