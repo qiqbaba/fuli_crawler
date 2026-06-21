@@ -153,7 +153,10 @@ class SejuCrawler(BaseCrawler):
             result = self.r2_uploader.upload_pdf(local_path, remote_key)
             return result  # R2 Key 或空字符串（失败时本地文件保留）
         else:
-            return local_path  # 返回本地路径
+            # 返回相对路径，统一格式为 pdf/year/filename.pdf，并使用正斜杠
+            year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
+            rel_path = f"pdf/{year}/{os.path.basename(local_path)}"
+            return rel_path.replace('\\', '/')
 
     def process_sub_page_if_needed(self, sub_url, idx):
         """
