@@ -90,3 +90,7 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 ]
+
+# ========== 爬虫全局代理 ==========
+# 可在 GitHub Secrets 或本地环境变量中配置，格式如 http://user:pass@host:port 或 http://host:port
+CRAWLER_PROXY = os.environ.get("CRAWLER_PROXY", "")

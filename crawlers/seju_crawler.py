@@ -40,32 +40,118 @@ class SejuCrawler(BaseCrawler):
         """获取当前线程特有的 Playwright, Browser 和 Context"""
         if not hasattr(self.thread_local, "playwright"):
             p = sync_playwright().start()
-            browser = p.chromium.launch(headless=True)
-            ua = random.choice(USER_AGENTS)
-            context = browser.new_context(
-                user_agent=ua,
-                viewport={'width': 1200, 'height': 900}
+            
+            from config import is_local_mode, CRAWLER_PROXY
+            local_mode = is_local_mode()
+            headless = not local_mode
+            
+            launch_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-web-security",
+                "--ignore-certificate-errors",
+            ]
+            if headless:
+                launch_args.extend([
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ])
+            
+            # 使用临时 Persistent Context，确保指纹一致且防并发冲突
+            profile_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "temp_profiles",
+                f"profile_{threading.get_ident()}_{random.randint(1000, 9999)}_{int(time.time())}"
             )
+            os.makedirs(profile_dir, exist_ok=True)
+            
+            ua = random.choice(USER_AGENTS)
+            playwright_proxy = None
+            if CRAWLER_PROXY:
+                playwright_proxy = {"server": CRAWLER_PROXY}
+                print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理: {CRAWLER_PROXY}")
+            
+            context = None
+            browser = None
+            try:
+                # 优先尝试启动本地真实 Chrome 渠道
+                context = p.chromium.launch_persistent_context(
+                    user_data_dir=profile_dir,
+                    headless=headless,
+                    channel="chrome",
+                    args=launch_args,
+                    user_agent=ua,
+                    viewport={'width': 1280, 'height': 900},
+                    bypass_csp=True,
+                    proxy=playwright_proxy,
+                    locale="zh-CN",
+                    timezone_id="Asia/Shanghai"
+                )
+                print(f"[+] 线程 {threading.get_ident()} 成功启动真实 Chrome 持久化上下文")
+            except Exception as e:
+                print(f"[*] 启动真实 Chrome 失败，回退到内置 Chromium: {e}")
+                try:
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=profile_dir,
+                        headless=headless,
+                        args=launch_args,
+                        user_agent=ua,
+                        viewport={'width': 1280, 'height': 900},
+                        bypass_csp=True,
+                        proxy=playwright_proxy,
+                        locale="zh-CN",
+                        timezone_id="Asia/Shanghai"
+                    )
+                    print(f"[+] 线程 {threading.get_ident()} 成功启动内置 Chromium 持久化上下文")
+                except Exception as e2:
+                    print(f"[-] 启动持久化上下文均失败: {e2}。尝试普通方式启动。")
+            
+            if context:
+                browser = context.browser
+            else:
+                # 极端回退情况
+                browser = p.chromium.launch(headless=headless, args=launch_args)
+                context = browser.new_context(
+                    user_agent=ua,
+                    viewport={'width': 1280, 'height': 900},
+                    proxy=playwright_proxy,
+                    locale="zh-CN",
+                    timezone_id="Asia/Shanghai"
+                )
+            
             # 强化无头浏览器反爬特征隐藏，使用 Stealth
             try:
                 stealth_config = Stealth()
                 stealth_config.apply_stealth_sync(context)
             except Exception as stealth_err:
                 print(f"[-] 应用 stealth 失败: {stealth_err}")
+                
+            # 手动注入脚本移去 webdriver
+            try:
+                context.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    });
+                """)
+            except Exception as script_err:
+                print(f"[-] 注入伪装脚本失败: {script_err}")
             
             self.thread_local.playwright = p
             self.thread_local.browser = browser
             self.thread_local.context = context
+            self.thread_local.profile_dir = profile_dir
             
             with self._resources_lock:
-                self._active_resources.append((p, browser, context))
+                self._active_resources.append((p, browser, context, profile_dir))
                 
         return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
-
-    def _wait_for_cloudflare_bypass(self, page, timeout_sec=45):
+ 
+    def _wait_for_cloudflare_bypass(self, page, timeout_sec=60):
         """
         检测并等待 Cloudflare Challenge (Just a moment...) 页面自动重定向通过。
         """
+        from config import is_local_mode
         start_time = time.time()
         while time.time() - start_time < timeout_sec:
             try:
@@ -74,6 +160,8 @@ class SejuCrawler(BaseCrawler):
                 # 判断是否仍在 CF 挑战页
                 if "Just a moment..." in title or "cloudflare" in url or "cloudflare" in title.lower():
                     print(f"[*] 检测到 Cloudflare 盾页面，正在等待自动解盾... (当前 Title: '{title}')")
+                    if is_local_mode():
+                        print(f"[!] 【有头辅助提示】检测到验证码，若卡在此处，请在弹出的浏览器窗口中手动完成验证。")
                     time.sleep(1.5)
                 else:
                     print(f"[+] 疑似已绕过 Cloudflare。当前 Title: '{title}', URL: {url}")
@@ -90,13 +178,18 @@ class SejuCrawler(BaseCrawler):
             pass
         print(f"[-] 智能等待 Cloudflare 结束，但当前页面 Title 依然为: '{page.title()}'")
         return False
-
+ 
     def _http_get(self, url, timeout=20):
         """使用 curl_cffi 模拟浏览器获取 URL，处理反爬和编码。返回 (final_url, html_text)"""
         try:
+            from config import CRAWLER_PROXY
             ua = random.choice(USER_AGENTS)
             headers = {"User-Agent": ua}
-            r = requests.get(url, headers=headers, impersonate="chrome120", timeout=timeout)
+            proxies = None
+            if CRAWLER_PROXY:
+                proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
+            
+            r = requests.get(url, headers=headers, impersonate="chrome120", timeout=timeout, proxies=proxies)
             r.encoding = 'utf-8'
             if r.status_code == 200:
                 return r.url, r.text
@@ -106,13 +199,18 @@ class SejuCrawler(BaseCrawler):
         except Exception as e:
             print(f"[-] HTTP 请求异常 ({url}): {e}")
             return url, None
-
+ 
     def _http_get_binary(self, url, timeout=25):
         """使用 curl_cffi 下载二进制文件（如图片）"""
         try:
+            from config import CRAWLER_PROXY
             ua = random.choice(USER_AGENTS)
             headers = {"User-Agent": ua}
-            r = requests.get(url, headers=headers, impersonate="chrome120", timeout=timeout)
+            proxies = None
+            if CRAWLER_PROXY:
+                proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
+            
+            r = requests.get(url, headers=headers, impersonate="chrome120", timeout=timeout, proxies=proxies)
             if r.status_code == 200:
                 return r.content
             else:
@@ -134,12 +232,25 @@ class SejuCrawler(BaseCrawler):
                 print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录")
 
     def on_finish(self):
-        """释放所有线程的 Playwright 资源"""
+        """释放所有线程的 Playwright 资源并清理临时目录"""
         print("[*] 正在释放所有线程的 Playwright 资源...")
         with self._resources_lock:
-            for p, browser, context in self._active_resources:
+            for item in self._active_resources:
+                # 兼容 3 元素和 4 元素元组
+                p = item[0]
+                browser = item[1]
+                context = item[2]
+                profile_dir = item[3] if len(item) > 3 else None
+                
                 try:
-                    browser.close()
+                    if context:
+                        context.close()
+                except Exception as e:
+                    print(f"[-] 关闭 Context 失败: {e}")
+                
+                try:
+                    if browser:
+                        browser.close()
                 except Exception as e:
                     if "cannot switch to a different thread" not in str(e):
                         print(f"[-] 关闭浏览器失败: {e}")
@@ -148,13 +259,36 @@ class SejuCrawler(BaseCrawler):
                 except Exception as e:
                     if "cannot switch to a different thread" not in str(e):
                         print(f"[-] 停止 Playwright 失败: {e}")
+                
+                if profile_dir and os.path.exists(profile_dir):
+                    try:
+                        time.sleep(0.5)
+                        shutil.rmtree(profile_dir)
+                        print(f"[+] 成功清理临时用户数据目录: {profile_dir}")
+                    except Exception as clean_err:
+                        print(f"[-] 清理临时用户数据目录 {profile_dir} 失败: {clean_err}")
+                        
             self._active_resources.clear()
         self.db_manager.commit()
 
     def fetch_list_page(self, page_num):
-        """加载列表页并返回当前 HTML 文本"""
+        """加载列表页并返回当前 HTML 文本 (curl_cffi 优先，Playwright 兜底)"""
         list_url = self.get_list_url(page_num)
         print(f"[*] 正在访问列表页: {list_url}")
+        
+        # 1. 优先使用 curl_cffi 尝试直接拉取（高概率直接穿盾，速度快）
+        try:
+            _, html_text = self._http_get(list_url, timeout=25)
+            if html_text and "Just a moment..." not in html_text and "cloudflare" not in html_text.lower():
+                print(f"[+] 使用 curl_cffi 成功直接抓取列表页 (无 Cloudflare 拦截): {list_url}")
+                time.sleep(random.uniform(2, 4))
+                return html_text
+            else:
+                print(f"[*] curl_cffi 尝试抓取被拦截或失效，将回退至 Playwright 备用通道...")
+        except Exception as curl_err:
+            print(f"[-] curl_err 抓取失败: {curl_err}，转向 Playwright...")
+            
+        # 2. Playwright 兜底方案
         try:
             _, _, context = self._get_thread_resources()
             if not hasattr(self.thread_local, "list_page") or self.thread_local.list_page.is_closed():
@@ -169,7 +303,7 @@ class SejuCrawler(BaseCrawler):
             time.sleep(random.uniform(2, 4))
             return page.content()
         except Exception as e:
-            print(f"[-] 列表页 {list_url} 抓取异常: {e}")
+            print(f"[-] Playwright 列表页 {list_url} 抓取异常: {e}")
             return None
 
     def parse_list_page(self, list_page_html, page_num):
@@ -270,7 +404,6 @@ class SejuCrawler(BaseCrawler):
     def process_sub_page_if_needed(self, sub_url, idx):
         """
         处理单个子页面的抓取、信息提取、PDF 保存/上传。
-        raw_item 在这里即为 sub_url。
         """
         # 1. 检查子页面链接是否已存在
         is_existing = self.db_manager.check_url_exists(sub_url)
@@ -278,34 +411,49 @@ class SejuCrawler(BaseCrawler):
             print(f"[{idx}] 网址已存在数据库中，跳过抓取: {sub_url}")
             return True, None
 
-        sub_page = None
         html_text = None
         current_url = sub_url
+        
+        # 1. 优先使用 curl_cffi 尝试直接拉取（高概率直接穿盾，防无头检测）
         try:
-            _, _, context = self._get_thread_resources()
-            sub_page = context.new_page()
-            sub_page.goto(sub_url, timeout=60000, wait_until="domcontentloaded")
+            final_url, curl_html = self._http_get(sub_url, timeout=25)
+            if curl_html and "Just a moment..." not in curl_html and "cloudflare" not in curl_html.lower():
+                print(f"[{idx}] 使用 curl_cffi 成功直接抓取子页面: {sub_url}")
+                html_text = curl_html
+                current_url = final_url
+            else:
+                print(f"[{idx}] curl_cffi 抓取子页面被拦截或失败，转向 Playwright 备用通道...")
+        except Exception as curl_err:
+            print(f"[{idx}] curl_cffi 抓取异常: {curl_err}，转向 Playwright...")
             
-            # 检测并等待 Cloudflare 盾通过
-            self._wait_for_cloudflare_bypass(sub_page)
-            
+        # 2. Playwright 兜底方案
+        if not html_text:
+            sub_page = None
             try:
-                sub_page.wait_for_load_state("load", timeout=10000)
-            except Exception as wait_err:
-                print(f"[!] 等待 load 状态超时，继续处理: {wait_err}")
+                _, _, context = self._get_thread_resources()
+                sub_page = context.new_page()
+                sub_page.goto(sub_url, timeout=60000, wait_until="domcontentloaded")
                 
-            time.sleep(random.uniform(1.5, 3.5))
-            
-            current_url = sub_page.url
-            html_text = sub_page.content()
-        except Exception as err:
-            print(f"[-] 使用 Playwright 抓取子页面 {sub_url} 异常: {err}")
-        finally:
-            if sub_page:
+                # 检测并等待 Cloudflare 盾通过
+                self._wait_for_cloudflare_bypass(sub_page)
+                
                 try:
-                    sub_page.close()
-                except Exception as close_err:
-                    print(f"[-] 关闭临时子页面失败: {close_err}")
+                    sub_page.wait_for_load_state("load", timeout=10000)
+                except Exception as wait_err:
+                    print(f"[!] 等待 load 状态超时，继续处理: {wait_err}")
+                    
+                time.sleep(random.uniform(1.5, 3.5))
+                
+                current_url = sub_page.url
+                html_text = sub_page.content()
+            except Exception as err:
+                print(f"[-] 使用 Playwright 抓取子页面 {sub_url} 异常: {err}")
+            finally:
+                if sub_page:
+                    try:
+                        sub_page.close()
+                    except Exception as close_err:
+                        print(f"[-] 关闭临时子页面失败: {close_err}")
 
         if not html_text:
             print(f"[-] 子页面 {sub_url} 抓取失败")
