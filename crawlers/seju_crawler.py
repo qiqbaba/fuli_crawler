@@ -5,6 +5,7 @@ import time
 import random
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
 from config import USER_AGENTS, is_local_mode
 from crawlers.base_crawler import BaseCrawler
 from utils.r2_uploader import get_r2_uploader
@@ -45,24 +46,12 @@ class SejuCrawler(BaseCrawler):
                 user_agent=ua,
                 viewport={'width': 1920, 'height': 1080}
             )
-            # 强化无头浏览器反爬特征隐藏
-            context.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
-                window.chrome = { runtime: {} };
-                const originalQuery = window.navigator.permissions.query;
-                window.navigator.permissions.query = (parameters) => (
-                    parameters.name === 'notifications' ?
-                    Promise.resolve({ state: Notification.permission }) :
-                    originalQuery(parameters)
-                );
-                const getParameter = WebGLRenderingContext.prototype.getParameter;
-                WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                    if (parameter === 37445) return 'Intel Open Source Technology Center';
-                    if (parameter === 37446) return 'Mesa DRI Intel(R) HD Graphics 520 (Skylake GT2)';
-                    return getParameter(parameter);
-                };
-            """)
+            # 强化无头浏览器反爬特征隐藏，使用 Stealth
+            try:
+                stealth_config = Stealth()
+                stealth_config.apply_stealth_sync(context)
+            except Exception as stealth_err:
+                print(f"[-] 应用 stealth 失败: {stealth_err}")
             
             self.thread_local.playwright = p
             self.thread_local.browser = browser
@@ -72,6 +61,35 @@ class SejuCrawler(BaseCrawler):
                 self._active_resources.append((p, browser, context))
                 
         return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
+
+    def _wait_for_cloudflare_bypass(self, page, timeout_sec=15):
+        """
+        检测并等待 Cloudflare Challenge (Just a moment...) 页面自动重定向通过。
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout_sec:
+            try:
+                title = page.title()
+                url = page.url
+                # 判断是否仍在 CF 挑战页
+                if "Just a moment..." in title or "cloudflare" in url or "cloudflare" in title.lower():
+                    print(f"[*] 检测到 Cloudflare 盾页面，正在等待自动解盾... (当前 Title: '{title}')")
+                    time.sleep(1.5)
+                else:
+                    print(f"[+] 疑似已绕过 Cloudflare。当前 Title: '{title}', URL: {url}")
+                    return True
+            except Exception as e:
+                print(f"[-] 检查 Cloudflare 状态时异常: {e}")
+                time.sleep(1.5)
+        
+        try:
+            final_title = page.title()
+            if "Just a moment..." not in final_title and "cloudflare" not in page.url:
+                return True
+        except:
+            pass
+        print(f"[-] 智能等待 Cloudflare 结束，但当前页面 Title 依然为: '{page.title()}'")
+        return False
 
     def on_start(self):
         """初始化 R2 上传器"""
@@ -109,6 +127,10 @@ class SejuCrawler(BaseCrawler):
             if not hasattr(self.thread_local, "list_page") or self.thread_local.list_page.is_closed():
                 self.thread_local.list_page = context.new_page()
             self.thread_local.list_page.goto(list_url, timeout=60000, wait_until="domcontentloaded")
+            
+            # 检测并等待 Cloudflare 盾通过
+            self._wait_for_cloudflare_bypass(self.thread_local.list_page)
+            
             time.sleep(random.uniform(2, 4))
             return self.thread_local.list_page
         except Exception as e:
@@ -210,6 +232,10 @@ class SejuCrawler(BaseCrawler):
             _, _, context = self._get_thread_resources()
             sub_page = context.new_page()
             sub_page.goto(sub_url, timeout=60000, wait_until="domcontentloaded")
+            
+            # 检测并等待 Cloudflare 盾通过
+            self._wait_for_cloudflare_bypass(sub_page)
+            
             sub_page.wait_for_load_state("load", timeout=10000)
             time.sleep(random.uniform(1.5, 3.5))
 
