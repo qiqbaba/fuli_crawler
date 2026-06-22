@@ -72,7 +72,7 @@ class BaseCrawler:
             'source': self.source_name
         }
 
-    def run(self, is_test=False, start_page=1, end_page=1, **kwargs):
+    def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """
         统一的爬虫执行骨架
         """
@@ -82,7 +82,8 @@ class BaseCrawler:
         
         consecutive_count = 0
         consecutive_duplicate_pages = 0
-        max_workers = 3 if self.source_name == "seju" else 5
+        if max_workers is None:
+            max_workers = 3 if self.source_name == "seju" else 10
         
         try:
             if is_test:
@@ -179,6 +180,8 @@ class BaseCrawler:
                     if early_stop_triggered or (self.max_consecutive_existing is not None and consecutive_count >= self.max_consecutive_existing):
                         print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                         break
+                    # 全跳过时也引入随机休眠，防止高频请求下个列表页被 Cloudflare 拦截
+                    time.sleep(random.uniform(3.0, 6.0))
                     continue
                 
                 print(f"[*] 开始并发处理 {len(items_to_process)} 条新纪录 (并发线程数: {max_workers})...")

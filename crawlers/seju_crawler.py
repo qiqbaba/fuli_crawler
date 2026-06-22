@@ -25,16 +25,44 @@ class SejuCrawler(BaseCrawler):
         self._active_resources = []
         self._resources_lock = threading.Lock()
 
+    def get_list_url(self, page_num):
+        """获取指定页码的列表页 URL，针对第一页避免 301 重定向"""
+        if page_num == 1:
+            return "https://seju.life/"
+        return self.base_url.format(page_num)
+
     def _get_thread_resources(self):
         """获取当前线程特有的 Playwright, Browser 和 Context"""
         if not hasattr(self.thread_local, "playwright"):
             p = sync_playwright().start()
             browser = p.chromium.launch(headless=True)
+            # 在 GitHub Actions (Linux 运行环境) 下，优先使用 Linux Chrome UA 以防止操作系统特征检测冲突
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            else:
+                ua = random.choice(USER_AGENTS)
             context = browser.new_context(
-                user_agent=random.choice(USER_AGENTS),
+                user_agent=ua,
                 viewport={'width': 1920, 'height': 1080}
             )
-            context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            # 强化无头浏览器反爬特征隐藏
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                Object.defineProperty(navigator, 'languages', {get: () => ['zh-CN', 'zh', 'en']});
+                window.chrome = { runtime: {} };
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+                );
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                    if (parameter === 37445) return 'Intel Open Source Technology Center';
+                    if (parameter === 37446) return 'Mesa DRI Intel(R) HD Graphics 520 (Skylake GT2)';
+                    return getParameter(parameter);
+                };
+            """)
             
             self.thread_local.playwright = p
             self.thread_local.browser = browser
@@ -74,7 +102,7 @@ class SejuCrawler(BaseCrawler):
 
     def fetch_list_page(self, page_num):
         """加载列表页并返回当前 page 对象"""
-        list_url = self.base_url.format(page_num)
+        list_url = self.get_list_url(page_num)
         print(f"[*] 正在访问列表页: {list_url}")
         try:
             _, _, context = self._get_thread_resources()
@@ -91,9 +119,17 @@ class SejuCrawler(BaseCrawler):
         """解析列表页卡片，提取出所有子页面的完整 URL 列表"""
         articles_locator = list_page.locator('//div[@class="content"]/article')
         card_count = articles_locator.count()
+        if card_count == 0:
+            try:
+                title = list_page.title()
+                print(f"[!] 警告：页面 {page_num} 未找到任何卡片。当前页面 Title 为: '{title}'")
+                preview = list_page.content()[:300].replace('\n', ' ')
+                print(f"[!] 页面 HTML 预览: {preview}")
+            except Exception as e:
+                print(f"[-] 获取页面调试信息失败: {e}")
 
         sub_urls = []
-        list_url = self.base_url.format(page_num)
+        list_url = self.get_list_url(page_num)
         for i in range(card_count):
             try:
                 card = articles_locator.nth(i)

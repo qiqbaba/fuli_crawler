@@ -23,6 +23,7 @@ def main():
         
     start = 1
     end = 12865
+    workers = None
     if len(sys.argv) > 2:
         try:
             start = int(sys.argv[2])
@@ -33,9 +34,14 @@ def main():
             end = int(sys.argv[3])
         except ValueError:
             pass
+    if len(sys.argv) > 4:
+        try:
+            workers = int(sys.argv[4])
+        except ValueError:
+            pass
             
     try:
-        crawler.run(is_test=is_test, start_page=start, end_page=end)
+        crawler.run(is_test=is_test, start_page=start, end_page=end, max_workers=workers)
     finally:
         db_manager.close()
 
