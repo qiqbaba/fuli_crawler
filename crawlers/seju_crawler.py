@@ -16,8 +16,15 @@ from utils.date_parser import parse_date
 
 
 def sanitize_filename(filename):
-    """清理文件名中的非法字符"""
-    return re.sub(r'[\\/:*?"<>|]', '_', filename).strip()
+    """清理文件名中的非法字符，移除表情符号及特殊变体字符防止编码问题"""
+    # 替换 Windows 文件名非法字符
+    filename = re.sub(r'[\\/:*?"<>|]', '_', filename)
+    # 移除非 BMP 字符（如 Emoji 等 Unicode 码点大于 0xFFFF 的字符）
+    filename = re.sub(r'[^\u0000-\uFFFF]', '', filename)
+    # 移除特殊的不可见控制字符和变体选择器
+    filename = re.sub(r'[\u200b-\u200d\ufe00-\ufe0f\ufeff]', '', filename)
+    return filename.strip()
+
 
 
 class SejuCrawler(BaseCrawler):
@@ -353,7 +360,7 @@ class SejuCrawler(BaseCrawler):
         os.makedirs(save_dir, exist_ok=True)
 
         safe_title = sanitize_filename(title)
-        base_filename = f"{publish_date}_{safe_title}"
+        base_filename = f"{publish_date}_{safe_title}_{self.source_name}"
         pdf_path = os.path.join(save_dir, f"{base_filename}.pdf")
 
         counter = 1

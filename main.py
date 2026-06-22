@@ -4,6 +4,7 @@ from config import get_db_path, use_supabase, SUPABASE_URL, SUPABASE_KEY, is_loc
 from utils.db_manager import DBManager, SupabaseDBManager
 from crawlers.seju_crawler import SejuCrawler
 from crawlers.u3c3_crawler import U3c3Crawler
+from crawlers.datang_crawler import DatangCrawler
 
 # Windows下控制台强制使用utf-8编码输出，防止中文乱码
 if sys.platform.startswith('win'):
@@ -19,8 +20,8 @@ def main():
     parser.add_argument(
         "--crawler", "-c",
         required=False,
-        choices=["seju", "u3c3"],
-        help="指定运行哪一个网站的爬虫 (seju 或 u3c3)"
+        choices=["seju", "u3c3", "datang"],
+        help="指定运行哪一个网站的爬虫 (seju, u3c3 或 datang)"
     )
     
     # 互斥参数：测试模式或正式爬取模式
@@ -47,7 +48,7 @@ def main():
         "--end",
         type=int,
         default=None,
-        help="结束页码 (seju默认: 4, u3c3默认: 20)"
+        help="结束页码 (seju默认: 4, u3c3默认: 20, datang默认: 60)"
     )
     parser.add_argument(
         "--mode", "-m",
@@ -59,7 +60,7 @@ def main():
         "--workers", "-w",
         type=int,
         default=None,
-        help="并发线程数 (默认: seju为3, u3c3为5)"
+        help="并发线程数 (默认: seju为3, u3c3为30, datang为40)"
     )
     
     args = parser.parse_args()
@@ -69,10 +70,13 @@ def main():
         print("[*] 未通过命令行指定爬虫模块，请选择要运行的爬虫：")
         print("    1. seju (默认)")
         print("    2. u3c3")
+        print("    3. datang")
         try:
-            choice = input("请输入序号 [1/2] (直接回车默认 1): ").strip()
+            choice = input("请输入序号 [1/2/3] (直接回车默认 1): ").strip()
             if choice == "2":
                 args.crawler = "u3c3"
+            elif choice == "3":
+                args.crawler = "datang"
             else:
                 args.crawler = "seju"
         except (KeyboardInterrupt, EOFError):
@@ -103,9 +107,18 @@ def main():
     if args.crawler == "seju":
         crawler = SejuCrawler(db_manager)
         default_end = 4
+        if args.workers is None:
+            args.workers = 3
     elif args.crawler == "u3c3":
         crawler = U3c3Crawler(db_manager)
         default_end = 20
+        if args.workers is None:
+            args.workers = 30
+    elif args.crawler == "datang":
+        crawler = DatangCrawler(db_manager)
+        default_end = 60
+        if args.workers is None:
+            args.workers = 40
         
     if crawler is None:
         print(f"[-] 找不到指定的爬虫: {args.crawler}")
