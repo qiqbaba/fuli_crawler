@@ -83,7 +83,7 @@ class BaseCrawler:
         consecutive_count = 0
         consecutive_duplicate_pages = 0
         if max_workers is None:
-            max_workers = 1 if self.source_name == "seju" else 20
+            max_workers = 1 if self.source_name == "seju" else 30
         
         try:
             if is_test:

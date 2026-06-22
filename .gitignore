@@ -35,3 +35,9 @@ pdf/
 # 日志
 logs/
 *.log
+
+# Temp crawler trace files
+decrypted_*.html
+raw_*.html
+datang_top10.txt
+
