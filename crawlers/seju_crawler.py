@@ -62,7 +62,7 @@ class SejuCrawler(BaseCrawler):
                 
         return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
 
-    def _wait_for_cloudflare_bypass(self, page, timeout_sec=15):
+    def _wait_for_cloudflare_bypass(self, page, timeout_sec=45):
         """
         检测并等待 Cloudflare Challenge (Just a moment...) 页面自动重定向通过。
         """

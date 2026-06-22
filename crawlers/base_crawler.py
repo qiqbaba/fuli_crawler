@@ -83,7 +83,7 @@ class BaseCrawler:
         consecutive_count = 0
         consecutive_duplicate_pages = 0
         if max_workers is None:
-            max_workers = 3 if self.source_name == "seju" else 20
+            max_workers = 1 if self.source_name == "seju" else 20
         
         try:
             if is_test:
@@ -189,24 +189,37 @@ class BaseCrawler:
                 inserted_count = 0
                 results = []
                 
-                # 2. 使用线程池并发抓取与解析子网页
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    # 提交任务，并记录索引
-                    future_to_idx = {
-                        executor.submit(self.process_sub_page_if_needed, raw_item, idx): idx
-                        for idx, raw_item in items_to_process
-                    }
-                    
-                    for future in as_completed(future_to_idx):
-                        idx = future_to_idx[future]
+                # 2. 抓取与解析子网页
+                if max_workers == 1:
+                    # 单线程顺序执行，完全共享同一个主线程的 Playwright 实例和 Browser Context
+                    for idx, raw_item in items_to_process:
                         try:
-                            res = future.result()
+                            res = self.process_sub_page_if_needed(raw_item, idx)
                             if res:
                                 _, data = res
                                 if data:
                                     results.append(data)
                         except Exception as e:
-                            print(f"[-] 线程处理索引为 [{idx}] 的项目时发生异常: {e}")
+                            print(f"[-] 处理索引为 [{idx}] 的项目时发生异常: {e}")
+                else:
+                    # 使用线程池并发抓取与解析子网页
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        # 提交任务，并记录索引
+                        future_to_idx = {
+                            executor.submit(self.process_sub_page_if_needed, raw_item, idx): idx
+                            for idx, raw_item in items_to_process
+                        }
+                        
+                        for future in as_completed(future_to_idx):
+                            idx = future_to_idx[future]
+                            try:
+                                res = future.result()
+                                if res:
+                                    _, data = res
+                                    if data:
+                                        results.append(data)
+                            except Exception as e:
+                                print(f"[-] 线程处理索引为 [{idx}] 的项目时发生异常: {e}")
                 
                 # 3. 主线程顺序入库并处理早停
                 if results:
