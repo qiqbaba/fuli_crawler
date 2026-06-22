@@ -55,6 +55,12 @@ def main():
         default="auto",
         help="运行模式: auto (Action环境为cloud, 否则为local), local (强制本地模式), cloud (强制云端模式) (默认: auto)"
     )
+    parser.add_argument(
+        "--workers", "-w",
+        type=int,
+        default=None,
+        help="并发线程数 (默认: seju为3, u3c3为5)"
+    )
     
     args = parser.parse_args()
     
@@ -158,7 +164,7 @@ def main():
     print(f"[*] 页码范围: {start_page} 到 {end_page}")
     
     try:
-        crawler.run(is_test=is_test, start_page=start_page, end_page=end_page)
+        crawler.run(is_test=is_test, start_page=start_page, end_page=end_page, max_workers=args.workers)
     finally:
         print("[*] 正在释放数据库资源...")
         db_manager.close()
