@@ -8,6 +8,7 @@ from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 from curl_cffi import requests
 from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
 from config import USER_AGENTS, is_local_mode
 from crawlers.base_crawler import BaseCrawler
 from utils.r2_uploader import get_r2_uploader
@@ -40,9 +41,17 @@ class SejuCrawler(BaseCrawler):
         if not hasattr(self.thread_local, "playwright"):
             p = sync_playwright().start()
             browser = p.chromium.launch(headless=True)
+            ua = random.choice(USER_AGENTS)
             context = browser.new_context(
+                user_agent=ua,
                 viewport={'width': 1200, 'height': 900}
             )
+            # 强化无头浏览器反爬特征隐藏，使用 Stealth
+            try:
+                stealth_config = Stealth()
+                stealth_config.apply_stealth_sync(context)
+            except Exception as stealth_err:
+                print(f"[-] 应用 stealth 失败: {stealth_err}")
             
             self.thread_local.playwright = p
             self.thread_local.browser = browser
@@ -52,6 +61,35 @@ class SejuCrawler(BaseCrawler):
                 self._active_resources.append((p, browser, context))
                 
         return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
+
+    def _wait_for_cloudflare_bypass(self, page, timeout_sec=15):
+        """
+        检测并等待 Cloudflare Challenge (Just a moment...) 页面自动重定向通过。
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout_sec:
+            try:
+                title = page.title()
+                url = page.url
+                # 判断是否仍在 CF 挑战页
+                if "Just a moment..." in title or "cloudflare" in url or "cloudflare" in title.lower():
+                    print(f"[*] 检测到 Cloudflare 盾页面，正在等待自动解盾... (当前 Title: '{title}')")
+                    time.sleep(1.5)
+                else:
+                    print(f"[+] 疑似已绕过 Cloudflare。当前 Title: '{title}', URL: {url}")
+                    return True
+            except Exception as e:
+                print(f"[-] 检查 Cloudflare 状态时异常: {e}")
+                time.sleep(1.5)
+        
+        try:
+            final_title = page.title()
+            if "Just a moment..." not in final_title and "cloudflare" not in page.url:
+                return True
+        except:
+            pass
+        print(f"[-] 智能等待 Cloudflare 结束，但当前页面 Title 依然为: '{page.title()}'")
+        return False
 
     def _http_get(self, url, timeout=20):
         """使用 curl_cffi 模拟浏览器获取 URL，处理反爬和编码。返回 (final_url, html_text)"""
@@ -117,12 +155,22 @@ class SejuCrawler(BaseCrawler):
         """加载列表页并返回当前 HTML 文本"""
         list_url = self.get_list_url(page_num)
         print(f"[*] 正在访问列表页: {list_url}")
-        _, html = self._http_get(list_url)
-        if not html:
-            print(f"[-] 列表页 {list_url} 抓取失败")
+        try:
+            _, _, context = self._get_thread_resources()
+            if not hasattr(self.thread_local, "list_page") or self.thread_local.list_page.is_closed():
+                self.thread_local.list_page = context.new_page()
+            
+            page = self.thread_local.list_page
+            page.goto(list_url, timeout=60000, wait_until="domcontentloaded")
+            
+            # 检测并等待 Cloudflare 盾通过
+            self._wait_for_cloudflare_bypass(page)
+            
+            time.sleep(random.uniform(2, 4))
+            return page.content()
+        except Exception as e:
+            print(f"[-] 列表页 {list_url} 抓取异常: {e}")
             return None
-        time.sleep(random.uniform(2, 4))
-        return html
 
     def parse_list_page(self, list_page_html, page_num):
         """解析列表页卡片，提取出所有子页面的完整 URL 列表"""
@@ -230,7 +278,35 @@ class SejuCrawler(BaseCrawler):
             print(f"[{idx}] 网址已存在数据库中，跳过抓取: {sub_url}")
             return True, None
 
-        current_url, html_text = self._http_get(sub_url)
+        sub_page = None
+        html_text = None
+        current_url = sub_url
+        try:
+            _, _, context = self._get_thread_resources()
+            sub_page = context.new_page()
+            sub_page.goto(sub_url, timeout=60000, wait_until="domcontentloaded")
+            
+            # 检测并等待 Cloudflare 盾通过
+            self._wait_for_cloudflare_bypass(sub_page)
+            
+            try:
+                sub_page.wait_for_load_state("load", timeout=10000)
+            except Exception as wait_err:
+                print(f"[!] 等待 load 状态超时，继续处理: {wait_err}")
+                
+            time.sleep(random.uniform(1.5, 3.5))
+            
+            current_url = sub_page.url
+            html_text = sub_page.content()
+        except Exception as err:
+            print(f"[-] 使用 Playwright 抓取子页面 {sub_url} 异常: {err}")
+        finally:
+            if sub_page:
+                try:
+                    sub_page.close()
+                except Exception as close_err:
+                    print(f"[-] 关闭临时子页面失败: {close_err}")
+
         if not html_text:
             print(f"[-] 子页面 {sub_url} 抓取失败")
             return False, None
