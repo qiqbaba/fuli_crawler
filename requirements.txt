@@ -6,3 +6,4 @@ supabase
 boto3
 python-dotenv
 playwright-stealth
+curl_cffi
