@@ -173,6 +173,39 @@ class DatangCrawler(BaseCrawler):
             page = context.new_page()
             page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
             time.sleep(3.0)
+            
+            # 屏蔽广告
+            try:
+                page.evaluate("""
+                    () => {
+                        // 1. 移除面包屑导航上方的广告容器
+                        const breadcrumbs = document.querySelector('.breadcrumbs');
+                        if (breadcrumbs) {
+                            let prev = breadcrumbs.previousElementSibling;
+                            while (prev) {
+                                if (prev.classList.contains('gs-isgood') && 
+                                    !prev.textContent.includes('永久地址') && 
+                                    !prev.textContent.includes('永久')) {
+                                    prev.remove();
+                                }
+                                prev = prev.previousElementSibling;
+                            }
+                        }
+                        
+                        // 2. 移除所有固定高度的广告容器
+                        const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
+                        adDivs.forEach(div => div.remove());
+                        
+                        // 3. 移除底部悬浮广告
+                        const bottomFloat = document.getElementById('bottom_float');
+                        if (bottomFloat) {
+                            bottomFloat.remove();
+                        }
+                    }
+                """)
+            except Exception as ad_err:
+                print(f"[-] 屏蔽广告脚本执行失败: {ad_err}")
+
             page.pdf(
                 path=local_path,
                 format="A4",

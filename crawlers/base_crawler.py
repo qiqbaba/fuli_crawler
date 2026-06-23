@@ -80,6 +80,12 @@ class BaseCrawler:
         print(f"[*] 启动 {self.source_name} 爬虫流程...")
         self.on_start()
         
+        no_early_stop = kwargs.get('no_early_stop', False)
+        if no_early_stop:
+            print("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
+            self.max_consecutive_existing = None
+            self.max_consecutive_duplicate_pages = None
+            
         consecutive_count = 0
         consecutive_duplicate_pages = 0
         if max_workers is None:

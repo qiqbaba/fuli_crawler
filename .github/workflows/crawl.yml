@@ -5,7 +5,32 @@ on:
     # 每天 UTC 18:00 = 北京时间次日凌晨 02:00
     - cron: '0 18 * * *'
   workflow_dispatch:
-    # 允许在 GitHub 页面手动触发
+    inputs:
+      crawler:
+        description: '指定运行的爬虫模块'
+        required: true
+        default: 'u3c3'
+        type: choice
+        options:
+          - u3c3
+          - seju
+          - datang
+      start:
+        description: '起始页码 (留空则默认为 1)'
+        required: false
+        default: '5751'
+      end:
+        description: '结束页码 (留空则使用对应爬虫的默认值)'
+        required: false
+        default: '9000'
+      no_early_stop:
+        description: '是否禁用早停机制 (true 强制爬取所有指定页，false 在检测到重复时早停)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
   crawl:
@@ -42,13 +67,26 @@ jobs:
       - name: 创建临时 PDF 目录
         run: mkdir -p /tmp/seju_pdfs
 
-      - name: 运行 seju 爬虫
-        run: python main.py --crawler seju --crawl
-        continue-on-error: true  # seju 失败不影响 u3c3 执行
-
-      - name: 运行 u3c3 爬虫
-        run: python main.py --crawler u3c3 --crawl
-        continue-on-error: true
+      - name: 执行爬虫任务
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CMD="python main.py --crawler ${{ github.event.inputs.crawler }} --crawl"
+            if [ -n "${{ github.event.inputs.start }}" ]; then
+              CMD="$CMD --start ${{ github.event.inputs.start }}"
+            fi
+            if [ -n "${{ github.event.inputs.end }}" ]; then
+              CMD="$CMD --end ${{ github.event.inputs.end }}"
+            fi
+            if [ "${{ github.event.inputs.no_early_stop }}" = "true" ]; then
+              CMD="$CMD --no-early-stop"
+            fi
+            echo "手动运行命令: $CMD"
+            eval $CMD
+          else
+            echo "定时触发，执行默认日常爬取..."
+            python main.py --crawler seju --crawl || true
+            python main.py --crawler u3c3 --crawl || true
+          fi
 
       - name: 清理临时 PDF 目录
         if: always()
