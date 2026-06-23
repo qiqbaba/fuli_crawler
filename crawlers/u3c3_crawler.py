@@ -9,7 +9,7 @@ from crawlers.base_crawler import BaseCrawler
 try:
     from utils.pikpak_extractor import get_pikpak_link
 except ImportError:
-    def get_pikpak_link(url, timeout=30, poll_interval=2):
+    def get_pikpak_link(url, timeout=30, poll_interval=2, quiet=False):
         return url
 
 class U3c3Crawler(BaseCrawler):
@@ -137,7 +137,7 @@ class U3c3Crawler(BaseCrawler):
         if pikpak_link:
             try:
                 # 限制超时为 5 秒，防止未缓存链接导致爬虫长时间阻塞
-                real_pikpak = get_pikpak_link(pikpak_link, timeout=5)
+                real_pikpak = get_pikpak_link(pikpak_link, timeout=5, quiet=self.quiet)
             except Exception:
                 pass
             if not real_pikpak:
