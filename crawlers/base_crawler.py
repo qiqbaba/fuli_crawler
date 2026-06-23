@@ -78,6 +78,7 @@ class BaseCrawler:
         统一的爬虫执行骨架
         """
         self.is_test = is_test
+        self.quiet = kwargs.get('quiet', False)
         print(f"[*] 启动 {self.source_name} 爬虫流程...")
         self.on_start()
         
@@ -164,14 +165,16 @@ class BaseCrawler:
                             skipped_count += 1
                             if self.max_consecutive_existing is not None:
                                 consecutive_count += 1
-                                print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
-                                print(f"[*] 连续发现已存在数据: {consecutive_count}/{self.max_consecutive_existing}")
+                                if not self.quiet:
+                                    print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
+                                    print(f"[*] 连续发现已存在数据: {consecutive_count}/{self.max_consecutive_existing}")
                                 if consecutive_count >= self.max_consecutive_existing:
                                     print(f"\n[触发停止条件] 连续 {self.max_consecutive_existing} 条数据已存在，停止处理当前页！")
                                     early_stop_triggered = True
                                     break
                             else:
-                                print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
+                                if not self.quiet:
+                                    print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
                         else:
                             items_to_process.append((idx, raw_item))
                             consecutive_count = 0  # 发现新数据，重置连续已存在计数
@@ -182,7 +185,8 @@ class BaseCrawler:
                         if is_page_duplicate:
                             if self.max_consecutive_duplicate_pages is not None:
                                 consecutive_duplicate_pages += 1
-                                print(f"[*] 当前页所有数据均已重复。连续重复页数: {consecutive_duplicate_pages}/{self.max_consecutive_duplicate_pages}")
+                                if not self.quiet:
+                                    print(f"[*] 当前页所有数据均已重复。连续重复页数: {consecutive_duplicate_pages}/{self.max_consecutive_duplicate_pages}")
                                 if consecutive_duplicate_pages >= self.max_consecutive_duplicate_pages:
                                     early_stop_triggered = True
                         else:
@@ -246,12 +250,14 @@ class BaseCrawler:
                                 skipped_count += 1
                                 if self.max_consecutive_existing is not None:
                                     consecutive_count += 1
-                                    print(f"[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
+                                    if not self.quiet:
+                                        print(f"[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
                                     if consecutive_count >= self.max_consecutive_existing:
                                         early_stop_triggered = True
                                         break
                                 else:
-                                    print(f"[*] 写入失败或重复 (DB IGNORE)")
+                                    if not self.quiet:
+                                        print(f"[*] 写入失败或重复 (DB IGNORE)")
                                     
                     print(f"[+] 页面 {page_num} 处理完成：写入 {inserted_count} 条，跳过 {skipped_count} 条。")
                     
