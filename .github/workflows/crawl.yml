@@ -70,7 +70,7 @@ jobs:
       - name: 执行爬虫任务
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            CMD="python main.py --crawler ${{ github.event.inputs.crawler }} --crawl"
+            CMD="python main.py --crawler ${{ github.event.inputs.crawler }} --crawl -q"
             if [ -n "${{ github.event.inputs.start }}" ]; then
               CMD="$CMD --start ${{ github.event.inputs.start }}"
             fi
