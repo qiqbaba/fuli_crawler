@@ -62,6 +62,12 @@ def main():
         default=None,
         help="并发线程数 (默认: seju为3, u3c3为30, datang为40)"
     )
+    parser.add_argument(
+        "--no-early-stop",
+        action="store_true",
+        default=False,
+        help="禁用早停机制 (连续已存在/重复页早停)"
+    )
     
     args = parser.parse_args()
     
@@ -177,7 +183,13 @@ def main():
     print(f"[*] 页码范围: {start_page} 到 {end_page}")
     
     try:
-        crawler.run(is_test=is_test, start_page=start_page, end_page=end_page, max_workers=args.workers)
+        crawler.run(
+            is_test=is_test,
+            start_page=start_page,
+            end_page=end_page,
+            max_workers=args.workers,
+            no_early_stop=args.no_early_stop
+        )
     finally:
         print("[*] 正在释放数据库资源...")
         db_manager.close()
