@@ -27,18 +27,85 @@ def sanitize_filename(filename):
 
 
 
+# Playwright 反 webdriver 检测脚本
+_STEALTH_JS = """
+() => {
+    // 隐藏 webdriver 标志
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+    // 伪造 plugins
+    Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5]
+    });
+    // 伪造 languages
+    Object.defineProperty(navigator, 'languages', {
+        get: () => ['zh-CN', 'zh', 'en']
+    });
+    // 删除 Chrome 自动化相关属性
+    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+}
+"""
+
+
 class DatangCrawler(BaseCrawler):
     def __init__(self, db_manager):
         # source_name 设为 datang
         super().__init__(db_manager, "datang")
-        self.base_list_url = "https://urn.685835.xyz/list.php?class={}&page={}"
-        self.base_domain = "https://urn.685835.xyz"
+        self.domains = [
+            "tms.883835.xyz",
+            "iut.983292.xyz",
+            "nrt.322953.xyz",
+            "eta.389838.xyz",
+            "fip.553892.xyz"
+        ]
+        self.current_domain_idx = 0
+        self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
+        self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
         self.current_class = "guochan"
         self.max_consecutive_existing = 15  # 连续抓到历史数据时早停
         self.r2_uploader = None
         self.thread_local = threading.local()
         self._active_resources = []
         self._resources_lock = threading.Lock()
+        # 全局限速器：确保所有线程的请求间隔不低于 1 秒
+        self._rate_lock = threading.Lock()
+        self._last_request_time = 0
+        # 域名冷却机制：记录每个域名最后失败时间
+        self._domain_cooldown = {}
+        self._cooldown_seconds = 60  # 域名冷却 60 秒
+
+    def _rate_limit(self):
+        """线程安全的全局限速，确保请求间隔不低于 1 秒"""
+        with self._rate_lock:
+            now = time.time()
+            elapsed = now - self._last_request_time
+            if elapsed < 1.0:
+                wait = 1.0 - elapsed + random.uniform(0.1, 0.5)
+                time.sleep(wait)
+            self._last_request_time = time.time()
+
+    def _build_headers(self, referer=None):
+        """构造完整的浏览器请求头，模拟真实浏览器行为"""
+        ua = random.choice(USER_AGENTS)
+        headers = {
+            "User-Agent": ua,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+        }
+        if referer:
+            headers["Referer"] = referer
+        else:
+            headers["Referer"] = self.base_domain + "/"
+        return headers
 
     def decrypt_html(self, raw_html):
         """解密目标网站动态混淆的 HTML"""
@@ -109,7 +176,7 @@ class DatangCrawler(BaseCrawler):
         self.db_manager.commit()
 
     def _get_thread_resources(self):
-        """获取当前线程特有的 Playwright 实例"""
+        """获取当前线程特有的 Playwright 实例（带反检测增强）"""
         if not hasattr(self.thread_local, "playwright"):
             p = sync_playwright().start()
             
@@ -119,6 +186,7 @@ class DatangCrawler(BaseCrawler):
                 "--disable-setuid-sandbox",
                 "--disable-web-security",
                 "--ignore-certificate-errors",
+                "--disable-blink-features=AutomationControlled",
             ]
             
             playwright_proxy = None
@@ -126,11 +194,18 @@ class DatangCrawler(BaseCrawler):
                 playwright_proxy = {"server": CRAWLER_PROXY}
                 
             browser = p.chromium.launch(headless=True, args=launch_args, proxy=playwright_proxy)
+            
+            # 使用随机 UA 并设置完整的浏览器上下文参数
+            ua = random.choice(USER_AGENTS)
             context = browser.new_context(
                 viewport={'width': 1280, 'height': 900},
                 locale="zh-CN",
-                timezone_id="Asia/Shanghai"
+                timezone_id="Asia/Shanghai",
+                user_agent=ua,
             )
+            
+            # 注入反 webdriver 检测脚本（对该 context 的所有页面生效）
+            context.add_init_script(_STEALTH_JS)
             
             self.thread_local.playwright = p
             self.thread_local.browser = browser
@@ -238,40 +313,85 @@ class DatangCrawler(BaseCrawler):
             rel_path = f"pdf/{year}/{os.path.basename(local_path)}"
             return rel_path.replace('\\', '/')
 
+    def _rotate_domain(self):
+        """轮换至下一个可用域名（带冷却机制）"""
+        # 记录当前域名的冷却时间
+        failed_domain = self.domains[self.current_domain_idx]
+        self._domain_cooldown[failed_domain] = time.time()
+        
+        # 寻找不在冷却中的域名
+        now = time.time()
+        for i in range(1, len(self.domains) + 1):
+            candidate_idx = (self.current_domain_idx + i) % len(self.domains)
+            candidate = self.domains[candidate_idx]
+            last_fail = self._domain_cooldown.get(candidate, 0)
+            if now - last_fail >= self._cooldown_seconds:
+                self.current_domain_idx = candidate_idx
+                self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
+                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+                print(f"[!] 大唐BT域名切换至: {self.base_domain}")
+                return
+        
+        # 所有域名都在冷却中，等待最短冷却时间后使用
+        min_wait = min(
+            self._cooldown_seconds - (now - self._domain_cooldown.get(d, 0))
+            for d in self.domains
+        )
+        wait_time = max(min_wait, 10) + random.uniform(2, 5)
+        print(f"[!] 所有域名均在冷却中，等待 {wait_time:.1f} 秒...")
+        time.sleep(wait_time)
+        self.current_domain_idx = (self.current_domain_idx + 1) % len(self.domains)
+        self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
+        self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+        # 清除该域名的冷却记录
+        self._domain_cooldown.pop(self.domains[self.current_domain_idx], None)
+        print(f"[!] 冷却结束，大唐BT域名切换至: {self.base_domain}")
+
     def fetch_list_page(self, page_num):
-        """请求列表页并解密 HTML"""
-        url = self.base_list_url.format(self.current_class, page_num)
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS)
-        }
-        # 1. 优先使用 requests
-        for attempt in range(2):
-            try:
-                response = requests.get(url, headers=headers, timeout=15)
-                if response.status_code == 200:
-                    decrypted = self.decrypt_html(response.text)
-                    if decrypted:
-                        return decrypted
-            except Exception:
-                pass
-            time.sleep(random.uniform(1.0, 2.5))
+        """请求列表页并解密 HTML，支持域名轮换重试"""
+        for _ in range(len(self.domains)):
+            url = self.base_list_url.format(self.current_class, page_num)
+            headers = self._build_headers()
             
-        # 2. 兜底使用 Playwright
-        print(f"[*] 使用 Playwright 兜底访问列表页: {url}")
-        try:
-            _, _, context = self._get_thread_resources()
-            page = context.new_page()
-            page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            time.sleep(1.0)
-            html = page.content()
-            page.close()
-            if "class=\"bt_ul\"" in html or "class='bt_ul'" in html or "bt_ul" in html:
-                return html
-            decrypted = self.decrypt_html(html)
-            if decrypted:
-                return decrypted
-        except Exception as e:
-            print(f"[-] Playwright 兜底抓取列表页异常: {e}")
+            # 全局限速
+            self._rate_limit()
+            
+            # 1. 优先使用 requests
+            for attempt in range(2):
+                try:
+                    response = requests.get(url, headers=headers, timeout=15)
+                    if response.status_code == 200:
+                        decrypted = self.decrypt_html(response.text)
+                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                            return decrypted
+                    elif response.status_code == 403:
+                        print(f"[!] 列表页返回 403，疑似触发反爬: {url}")
+                        break  # 跳出重试，直接换域名
+                except Exception:
+                    pass
+                time.sleep(random.uniform(2.0, 4.0))
+                
+            # 2. 兜底使用 Playwright
+            print(f"[*] 使用 Playwright 兜底访问列表页: {url}")
+            try:
+                _, _, context = self._get_thread_resources()
+                page = context.new_page()
+                page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                time.sleep(random.uniform(2.0, 4.0))
+                html = page.content()
+                page.close()
+                if "class=\"bt_ul\"" in html or "class='bt_ul'" in html or "bt_ul" in html:
+                    return html
+                decrypted = self.decrypt_html(html)
+                if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                    return decrypted
+            except Exception as e:
+                print(f"[-] Playwright 兜底抓取列表页异常: {e}")
+                
+            # 当前域名请求失败或解密结果为虚假发布页，冷却等待后轮换域名重试
+            print(f"[!] 当前域名疑似被封，冷却等待后切换...")
+            time.sleep(random.uniform(8.0, 15.0))
+            self._rotate_domain()
             
         return None
 
@@ -323,45 +443,81 @@ class DatangCrawler(BaseCrawler):
         return parsed_items
 
     def process_sub_page_if_needed(self, raw_item, idx):
-        """请求详情页，解析资源元数据并生成 PDF"""
-        url = raw_item['url']
-        is_existing = self.db_manager.check_url_exists(url)
+        """请求详情页，解析资源元数据并生成 PDF，支持域名轮换重试"""
+        original_url = raw_item['url']
+        is_existing = self.db_manager.check_url_exists(original_url)
         if is_existing and not self.is_test:
             return True, None
 
-        headers = {
-            "User-Agent": random.choice(USER_AGENTS)
-        }
+        # 每个详情页请求前随机延迟，模拟人类浏览行为
+        time.sleep(random.uniform(2.0, 5.0))
+        
         detail_html = None
         
-        # 1. 优先使用 requests
-        for attempt in range(2):
-            try:
-                response = requests.get(url, headers=headers, timeout=15)
-                if response.status_code == 200:
-                    decrypted = self.decrypt_html(response.text)
-                    if decrypted:
-                        detail_html = decrypted
-                        break
-            except Exception:
-                pass
-            time.sleep(random.uniform(1.0, 2.0))
+        # 最多尝试轮换所有域名的次数
+        for _ in range(len(self.domains)):
+            # 动态替换域名为当前的最优域名
+            from urllib.parse import urlparse, urlunparse
+            parsed_url = urlparse(original_url)
+            parsed_base = urlparse(self.base_domain)
+            if any(d in parsed_url.netloc for d in self.domains) or "685835.xyz" in parsed_url.netloc:
+                parsed_url = parsed_url._replace(netloc=parsed_base.netloc, scheme=parsed_base.scheme)
+                url = urlunparse(parsed_url)
+            else:
+                url = original_url
 
-        # 2. 兜底使用 Playwright
-        if not detail_html:
-            try:
-                _, _, context = self._get_thread_resources()
-                page = context.new_page()
-                page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                time.sleep(1.0)
-                html = page.content()
-                page.close()
-                if "video-description" in html or "class=\"video-description\"" in html:
-                    detail_html = html
-                else:
-                    detail_html = self.decrypt_html(html)
-            except Exception as e:
-                print(f"[-] Playwright 兜底抓取详情页异常 ({url}): {e}")
+            # 使用完整浏览器请求头
+            list_url = self.base_list_url.format(self.current_class, 1)
+            headers = self._build_headers(referer=list_url)
+            
+            # 全局限速
+            self._rate_limit()
+            
+            # 1. 优先使用 requests
+            for attempt in range(2):
+                try:
+                    response = requests.get(url, headers=headers, timeout=15)
+                    if response.status_code == 200:
+                        decrypted = self.decrypt_html(response.text)
+                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                            detail_html = decrypted
+                            break
+                    elif response.status_code == 403:
+                        print(f"[!] 详情页返回 403，疑似触发反爬: {url}")
+                        break  # 跳出重试，直接换域名
+                except Exception:
+                    pass
+                time.sleep(random.uniform(2.0, 4.0))
+
+            if detail_html:
+                break
+
+            # 2. 兜底使用 Playwright
+            if not detail_html:
+                try:
+                    _, _, context = self._get_thread_resources()
+                    page = context.new_page()
+                    page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    time.sleep(random.uniform(2.0, 4.0))
+                    html = page.content()
+                    page.close()
+                    if "video-description" in html or "class=\"video-description\"" in html:
+                        detail_html = html
+                        break
+                    else:
+                        decrypted = self.decrypt_html(html)
+                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                            detail_html = decrypted
+                            break
+                except Exception as e:
+                    print(f"[-] Playwright 兜底抓取详情页异常 ({url}): {e}")
+
+            if detail_html:
+                break
+                
+            # 当前域名请求失败或解密结果为虚假发布页，冷却等待后轮换域名重试
+            time.sleep(random.uniform(5.0, 10.0))
+            self._rotate_domain()
 
         if not detail_html:
             print(f"[-] 详情页 {url} 抓取失败")
