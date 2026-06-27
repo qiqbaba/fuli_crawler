@@ -130,7 +130,7 @@ def main():
         crawler = DatangCrawler(db_manager)
         default_end = 60
         if args.workers is None:
-            args.workers = 40
+            args.workers = 5
         
     if crawler is None:
         print(f"[-] 找不到指定的爬虫: {args.crawler}")
