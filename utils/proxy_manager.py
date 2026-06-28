@@ -64,6 +64,7 @@ class ProxyManager:
         self._last_verify_time = 0
         self._current_proxy_idx = 0
         self._thread_proxy_map: Dict[int, str] = {}  # thread_id -> proxy_url
+        self._is_replenishing = False
         
         # 确保缓存目录存在
         os.makedirs(_PROXY_CACHE_DIR, exist_ok=True)
@@ -80,17 +81,21 @@ class ProxyManager:
                     data = json.load(f)
                     self._proxies = data.get("proxies", [])
                     self._last_fetch_time = data.get("timestamp", 0)
-                    print(f"[ProxyManager] 从缓存加载了 {len(self._proxies)} 个代理")
+                    self._working_proxies = data.get("working_proxies", [])
+                    self._last_verify_time = data.get("last_verify_time", 0)
+                    print(f"[ProxyManager] 从缓存加载了 {len(self._proxies)} 个代理 (其中已验证可用 {len(self._working_proxies)} 个)")
             except Exception as e:
                 print(f"[ProxyManager] 加载缓存失败: {e}")
     
     def _save_cache(self):
-        """保存代理列表到本地缓存"""
+        """保存代理列表及验证结果到本地缓存"""
         try:
             import json
             data = {
-                "timestamp": time.time(),
-                "proxies": self._proxies
+                "timestamp": self._last_fetch_time,
+                "proxies": self._proxies,
+                "working_proxies": self._working_proxies,
+                "last_verify_time": self._last_verify_time
             }
             with open(_PROXY_CACHE_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
@@ -207,20 +212,22 @@ class ProxyManager:
 
         return proxies
     
-    def verify_proxies(self, force=False, max_workers=None) -> int:
+    def verify_proxies(self, force=False, max_workers=None, target_count=300) -> int:
         """
         验证代理IP是否可用
         
         Args:
             force: 是否强制重新验证
             max_workers: 并发验证线程数，默认使用 config 中的 PROXY_VERIFY_WORKERS
+            target_count: 目标可用代理数量，达到后提前退出
             
         Returns:
             可用代理数量
         """
         now = time.time()
-        if not force and (now - self._last_verify_time) < self.cache_ttl and self._working_proxies:
-            print(f"[ProxyManager] 使用已验证的代理列表（{len(self._working_proxies)} 个）")
+        # 如果不是强制验证，且上次验证结果在 6 小时 (21600 秒) 以内，直接使用
+        if not force and (now - self._last_verify_time) < 21600 and self._working_proxies:
+            print(f"[ProxyManager] 使用缓存的验证代理列表（{len(self._working_proxies)} 个，上次验证于 {int((now - self._last_verify_time)/60)} 分钟前）")
             return len(self._working_proxies)
         
         if not self._proxies:
@@ -236,7 +243,7 @@ class ProxyManager:
         # 验证超时取配置值，但不超过 5 秒以加速验证
         verify_timeout = min(PROXY_VERIFY_TIMEOUT, 5)
         
-        print(f"[ProxyManager] 开始验证 {len(self._proxies)} 个代理（并发数: {max_workers}，超时: {verify_timeout}s）...")
+        print(f"[ProxyManager] 开始验证 {len(self._proxies)} 个代理（并发数: {max_workers}，超时: {verify_timeout}s，目标数: {target_count}）...")
         
         working = []
         total = len(self._proxies)
@@ -297,6 +304,12 @@ class ProxyManager:
                 result = future.result()
                 if result:
                     working.append(result)
+                    if len(working) >= target_count:
+                        print(f"[ProxyManager] 已获取足够可用代理 ({len(working)} 个)，提前结束验证。")
+                        for f in futures:
+                            if not f.done():
+                                f.cancel()
+                        break
                 # 每验证 50 个打印一次进度
                 if verified_count % 50 == 0 or verified_count == total:
                     elapsed = time.time() - start_time
@@ -306,16 +319,76 @@ class ProxyManager:
             self._working_proxies = working
             self._last_verify_time = time.time()
         
+        # 将验证成功后的 working_proxies 保存到磁盘缓存
+        self._save_cache()
+        
         elapsed = time.time() - start_time
         print(f"[ProxyManager] 验证完成: {len(working)}/{total} 个代理可用（总耗时 {elapsed:.1f}s）")
         
         return len(working)
     
+    def report_failure(self, proxy_url: str):
+        """
+        当使用代理发生网络失败或连接超时等异常时，调用该方法安全剔除该代理
+        """
+        if not proxy_url:
+            return
+            
+        with self._lock:
+            try:
+                parts = proxy_url.split("://", 1)
+                protocol = parts[0]
+                address = parts[1]
+                
+                initial_len = len(self._working_proxies)
+                self._working_proxies = [
+                    p for p in self._working_proxies
+                    if not (p["protocol"] == protocol and p["address"] == address)
+                ]
+                
+                # 清理线程独占绑定中该失效代理的分配记录
+                tids_to_del = [tid for tid, p_url in self._thread_proxy_map.items() if p_url == proxy_url]
+                for tid in tids_to_del:
+                    del self._thread_proxy_map[tid]
+                    
+                if len(self._working_proxies) < initial_len:
+                    print(f"[ProxyManager] 剔除失效代理: {proxy_url}，当前剩余可用: {len(self._working_proxies)} 个")
+                    self._save_cache()
+            except Exception as e:
+                print(f"[ProxyManager] 剔除代理失败: {e}")
+
+    def check_and_replenish(self, threshold=200, target_count=300):
+        """
+        如果当前可用代理数少于 threshold，启动异步后台守护线程进行补充，直至 target_count
+        """
+        with self._lock:
+            if len(self._working_proxies) >= threshold or self._is_replenishing:
+                return
+            self._is_replenishing = True
+            
+        def _run():
+            try:
+                print(f"[ProxyManager] 可用代理数仅剩 {len(self._working_proxies)}，低于阈值 {threshold}，启动后台线程自动补充...")
+                # 强制重新拉取
+                self.fetch_proxies(force=True)
+                # 重新验证并补足
+                self.verify_proxies(force=True, target_count=target_count)
+            except Exception as e:
+                print(f"[ProxyManager] 后台补充代理出现异常: {e}")
+            finally:
+                with self._lock:
+                    self._is_replenishing = False
+
+        threading.Thread(target=_run, daemon=True).start()
+
     def get_thread_exclusive_proxy(self) -> Optional[str]:
         """
         根据线程 ID 进行无重复队列轮询（Round-Robin），
         确保任意时刻一个代理 IP 尽可能只被一个活动线程独占使用。
         """
+        # 前置检测并执行动态补充
+        self.check_and_replenish(threshold=200, target_count=300)
+        
         import threading
         current_thread_id = threading.get_ident()
         
