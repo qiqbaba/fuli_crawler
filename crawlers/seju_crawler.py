@@ -9,10 +9,11 @@ from bs4 import BeautifulSoup
 from curl_cffi import requests
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
-from config import USER_AGENTS, is_local_mode
+from config import USER_AGENTS, is_local_mode, ENABLE_PROXY_MANAGER
 from crawlers.base_crawler import BaseCrawler
 from utils.r2_uploader import get_r2_uploader
 from utils.date_parser import parse_date
+from utils.proxy_manager import get_proxy_string, get_proxy_dict, get_proxy_manager
 
 
 def sanitize_filename(filename):
@@ -75,9 +76,18 @@ class SejuCrawler(BaseCrawler):
             
             ua = random.choice(USER_AGENTS)
             playwright_proxy = None
+            
+            # 优先使用环境变量配置的代理
+            from config import CRAWLER_PROXY
             if CRAWLER_PROXY:
                 playwright_proxy = {"server": CRAWLER_PROXY}
-                print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理: {CRAWLER_PROXY}")
+                print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理 (环境变量): {CRAWLER_PROXY}")
+            elif ENABLE_PROXY_MANAGER:
+                # 使用代理管理器获取随机代理
+                proxy_url = get_proxy_string()
+                if proxy_url:
+                    playwright_proxy = {"server": proxy_url}
+                    print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理 (代理管理器): {proxy_url}")
             
             context = None
             browser = None
@@ -189,12 +199,17 @@ class SejuCrawler(BaseCrawler):
     def _http_get(self, url, timeout=20):
         """使用 curl_cffi 模拟浏览器获取 URL，处理反爬和编码。返回 (final_url, html_text)"""
         try:
-            from config import CRAWLER_PROXY
             ua = random.choice(USER_AGENTS)
             headers = {"User-Agent": ua}
             proxies = None
+            
+            # 优先使用环境变量配置的代理
+            from config import CRAWLER_PROXY
             if CRAWLER_PROXY:
                 proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
+            elif ENABLE_PROXY_MANAGER:
+                # 使用代理管理器获取随机代理
+                proxies = get_proxy_dict()
             
             r = requests.get(url, headers=headers, impersonate="chrome120", timeout=timeout, proxies=proxies)
             r.encoding = 'utf-8'
@@ -210,12 +225,17 @@ class SejuCrawler(BaseCrawler):
     def _http_get_binary(self, url, timeout=25):
         """使用 curl_cffi 下载二进制文件（如图片）"""
         try:
-            from config import CRAWLER_PROXY
             ua = random.choice(USER_AGENTS)
             headers = {"User-Agent": ua}
             proxies = None
+            
+            # 优先使用环境变量配置的代理
+            from config import CRAWLER_PROXY
             if CRAWLER_PROXY:
                 proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
+            elif ENABLE_PROXY_MANAGER:
+                # 使用代理管理器获取随机代理
+                proxies = get_proxy_dict()
             
             r = requests.get(url, headers=headers, impersonate="chrome120", timeout=timeout, proxies=proxies)
             if r.status_code == 200:
@@ -228,7 +248,7 @@ class SejuCrawler(BaseCrawler):
             return None
 
     def on_start(self):
-        """初始化 R2 上传器"""
+        """初始化 R2 上传器和代理管理器"""
         self.r2_uploader = get_r2_uploader()
         if self.r2_uploader:
             print("[*] Cloudflare R2 上传器已启用")
@@ -237,6 +257,17 @@ class SejuCrawler(BaseCrawler):
                 print("[*] 本地模式已激活，PDF 将保存到本地目录")
             else:
                 print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录")
+        
+        # 初始化代理管理器
+        if ENABLE_PROXY_MANAGER:
+            print("[*] 代理管理器已启用，正在获取和验证代理IP...")
+            manager = get_proxy_manager()
+            if manager:
+                from config import PROXY_VERIFY_WORKERS
+                manager.fetch_proxies(force=True)
+                manager.verify_proxies(force=True, max_workers=PROXY_VERIFY_WORKERS)
+                stats = manager.get_stats()
+                print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个")
 
     def on_finish(self):
         """释放所有线程的 Playwright 资源并清理临时目录"""

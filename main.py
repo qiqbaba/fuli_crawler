@@ -112,6 +112,12 @@ def main():
             print(f"[*] 未检测到 Supabase 配置，使用本地 SQLite 数据库: {db_path}")
         db_manager = DBManager(db_path)
     
+    # 检查代理管理器是否启用
+    from config import ENABLE_PROXY_MANAGER
+    if ENABLE_PROXY_MANAGER:
+        print(f"[*] 代理管理器已启用 (ENABLE_PROXY_MANAGER=true)")
+        print(f"[*] 代理将在爬虫启动时自动获取和验证")
+    
     # 动态匹配爬虫
     crawler = None
     default_end = 1
