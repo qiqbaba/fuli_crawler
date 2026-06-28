@@ -120,8 +120,40 @@ CRAWLER_PROXY = os.environ.get("CRAWLER_PROXY", "")
 # 是否启用自动代理管理（从免费代理源获取并轮换代理）
 ENABLE_PROXY_MANAGER = os.environ.get("ENABLE_PROXY_MANAGER", "false").lower() == "true"
 # 代理缓存有效期（秒），默认5分钟
-PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "300"))
+PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "43200"))
 # 代理验证超时时间（秒）
 PROXY_VERIFY_TIMEOUT = int(os.environ.get("PROXY_VERIFY_TIMEOUT", "10"))
 # 代理验证并发线程数
 PROXY_VERIFY_WORKERS = int(os.environ.get("PROXY_VERIFY_WORKERS", "20"))
+
+# ========== 运行时代理覆盖（由 main.py 命令行参数设置） ==========
+_runtime_proxy_override = None
+_runtime_disable_proxy = False
+_runtime_enable_proxy_manager = None
+
+
+def set_runtime_proxy(proxy_url, disable_proxy=False, enable_proxy_manager=None):
+    """设置运行时代理参数（通常由 main.py 命令行参数指定）"""
+    global _runtime_proxy_override, _runtime_disable_proxy, _runtime_enable_proxy_manager
+    _runtime_proxy_override = proxy_url
+    _runtime_disable_proxy = disable_proxy
+    if enable_proxy_manager is not None:
+        _runtime_enable_proxy_manager = enable_proxy_manager
+
+
+def get_crawler_proxy():
+    """获取当前生效的固定代理地址（支持运行时覆盖）"""
+    if _runtime_disable_proxy:
+        return ""
+    if _runtime_proxy_override is not None:
+        return _runtime_proxy_override
+    return CRAWLER_PROXY
+
+
+def is_proxy_manager_enabled():
+    """判断代理管理器是否启用（支持运行时覆盖）"""
+    if _runtime_disable_proxy:
+        return False
+    if _runtime_enable_proxy_manager is not None:
+        return _runtime_enable_proxy_manager
+    return ENABLE_PROXY_MANAGER

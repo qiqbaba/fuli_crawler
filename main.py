@@ -75,6 +75,26 @@ def main():
         help="静音模式，减少控制台日志输出 (不打印每个重复跳过的网址)"
     )
     
+    # 代理相关参数
+    parser.add_argument(
+        "--proxy",
+        type=str,
+        default=None,
+        help="指定固定代理地址，格式如 http://host:port 或 http://user:pass@host:port (覆盖环境变量 CRAWLER_PROXY)"
+    )
+    parser.add_argument(
+        "--no-proxy",
+        action="store_true",
+        default=False,
+        help="禁用所有代理 (忽略环境变量 CRAWLER_PROXY 和 ENABLE_PROXY_MANAGER)"
+    )
+    parser.add_argument(
+        "--proxy-manager",
+        action="store_true",
+        default=False,
+        help="启用自动代理管理器 (从免费代理源获取并轮换代理，覆盖环境变量 ENABLE_PROXY_MANAGER)"
+    )
+    
     args = parser.parse_args()
     
     # 如果没有指定 --crawler，进行交互式交互询问
@@ -100,6 +120,27 @@ def main():
         from config import set_run_mode
         set_run_mode(args.mode)
     
+    # 设定代理参数
+    from config import set_runtime_proxy, get_crawler_proxy, is_proxy_manager_enabled
+    set_runtime_proxy(
+        proxy_url=args.proxy,
+        disable_proxy=args.no_proxy,
+        enable_proxy_manager=args.proxy_manager if args.proxy_manager else None
+    )
+    
+    # 打印代理配置信息
+    effective_proxy = get_crawler_proxy()
+    proxy_manager_on = is_proxy_manager_enabled()
+    if args.no_proxy:
+        print(f"[*] 代理已禁用 (--no-proxy)")
+    elif effective_proxy:
+        print(f"[*] 使用固定代理: {effective_proxy}")
+    elif proxy_manager_on:
+        print(f"[*] 代理管理器已启用 (--proxy-manager)")
+        print(f"[*] 代理将在爬虫启动时自动获取和验证")
+    else:
+        print(f"[*] 未配置代理，将直接连接目标网站")
+    
     # 根据环境变量和模式自动选择数据库后端
     if use_supabase():
         print(f"[*] 检测到 Supabase 配置，使用 Supabase PostgreSQL 数据库")
@@ -111,12 +152,6 @@ def main():
         else:
             print(f"[*] 未检测到 Supabase 配置，使用本地 SQLite 数据库: {db_path}")
         db_manager = DBManager(db_path)
-    
-    # 检查代理管理器是否启用
-    from config import ENABLE_PROXY_MANAGER
-    if ENABLE_PROXY_MANAGER:
-        print(f"[*] 代理管理器已启用 (ENABLE_PROXY_MANAGER=true)")
-        print(f"[*] 代理将在爬虫启动时自动获取和验证")
     
     # 动态匹配爬虫
     crawler = None

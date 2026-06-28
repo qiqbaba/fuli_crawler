@@ -9,7 +9,7 @@ import random
 import threading
 import requests
 from typing import List, Optional, Dict
-from config import is_local_mode, PROXY_VERIFY_TIMEOUT, PROXY_CACHE_TTL
+from config import is_local_mode, PROXY_VERIFY_TIMEOUT, PROXY_CACHE_TTL, PROXY_VERIFY_WORKERS
 
 
 # ========== 代理源配置 ==========
@@ -28,6 +28,10 @@ PROXY_SOURCES = {
     # proxy-list.download - 常见 HTTP/HTTPS 代理
     "proxylistdownload_http": "https://proxy-list.download/api/v1/get?type=http",
     "proxylistdownload_https": "https://proxy-list.download/api/v1/get?type=https",
+    # ProxyScraper/ProxyScraper - 每小时自动更新
+    "proxyscraper_http": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/http.txt",
+    "proxyscraper_socks4": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks4.txt",
+    "proxyscraper_socks5": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks5.txt",
 }
 
 # 测试目标URL（用于验证代理是否可用）
@@ -45,12 +49,12 @@ _PROXY_CACHE_FILE = os.path.join(_PROXY_CACHE_DIR, "proxy_cache.json")
 class ProxyManager:
     """代理IP管理器 - 支持从多个源获取、验证和轮换代理IP"""
     
-    def __init__(self, cache_ttl=300):
+    def __init__(self, cache_ttl=43200):
         """
         初始化代理管理器
         
         Args:
-            cache_ttl: 缓存有效期（秒），默认5分钟
+            cache_ttl: 缓存有效期（秒），默认12小时 (43200秒)
         """
         self.cache_ttl = cache_ttl
         self._proxies: List[Dict[str, str]] = []  # [{"protocol": "http", "address": "ip:port", "source": "..."}]
@@ -202,13 +206,13 @@ class ProxyManager:
 
         return proxies
     
-    def verify_proxies(self, force=False, max_workers=10) -> int:
+    def verify_proxies(self, force=False, max_workers=None) -> int:
         """
         验证代理IP是否可用
         
         Args:
             force: 是否强制重新验证
-            max_workers: 并发验证线程数
+            max_workers: 并发验证线程数，默认使用 config 中的 PROXY_VERIFY_WORKERS
             
         Returns:
             可用代理数量
@@ -225,13 +229,28 @@ class ProxyManager:
             print("[ProxyManager] 没有可验证的代理")
             return 0
         
-        print(f"[ProxyManager] 开始验证 {len(self._proxies)} 个代理（并发数: {max_workers}）...")
+        if max_workers is None:
+            max_workers = PROXY_VERIFY_WORKERS
+        
+        # 验证超时取配置值，但不超过 5 秒以加速验证
+        verify_timeout = min(PROXY_VERIFY_TIMEOUT, 5)
+        
+        print(f"[ProxyManager] 开始验证 {len(self._proxies)} 个代理（并发数: {max_workers}，超时: {verify_timeout}s）...")
         
         working = []
-        test_url = "https://api.myip.com"
+        total = len(self._proxies)
+        verified_count = 0
+        start_time = time.time()
+        
+        # 轻量级测试 URL 列表（按速度排序，优先用快的）
+        test_urls = [
+            "http://httpbin.org/ip",
+            "https://api.myip.com",
+            "https://www.cloudflare.com",
+        ]
         
         def verify_proxy(proxy):
-            """验证单个代理"""
+            """验证单个代理 - 使用轻量级 HEAD 请求加速"""
             protocol = proxy["protocol"]
             address = proxy["address"]
             proxy_url = f"{protocol}://{address}"
@@ -241,17 +260,31 @@ class ProxyManager:
                 "https": proxy_url,
             }
             
-            try:
-                resp = requests.get(
-                    test_url,
-                    proxies=proxies_dict,
-                    timeout=PROXY_VERIFY_TIMEOUT,
-                    headers={"User-Agent": "Mozilla/5.0"}
-                )
-                if resp.status_code == 200 and "ip" in resp.text:
-                    return proxy
-            except Exception:
-                pass
+            # 优先尝试 HEAD 请求（更快），失败再尝试 GET
+            for test_url in test_urls:
+                try:
+                    resp = requests.head(
+                        test_url,
+                        proxies=proxies_dict,
+                        timeout=verify_timeout,
+                        headers={"User-Agent": "Mozilla/5.0"}
+                    )
+                    if resp.status_code < 500:
+                        return proxy
+                except Exception:
+                    pass
+                # HEAD 失败，尝试 GET（某些服务器不支持 HEAD）
+                try:
+                    resp = requests.get(
+                        test_url,
+                        proxies=proxies_dict,
+                        timeout=verify_timeout,
+                        headers={"User-Agent": "Mozilla/5.0"}
+                    )
+                    if resp.status_code == 200:
+                        return proxy
+                except Exception:
+                    pass
             return None
         
         # 使用线程池并发验证
@@ -259,15 +292,21 @@ class ProxyManager:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {executor.submit(verify_proxy, p): p for p in self._proxies}
             for future in concurrent.futures.as_completed(futures):
+                verified_count += 1
                 result = future.result()
                 if result:
                     working.append(result)
+                # 每验证 50 个打印一次进度
+                if verified_count % 50 == 0 or verified_count == total:
+                    elapsed = time.time() - start_time
+                    print(f"[ProxyManager]   进度: {verified_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
         
         with self._lock:
             self._working_proxies = working
             self._last_verify_time = time.time()
         
-        print(f"[ProxyManager] 验证完成: {len(working)}/{len(self._proxies)} 个代理可用")
+        elapsed = time.time() - start_time
+        print(f"[ProxyManager] 验证完成: {len(working)}/{total} 个代理可用（总耗时 {elapsed:.1f}s）")
         
         return len(working)
     
@@ -342,7 +381,8 @@ def get_proxy_manager() -> Optional[ProxyManager]:
     if _proxy_manager is None:
         # 仅在本地模式下启用代理管理（云端使用环境变量配置）
         if is_local_mode():
-            _proxy_manager = ProxyManager()
+            from config import PROXY_CACHE_TTL
+            _proxy_manager = ProxyManager(cache_ttl=PROXY_CACHE_TTL)
         else:
             return None
     return _proxy_manager
@@ -419,7 +459,7 @@ if __name__ == "__main__":
     
     # 验证代理
     if count > 0:
-        working = manager.verify_proxies(force=True, max_workers=20)
+        working = manager.verify_proxies(force=True, max_workers=100)
         print(f"可用代理: {working} 个")
         
         # 显示统计

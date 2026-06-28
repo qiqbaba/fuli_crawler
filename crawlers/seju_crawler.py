@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 from curl_cffi import requests
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
-from config import USER_AGENTS, is_local_mode, ENABLE_PROXY_MANAGER
+from config import USER_AGENTS, is_local_mode
 from crawlers.base_crawler import BaseCrawler
 from utils.r2_uploader import get_r2_uploader
 from utils.date_parser import parse_date
@@ -77,12 +77,13 @@ class SejuCrawler(BaseCrawler):
             ua = random.choice(USER_AGENTS)
             playwright_proxy = None
             
-            # 优先使用环境变量配置的代理
-            from config import CRAWLER_PROXY
-            if CRAWLER_PROXY:
-                playwright_proxy = {"server": CRAWLER_PROXY}
-                print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理 (环境变量): {CRAWLER_PROXY}")
-            elif ENABLE_PROXY_MANAGER:
+            # 优先使用运行时配置的代理
+            from config import get_crawler_proxy, is_proxy_manager_enabled
+            crawler_proxy = get_crawler_proxy()
+            if crawler_proxy:
+                playwright_proxy = {"server": crawler_proxy}
+                print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理: {crawler_proxy}")
+            elif is_proxy_manager_enabled():
                 # 使用代理管理器获取随机代理
                 proxy_url = get_proxy_string()
                 if proxy_url:
@@ -203,11 +204,12 @@ class SejuCrawler(BaseCrawler):
             headers = {"User-Agent": ua}
             proxies = None
             
-            # 优先使用环境变量配置的代理
-            from config import CRAWLER_PROXY
-            if CRAWLER_PROXY:
-                proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
-            elif ENABLE_PROXY_MANAGER:
+            # 优先使用运行时配置的代理
+            from config import get_crawler_proxy, is_proxy_manager_enabled
+            crawler_proxy = get_crawler_proxy()
+            if crawler_proxy:
+                proxies = {"http": crawler_proxy, "https": crawler_proxy}
+            elif is_proxy_manager_enabled():
                 # 使用代理管理器获取随机代理
                 proxies = get_proxy_dict()
             
@@ -229,11 +231,12 @@ class SejuCrawler(BaseCrawler):
             headers = {"User-Agent": ua}
             proxies = None
             
-            # 优先使用环境变量配置的代理
-            from config import CRAWLER_PROXY
-            if CRAWLER_PROXY:
-                proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
-            elif ENABLE_PROXY_MANAGER:
+            # 优先使用运行时配置的代理
+            from config import get_crawler_proxy, is_proxy_manager_enabled
+            crawler_proxy = get_crawler_proxy()
+            if crawler_proxy:
+                proxies = {"http": crawler_proxy, "https": crawler_proxy}
+            elif is_proxy_manager_enabled():
                 # 使用代理管理器获取随机代理
                 proxies = get_proxy_dict()
             
@@ -259,7 +262,8 @@ class SejuCrawler(BaseCrawler):
                 print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录")
         
         # 初始化代理管理器
-        if ENABLE_PROXY_MANAGER:
+        from config import is_proxy_manager_enabled
+        if is_proxy_manager_enabled():
             print("[*] 代理管理器已启用，正在获取和验证代理IP...")
             manager = get_proxy_manager()
             if manager:

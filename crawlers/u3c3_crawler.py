@@ -3,7 +3,7 @@ import random
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-from config import USER_AGENTS, ENABLE_PROXY_MANAGER
+from config import USER_AGENTS
 from crawlers.base_crawler import BaseCrawler
 from utils.proxy_manager import get_proxy_dict, get_proxy_manager
 
@@ -22,7 +22,8 @@ class U3c3Crawler(BaseCrawler):
 
     def on_start(self):
         """初始化代理管理器"""
-        if ENABLE_PROXY_MANAGER:
+        from config import is_proxy_manager_enabled
+        if is_proxy_manager_enabled():
             print("[*] 代理管理器已启用，正在获取和验证代理IP...")
             from config import PROXY_VERIFY_WORKERS
             manager = get_proxy_manager()
@@ -41,10 +42,11 @@ class U3c3Crawler(BaseCrawler):
         
         # 获取代理配置
         proxies = None
-        from config import CRAWLER_PROXY
-        if CRAWLER_PROXY:
-            proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
-        elif ENABLE_PROXY_MANAGER:
+        from config import get_crawler_proxy, is_proxy_manager_enabled
+        crawler_proxy = get_crawler_proxy()
+        if crawler_proxy:
+            proxies = {"http": crawler_proxy, "https": crawler_proxy}
+        elif is_proxy_manager_enabled():
             proxies = get_proxy_dict()
         
         for attempt in range(3):
