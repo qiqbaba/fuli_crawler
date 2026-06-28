@@ -3,8 +3,9 @@ import random
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-from config import USER_AGENTS
+from config import USER_AGENTS, ENABLE_PROXY_MANAGER
 from crawlers.base_crawler import BaseCrawler
+from utils.proxy_manager import get_proxy_dict, get_proxy_manager
 
 try:
     from utils.pikpak_extractor import get_pikpak_link
@@ -19,6 +20,18 @@ class U3c3Crawler(BaseCrawler):
         self.max_consecutive_existing = None
         self.max_consecutive_duplicate_pages = 3
 
+    def on_start(self):
+        """初始化代理管理器"""
+        if ENABLE_PROXY_MANAGER:
+            print("[*] 代理管理器已启用，正在获取和验证代理IP...")
+            from config import PROXY_VERIFY_WORKERS
+            manager = get_proxy_manager()
+            if manager:
+                manager.fetch_proxies(force=True)
+                manager.verify_proxies(force=True, max_workers=PROXY_VERIFY_WORKERS)
+                stats = manager.get_stats()
+                print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个")
+
     def fetch_list_page(self, page_num):
         """抓取页面 HTML 内容，包含重试逻辑"""
         url = self.base_url.format(page_num)
@@ -26,9 +39,17 @@ class U3c3Crawler(BaseCrawler):
             "User-Agent": random.choice(USER_AGENTS)
         }
         
+        # 获取代理配置
+        proxies = None
+        from config import CRAWLER_PROXY
+        if CRAWLER_PROXY:
+            proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
+        elif ENABLE_PROXY_MANAGER:
+            proxies = get_proxy_dict()
+        
         for attempt in range(3):
             try:
-                response = requests.get(url, headers=headers, timeout=20)
+                response = requests.get(url, headers=headers, timeout=20, proxies=proxies)
                 if response.status_code == 200:
                     return response.text
                 print(f"[*] 页面 {page_num} 抓取失败 (HTTP {response.status_code})，尝试重试 ({attempt + 1}/3)...")

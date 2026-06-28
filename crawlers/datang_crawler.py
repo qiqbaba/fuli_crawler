@@ -10,9 +10,10 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright
 
-from config import USER_AGENTS, is_local_mode
+from config import USER_AGENTS, is_local_mode, ENABLE_PROXY_MANAGER
 from crawlers.base_crawler import BaseCrawler
 from utils.r2_uploader import get_r2_uploader
+from utils.proxy_manager import get_proxy_string, get_proxy_dict
 
 
 def sanitize_filename(filename):
@@ -133,7 +134,7 @@ class DatangCrawler(BaseCrawler):
             return ""
 
     def on_start(self):
-        """初始化 R2 上传器"""
+        """初始化 R2 上传器和代理管理器"""
         self.r2_uploader = get_r2_uploader()
         if self.r2_uploader:
             print("[*] Cloudflare R2 上传器已启用")
@@ -142,6 +143,18 @@ class DatangCrawler(BaseCrawler):
                 print("[*] 本地模式已激活，PDF 将保存到本地目录")
             else:
                 print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录")
+        
+        # 初始化代理管理器
+        if ENABLE_PROXY_MANAGER:
+            print("[*] 代理管理器已启用，正在获取和验证代理IP...")
+            from utils.proxy_manager import get_proxy_manager
+            from config import PROXY_VERIFY_WORKERS
+            manager = get_proxy_manager()
+            if manager:
+                manager.fetch_proxies(force=True)
+                manager.verify_proxies(force=True, max_workers=PROXY_VERIFY_WORKERS)
+                stats = manager.get_stats()
+                print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个")
 
     def on_finish(self):
         """释放 Playwright 渲染资源"""
@@ -190,8 +203,15 @@ class DatangCrawler(BaseCrawler):
             ]
             
             playwright_proxy = None
+            # 优先使用环境变量配置的代理
             if CRAWLER_PROXY:
                 playwright_proxy = {"server": CRAWLER_PROXY}
+            elif ENABLE_PROXY_MANAGER:
+                # 使用代理管理器获取随机代理
+                proxy_url = get_proxy_string()
+                if proxy_url:
+                    playwright_proxy = {"server": proxy_url}
+                    print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理 (代理管理器): {proxy_url}")
                 
             browser = p.chromium.launch(headless=True, args=launch_args, proxy=playwright_proxy)
             
@@ -356,10 +376,18 @@ class DatangCrawler(BaseCrawler):
             # 全局限速
             self._rate_limit()
             
+            # 获取代理配置
+            proxies = None
+            from config import CRAWLER_PROXY
+            if CRAWLER_PROXY:
+                proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
+            elif ENABLE_PROXY_MANAGER:
+                proxies = get_proxy_dict()
+            
             # 1. 优先使用 requests
             for attempt in range(2):
                 try:
-                    response = requests.get(url, headers=headers, timeout=15)
+                    response = requests.get(url, headers=headers, timeout=15, proxies=proxies)
                     if response.status_code == 200:
                         decrypted = self.decrypt_html(response.text)
                         if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
@@ -473,10 +501,18 @@ class DatangCrawler(BaseCrawler):
             # 全局限速
             self._rate_limit()
             
+            # 获取代理配置
+            proxies = None
+            from config import CRAWLER_PROXY
+            if CRAWLER_PROXY:
+                proxies = {"http": CRAWLER_PROXY, "https": CRAWLER_PROXY}
+            elif ENABLE_PROXY_MANAGER:
+                proxies = get_proxy_dict()
+            
             # 1. 优先使用 requests
             for attempt in range(2):
                 try:
-                    response = requests.get(url, headers=headers, timeout=15)
+                    response = requests.get(url, headers=headers, timeout=15, proxies=proxies)
                     if response.status_code == 200:
                         decrypted = self.decrypt_html(response.text)
                         if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:

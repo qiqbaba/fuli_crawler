@@ -115,3 +115,13 @@ USER_AGENTS = [
 # ========== 爬虫全局代理 ==========
 # 可在 GitHub Secrets 或本地环境变量中配置，格式如 http://user:pass@host:port 或 http://host:port
 CRAWLER_PROXY = os.environ.get("CRAWLER_PROXY", "")
+
+# ========== 代理IP管理器配置 ==========
+# 是否启用自动代理管理（从免费代理源获取并轮换代理）
+ENABLE_PROXY_MANAGER = os.environ.get("ENABLE_PROXY_MANAGER", "false").lower() == "true"
+# 代理缓存有效期（秒），默认5分钟
+PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "300"))
+# 代理验证超时时间（秒）
+PROXY_VERIFY_TIMEOUT = int(os.environ.get("PROXY_VERIFY_TIMEOUT", "10"))
+# 代理验证并发线程数
+PROXY_VERIFY_WORKERS = int(os.environ.get("PROXY_VERIFY_WORKERS", "20"))
