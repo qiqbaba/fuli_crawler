@@ -52,7 +52,7 @@ class U3c3Crawler(BaseCrawler):
                 proxies = get_proxy_dict()
             
             try:
-                response = requests.get(url, headers=headers, timeout=20, proxies=proxies)
+                response = requests.get(url, headers=headers, timeout=20, proxies=proxies, impersonate="chrome120")
                 if response.status_code == 200:
                     return response.text
                 print(f"[*] 页面 {page_num} 抓取失败 (HTTP {response.status_code})，尝试重试 ({attempt + 1}/3)...")

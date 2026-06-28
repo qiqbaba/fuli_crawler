@@ -132,8 +132,9 @@ class BaseCrawler:
 
             # 正式爬取模式
             for page_num in range(start_page, end_page + 1):
-                # Bug 8 修复：每页开始时重置连续已存在计数，避免跨页累积导致误触早停
-                consecutive_count = 0
+                # Bug 3 修复：删除每页开始时重置 consecutive_count 的错误逻辑。
+                # 早停计数应该跨页连续累计，只有当发现真正新数据时才重置，
+                # 页首重置会导致“连续 N 条已存在则停止”的语义完全失效。
                 
                 is_gha = os.environ.get('GITHUB_ACTIONS') == 'true'
                 if is_gha:
@@ -207,7 +208,7 @@ class BaseCrawler:
                     print(f"[*] 开始并发处理 {len(items_to_process)} 条新纪录 (并发线程数: {max_workers})...")
                     
                     inserted_count = 0
-                    results = []
+                    results_dict = {}
                     
                     # 2. 抓取与解析子网页
                     if max_workers == 1:
@@ -218,7 +219,7 @@ class BaseCrawler:
                                 if res:
                                     _, data = res
                                     if data:
-                                        results.append(data)
+                                        results_dict[idx] = data
                             except Exception as e:
                                 print(f"[-] 处理索引为 [{idx}] 的项目时发生异常: {e}")
                     else:
@@ -237,10 +238,13 @@ class BaseCrawler:
                                     if res:
                                         _, data = res
                                         if data:
-                                            results.append(data)
+                                            results_dict[idx] = data
                                 except Exception as e:
                                     print(f"[-] 线程处理索引为 [{idx}] 的项目时发生异常: {e}")
-                    
+
+                    # 按原始索引顺序重建结果列表，保证入库顺序与提交顺序一致
+                    results = [results_dict[idx] for idx in sorted(results_dict.keys())]
+
                     # 3. 主线程顺序入库并处理早停
                     if results:
                         print(f"[*] 正在写入 {len(results)} 条新纪录到数据库...")

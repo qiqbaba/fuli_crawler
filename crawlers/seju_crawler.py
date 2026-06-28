@@ -126,7 +126,8 @@ class SejuCrawler(BaseCrawler):
                     print(f"[-] 启动持久化上下文均失败: {e2}。尝试普通方式启动。")
             
             if context:
-                browser = context.browser
+                # Bug 5 修复：persistent context 的 .browser 可能返回 None，不单独保存
+                browser = context.browser  # 注意：持久化 context 下此值可能为 None，on_finish 中需判断
             else:
                 # 极端回退情况
                 browser = p.chromium.launch(headless=headless, args=launch_args)
@@ -277,6 +278,9 @@ class SejuCrawler(BaseCrawler):
                 manager = get_proxy_manager()
                 if manager and "http" in proxies:
                     manager.report_failure(proxies["http"])
+            elif proxies and crawler_proxy:
+                # Bug 7 修复：固定代理失败时记录日志，提醒用户固定代理可能失效
+                print(f"[!] 固定代理请求异常，请检查代理是否有效: {crawler_proxy}")
             return url, None
  
     def _http_get_binary(self, url, timeout=25):
@@ -311,6 +315,9 @@ class SejuCrawler(BaseCrawler):
                 manager = get_proxy_manager()
                 if manager and "http" in proxies:
                     manager.report_failure(proxies["http"])
+            elif proxies and crawler_proxy:
+                # Bug 7 修复：固定代理失败时记录日志，提醒用户固定代理可能失效
+                print(f"[!] 固定代理二进制请求异常，请检查代理是否有效: {crawler_proxy}")
             return None
 
     def on_start(self):
@@ -354,7 +361,8 @@ class SejuCrawler(BaseCrawler):
                     print(f"[-] 关闭 Context 失败: {e}")
                 
                 try:
-                    if browser:
+                    # Bug 5 修复：持久化 context 下 browser 可能为 None，安全判断后再关闭
+                    if browser is not None:
                         browser.close()
                 except Exception as e:
                     if "cannot switch to a different thread" not in str(e):
@@ -481,7 +489,13 @@ class SejuCrawler(BaseCrawler):
         保存 PDF：使用 Playwright 将 HTML 内容离线渲染并保存为 PDF。
         若配置了 R2 则上传并返回 R2 Key，否则返回本地路径。
         """
+        # 确保日期有效，避免生成 Unknown_Date 文件名
+        if not publish_date or publish_date == "Unknown_Date":
+            from datetime import datetime
+            publish_date = datetime.now().strftime("%Y-%m-%d")
+            
         local_path = self._get_pdf_local_tmp_path(publish_date, title)
+        page = None
         try:
             _, _, context = self._get_thread_resources()
             page = context.new_page()
@@ -496,6 +510,11 @@ class SejuCrawler(BaseCrawler):
             print(f"[+] PDF 已保存至临时路径: {local_path}")
         except Exception as e:
             print(f"[-] PDF 生成失败: {e}")
+            if page:
+                try:
+                    page.close()
+                except:
+                    pass
             return ""
 
         if self.r2_uploader:
@@ -527,7 +546,7 @@ class SejuCrawler(BaseCrawler):
         html_text = None
         current_url = sub_url
         
-        # 1. 优先使用 curl_cffi 尝试直接拉取（高概率直接穿盾，防无头检测）
+        # 2. 优先使用 curl_cffi 尝试直接拉取（高概率直接穿盾，防无头检测）
         try:
             final_url, curl_html = self._http_get(sub_url, timeout=25)
             if curl_html and "Just a moment..." not in curl_html and "cloudflare" not in curl_html.lower():
@@ -539,7 +558,7 @@ class SejuCrawler(BaseCrawler):
         except Exception as curl_err:
             print(f"[{idx}] curl_cffi 抓取异常: {curl_err}，转向 Playwright...")
             
-        # 2. Playwright 兜底方案
+        # 3. Playwright 兜底方案
         if not html_text:
             sub_page = None
             try:
@@ -583,7 +602,7 @@ class SejuCrawler(BaseCrawler):
         parsed_url = urlparse(current_url)
         is_external = self.target_domain not in parsed_url.netloc
 
-        # 2. 检查重定向后的真实链接是否已存在
+        # 4. 检查重定向后的真实链接是否已存在
         if current_url != sub_url:
             if self.db_manager.check_url_exists(current_url) and not self.is_test:
                 print(f"[{idx}] 重定向后的真实网址已存在，跳过抓取: {current_url}")
@@ -595,7 +614,8 @@ class SejuCrawler(BaseCrawler):
                 print(f"检测到跳转至外部网站: {current_url}")
                 soup = BeautifulSoup(html_text, 'html.parser')
                 title = soup.title.string.strip() if soup.title else "外部链接"
-                pub_time = ""
+                pub_time = ""      # Bug 1 修复：is_external 分支中初始化 pub_time，防止 NameError
+                content_html = ""  # Bug 1 修复：is_external 分支中初始化 content_html，防止 NameError
                 category = "外部跳转"
                 res_link = current_url
                 link_type = "外链"
@@ -711,11 +731,17 @@ class SejuCrawler(BaseCrawler):
                 if self.is_test:
                     print("-> 测试模式下跳过保存 PDF 以节省时间")
                 else:
+                    import html as html_escape
+                    safe_title = html_escape.escape(title)
+                    safe_pub_time = html_escape.escape(pub_time)
+                    safe_category = html_escape.escape(category)
+                    safe_current_url = html_escape.escape(current_url)
+                    # content_html 来自 BeautifulSoup 解析，本身是合法 HTML，无需转义
                     html_template = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>{title}</title>
+    <title>{safe_title}</title>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif;
@@ -779,11 +805,11 @@ class SejuCrawler(BaseCrawler):
     </style>
 </head>
 <body>
-    <h1>{title}</h1>
+    <h1>{safe_title}</h1>
     <div class="meta">
-        <span><strong>发布时间:</strong> {pub_time}</span>
-        <span><strong>分类:</strong> {category}</span>
-        <span><strong>来源:</strong> <a href="{current_url}">{current_url}</a></span>
+        <span><strong>发布时间:</strong> {safe_pub_time}</span>
+        <span><strong>分类:</strong> {safe_category}</span>
+        <span><strong>来源:</strong> <a href="{safe_current_url}">{safe_current_url}</a></span>
     </div>
     <div class="content">
         {content_html}
@@ -794,7 +820,9 @@ class SejuCrawler(BaseCrawler):
 </body>
 </html>
 """
-                    saved_path = self._save_pdf(html_template, pub_time, title)
+                    # 使用安全的日期字符串作为 PDF 文件名，避免 Unknown_Date
+                    pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"
+                    saved_path = self._save_pdf(html_template, pdf_date, title)
                     data['pdf_path'] = saved_path
             else:
                 print("-> 外部网站，已跳过 PDF 保存")
