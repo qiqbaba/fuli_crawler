@@ -33,7 +33,7 @@ PROXY_SOURCES = {
 # 测试目标URL（用于验证代理是否可用）
 PROXY_TEST_URLS = [
     "https://www.cloudflare.com",
-    "https://httpbin.org/ip",
+    "https://api.myip.com",
     "https://www.baidu.com",
 ]
 
@@ -228,7 +228,7 @@ class ProxyManager:
         print(f"[ProxyManager] 开始验证 {len(self._proxies)} 个代理（并发数: {max_workers}）...")
         
         working = []
-        test_url = "https://httpbin.org/ip"
+        test_url = "https://api.myip.com"
         
         def verify_proxy(proxy):
             """验证单个代理"""
@@ -248,7 +248,7 @@ class ProxyManager:
                     timeout=PROXY_VERIFY_TIMEOUT,
                     headers={"User-Agent": "Mozilla/5.0"}
                 )
-                if resp.status_code == 200 and "origin" in resp.text:
+                if resp.status_code == 200 and "ip" in resp.text:
                     return proxy
             except Exception:
                 pass
