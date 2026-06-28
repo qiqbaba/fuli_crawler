@@ -60,7 +60,7 @@ def main():
         "--workers", "-w",
         type=int,
         default=None,
-        help="并发线程数 (默认: seju为3, u3c3为30, datang为40)"
+        help="并发线程数 (默认: Playwright爬虫seju/datang为10, 其他爬虫u3c3为50)"
     )
     parser.add_argument(
         "--no-early-stop",
@@ -161,17 +161,17 @@ def main():
         crawler = SejuCrawler(db_manager)
         default_end = 4
         if args.workers is None:
-            args.workers = 3
+            args.workers = 10
     elif args.crawler == "u3c3":
         crawler = U3c3Crawler(db_manager)
         default_end = 20
         if args.workers is None:
-            args.workers = 30
+            args.workers = 50
     elif args.crawler == "datang":
         crawler = DatangCrawler(db_manager)
         default_end = 60
         if args.workers is None:
-            args.workers = 5
+            args.workers = 10
         
     if crawler is None:
         print(f"[-] 找不到指定的爬虫: {args.crawler}")

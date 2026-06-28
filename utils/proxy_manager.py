@@ -63,6 +63,7 @@ class ProxyManager:
         self._last_fetch_time = 0
         self._last_verify_time = 0
         self._current_proxy_idx = 0
+        self._thread_proxy_map: Dict[int, str] = {}  # thread_id -> proxy_url
         
         # 确保缓存目录存在
         os.makedirs(_PROXY_CACHE_DIR, exist_ok=True)
@@ -310,32 +311,69 @@ class ProxyManager:
         
         return len(working)
     
-    def get_random_proxy(self) -> Optional[str]:
+    def get_thread_exclusive_proxy(self) -> Optional[str]:
         """
-        随机获取一个可用代理
+        根据线程 ID 进行无重复队列轮询（Round-Robin），
+        确保任意时刻一个代理 IP 尽可能只被一个活动线程独占使用。
+        """
+        import threading
+        current_thread_id = threading.get_ident()
         
-        Returns:
-            代理URL字符串，如 "http://123.45.67.89:8080"，如果没有可用代理则返回 None
-        """
         with self._lock:
             if not self._working_proxies:
                 return None
-            proxy = random.choice(self._working_proxies)
-            return f"{proxy['protocol']}://{proxy['address']}"
+                
+            # 1. 清理已死亡线程的分配记录
+            active_thread_ids = {t.ident for t in threading.enumerate() if t.ident is not None}
+            dead_threads = [tid for tid in self._thread_proxy_map if tid not in active_thread_ids]
+            for tid in dead_threads:
+                del self._thread_proxy_map[tid]
+                
+            # 2. 如果当前线程已经分配了代理，直接返回已分配的
+            if current_thread_id in self._thread_proxy_map:
+                return self._thread_proxy_map[current_thread_id]
+                
+            # 3. 找出所有正在被活动线程使用的代理
+            in_use_proxies = set(self._thread_proxy_map.values())
+            
+            # 获取所有可用代理 URL
+            all_proxy_urls = [f"{p['protocol']}://{p['address']}" for p in self._working_proxies]
+            
+            # 4. 寻找未被占用的代理
+            available_proxies = [p for p in all_proxy_urls if p not in in_use_proxies]
+            
+            if available_proxies:
+                # 还有未占用的代理，通过轮询顺序选择一个，并记录分配
+                selected_proxy = available_proxies[self._current_proxy_idx % len(available_proxies)]
+                self._current_proxy_idx += 1
+                self._thread_proxy_map[current_thread_id] = selected_proxy
+                return selected_proxy
+            else:
+                # 所有代理都在使用中（线程数 > 代理数），则分配当前分配给最少线程的代理
+                proxy_usage = {p: 0 for p in all_proxy_urls}
+                for p in self._thread_proxy_map.values():
+                    if p in proxy_usage:
+                        proxy_usage[p] += 1
+                
+                min_usage = min(proxy_usage.values())
+                candidates = [p for p, usage in proxy_usage.items() if usage == min_usage]
+                
+                selected_proxy = candidates[self._current_proxy_idx % len(candidates)]
+                self._current_proxy_idx += 1
+                self._thread_proxy_map[current_thread_id] = selected_proxy
+                return selected_proxy
+                
+    def get_random_proxy(self) -> Optional[str]:
+        """
+        获取当前线程独占的代理（原随机获取改为独占队列轮询模式）
+        """
+        return self.get_thread_exclusive_proxy()
     
     def get_next_proxy(self) -> Optional[str]:
         """
-        按顺序获取下一个代理（轮询方式）
-        
-        Returns:
-            代理URL字符串
+        按顺序获取当前线程独占的代理（原普通轮询改为独占队列轮询模式）
         """
-        with self._lock:
-            if not self._working_proxies:
-                return None
-            proxy = self._working_proxies[self._current_proxy_idx % len(self._working_proxies)]
-            self._current_proxy_idx += 1
-            return f"{proxy['protocol']}://{proxy['address']}"
+        return self.get_thread_exclusive_proxy()
     
     def get_proxy_for_requests(self) -> Optional[Dict[str, str]]:
         """
