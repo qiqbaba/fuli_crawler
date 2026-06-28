@@ -257,19 +257,32 @@ class ProxyManager:
             "https://www.cloudflare.com",
         ]
         
+
+
+        # Bug 8 修复：用 threading.Event 传递停止信号
+        # future.cancel() 只能取消「尚未开始」的任务，无法中断正在运行的线程。
+        # 改为在 verify_proxy 内部检查 stop_event，达到目标数后通知所有线程自行结束。
+        import threading as _threading
+        stop_event = _threading.Event()
+
         def verify_proxy(proxy):
-            """验证单个代理 - 使用轻量级 HEAD 请求加速"""
+            """验证单个代理 - 使用轻量级 HEAD 请求加速，支持提前停止信号"""
+            # Bug 8 修复：先检查停止信号，避免在已有足够代理时继续占用资源
+            if stop_event.is_set():
+                return None
             protocol = proxy["protocol"]
             address = proxy["address"]
             proxy_url = f"{protocol}://{address}"
-            
+
             proxies_dict = {
                 "http": proxy_url,
                 "https": proxy_url,
             }
-            
+
             # 优先尝试 HEAD 请求（更快），失败再尝试 GET
             for test_url in test_urls:
+                if stop_event.is_set():
+                    return None
                 try:
                     resp = requests.head(
                         test_url,
@@ -282,6 +295,8 @@ class ProxyManager:
                 except Exception:
                     pass
                 # HEAD 失败，尝试 GET（某些服务器不支持 HEAD）
+                if stop_event.is_set():
+                    return None
                 try:
                     resp = requests.get(
                         test_url,
@@ -294,7 +309,7 @@ class ProxyManager:
                 except Exception:
                     pass
             return None
-        
+
         # 使用线程池并发验证
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -305,26 +320,25 @@ class ProxyManager:
                 if result:
                     working.append(result)
                     if len(working) >= target_count:
-                        print(f"[ProxyManager] 已获取足够可用代理 ({len(working)} 个)，提前结束验证。")
-                        for f in futures:
-                            if not f.done():
-                                f.cancel()
+                        print(f"[ProxyManager] 已获取足够可用代理 ({len(working)} 个)，正在通知剩余线程退出...")
+                        # Bug 8 修复：设置停止信号，让正在运行的线程自行退出
+                        stop_event.set()
                         break
                 # 每验证 50 个打印一次进度
                 if verified_count % 50 == 0 or verified_count == total:
                     elapsed = time.time() - start_time
                     print(f"[ProxyManager]   进度: {verified_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
-        
+
         with self._lock:
             self._working_proxies = working
             self._last_verify_time = time.time()
-        
+
         # 将验证成功后的 working_proxies 保存到磁盘缓存
         self._save_cache()
-        
+
         elapsed = time.time() - start_time
         print(f"[ProxyManager] 验证完成: {len(working)}/{total} 个代理可用（总耗时 {elapsed:.1f}s）")
-        
+
         return len(working)
     
     def report_failure(self, proxy_url: str):
@@ -333,29 +347,36 @@ class ProxyManager:
         """
         if not proxy_url:
             return
-            
+
+        should_save = False
         with self._lock:
             try:
                 parts = proxy_url.split("://", 1)
                 protocol = parts[0]
                 address = parts[1]
-                
+
                 initial_len = len(self._working_proxies)
                 self._working_proxies = [
                     p for p in self._working_proxies
                     if not (p["protocol"] == protocol and p["address"] == address)
                 ]
-                
+
                 # 清理线程独占绑定中该失效代理的分配记录
                 tids_to_del = [tid for tid, p_url in self._thread_proxy_map.items() if p_url == proxy_url]
                 for tid in tids_to_del:
                     del self._thread_proxy_map[tid]
-                    
+
                 if len(self._working_proxies) < initial_len:
                     print(f"[ProxyManager] 剔除失效代理: {proxy_url}，当前剩余可用: {len(self._working_proxies)} 个")
-                    self._save_cache()
+                    should_save = True  # 标记需要保存，但在锁外执行
             except Exception as e:
                 print(f"[ProxyManager] 剔除代理失败: {e}")
+
+        # Bug 4 修复：_save_cache() 涉及文件 I/O（json.dump），
+        # 在持有锁期间调用会导致高并发（50线程）时所有线程阻塞等待。
+        # 将 I/O 操作移到锁外执行，彻底消除该问题。
+        if should_save:
+            self._save_cache()
 
     def check_and_replenish(self, threshold=200, target_count=300):
         """

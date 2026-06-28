@@ -41,11 +41,17 @@ def parse_date(date_str):
         return str(now.year), now.strftime("%Y-%m-%d")
         
     # 格式5: MM-DD (默认今年)
+    # Bug 11 修复：增加负向前瞻 (?!\d) 和负向后顾，防止误匹配四位数字中的片段
+    # 例如 "10-11-2024" 应已被格式1捕获；此处只匹配纯粹的 MM-DD 格式
     match_short = re.search(r'(?<!\d)(\d{1,2})[-/月](\d{1,2})(?:日)?(?!\d)', date_str)
     if match_short:
-        year = str(now.year)
-        month = match_short.group(1).zfill(2)
-        day = match_short.group(2).zfill(2)
-        return year, f"{year}-{month}-{day}"
+        month_val = int(match_short.group(1))
+        day_val = int(match_short.group(2))
+        # 月份范围验证：防止误匹配（如 "13-32" 这类无效日期）
+        if 1 <= month_val <= 12 and 1 <= day_val <= 31:
+            year = str(now.year)
+            month = str(month_val).zfill(2)
+            day = str(day_val).zfill(2)
+            return year, f"{year}-{month}-{day}"
         
     return "Unknown_Year", "Unknown_Date"

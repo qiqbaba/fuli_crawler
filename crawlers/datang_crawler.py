@@ -111,7 +111,7 @@ class DatangCrawler(BaseCrawler):
     def decrypt_html(self, raw_html):
         """解密目标网站动态混淆的 HTML"""
         # 寻找最长的 Base64-like 字符候选（仅含 Base64 字符且长度大于 1000）
-        candidates = re.findall(r"['\"]([A-Za-z0-9+/=]{1000,})['\"]", raw_html)
+        candidates = re.findall(r'''['""]([A-Za-z0-9+/=]{1000,})['"]''', raw_html)
         if not candidates:
             return None
         
@@ -178,14 +178,11 @@ class DatangCrawler(BaseCrawler):
                 except Exception:
                     pass
             self._active_resources.clear()
-            
-        # 清除 thread_local 上的属性以防止多板块循环时重用已停止的 Playwright 实例
-        if hasattr(self.thread_local, "playwright"):
-            delattr(self.thread_local, "playwright")
-        if hasattr(self.thread_local, "browser"):
-            delattr(self.thread_local, "browser")
-        if hasattr(self.thread_local, "context"):
-            delattr(self.thread_local, "context")
+
+        # Bug 2 修复：thread_local 属性是线程私有的，在主线程中 delattr 工作线程的
+        # thread_local 完全无效（每个线程只能看到自己的 thread_local 属性）。
+        # 工作线程自己的 thread_local 清理已由 _recreate_thread_resources 负责。
+        # 这里正确做法是什么都不做，资源已通过 _active_resources 循环关闭。
             
         self.db_manager.commit()
 
@@ -240,7 +237,6 @@ class DatangCrawler(BaseCrawler):
 
     def _recreate_thread_resources(self):
         """清理当前线程的 Playwright 资源，以便下一次重新创建"""
-        import threading
         print(f"[*] 线程 {threading.get_ident()} 检测到代理失效，正在重构 Playwright 资源...")
         p = getattr(self.thread_local, "playwright", None)
         browser = getattr(self.thread_local, "browser", None)
@@ -422,18 +418,10 @@ class DatangCrawler(BaseCrawler):
             # 全局限速
             self._rate_limit()
             
-            # 获取代理配置
-            proxies = None
-            from config import get_crawler_proxy, is_proxy_manager_enabled
-            crawler_proxy = get_crawler_proxy()
-            if crawler_proxy:
-                proxies = {"http": crawler_proxy, "https": crawler_proxy}
-            elif is_proxy_manager_enabled():
-                proxies = get_proxy_dict()
-            
+            # Bug 10 修复：删除外层冗余死代码，代理配置统一在内层循环中按需获取
             # 1. 优先使用 requests
             for attempt in range(2):
-                # 每次重试重新获取代理配置
+                # 每次重试重新获取代理配置（确保拿到最新可用代理）
                 proxies = None
                 from config import get_crawler_proxy, is_proxy_manager_enabled
                 crawler_proxy = get_crawler_proxy()
@@ -554,6 +542,7 @@ class DatangCrawler(BaseCrawler):
         time.sleep(random.uniform(2.0, 5.0))
         
         detail_html = None
+        url = original_url  # Bug 6 修复：提前初始化 url，避免循环外 NameError
         
         # 最多尝试轮换所有域名的次数
         for _ in range(len(self.domains)):
@@ -574,18 +563,10 @@ class DatangCrawler(BaseCrawler):
             # 全局限速
             self._rate_limit()
             
-            # 获取代理配置
-            proxies = None
-            from config import get_crawler_proxy, is_proxy_manager_enabled
-            crawler_proxy = get_crawler_proxy()
-            if crawler_proxy:
-                proxies = {"http": crawler_proxy, "https": crawler_proxy}
-            elif is_proxy_manager_enabled():
-                proxies = get_proxy_dict()
-            
+            # Bug 10 修复：删除外层冗余死代码，代理配置统一在内层循环中按需获取
             # 1. 优先使用 requests
             for attempt in range(2):
-                # 每次重试重新获取代理配置
+                # 每次重试重新获取代理配置（确保拿到最新可用代理）
                 proxies = None
                 from config import get_crawler_proxy, is_proxy_manager_enabled
                 crawler_proxy = get_crawler_proxy()
@@ -639,7 +620,8 @@ class DatangCrawler(BaseCrawler):
             self._rotate_domain()
 
         if not detail_html:
-            print(f"[-] 详情页 {url} 抓取失败")
+            # Bug 6 修复：使用 original_url 而非循环内局部 url，确保错误日志准确
+            print(f"[-] 详情页 {original_url} 抓取失败（最终尝试 URL: {url}）")
             return False, None
 
         # 提取磁力链接
@@ -653,7 +635,7 @@ class DatangCrawler(BaseCrawler):
                 magnet_link = magnet_match.group(0)
 
         if not magnet_link:
-            print(f"[-] 在详情页中未找到磁力链接: {url}")
+            print(f"[-] 在详情页中未找到磁力链接: {original_url}")
             return False, None
 
         size_val = ""
@@ -703,7 +685,7 @@ class DatangCrawler(BaseCrawler):
             print("-> 测试模式下跳过保存 PDF 以节省时间")
         else:
             saved_pdf = self._save_pdf(url, date_str, raw_item['title'])
-            data['pdf_path'] = saved_pdf
+            data['pdf_path'] = saved_pdf if saved_pdf else ''
 
         return is_existing, data
 
