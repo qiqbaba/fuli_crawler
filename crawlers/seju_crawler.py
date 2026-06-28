@@ -197,6 +197,54 @@ class SejuCrawler(BaseCrawler):
         print(f"[-] 智能等待 Cloudflare 结束，但当前页面 Title 依然为: '{page.title()}'")
         return False
  
+    def _recreate_thread_resources(self):
+        """清理当前线程的 Playwright 资源，以便下一次重新创建"""
+        import threading
+        print(f"[*] 线程 {threading.get_ident()} 检测到代理失效，正在重构 Playwright 资源...")
+        p = getattr(self.thread_local, "playwright", None)
+        browser = getattr(self.thread_local, "browser", None)
+        context = getattr(self.thread_local, "context", None)
+        profile_dir = getattr(self.thread_local, "profile_dir", None)
+        
+        try:
+            if context:
+                context.close()
+        except:
+            pass
+        try:
+            if browser:
+                browser.close()
+        except:
+            pass
+        try:
+            if p:
+                p.stop()
+        except:
+            pass
+            
+        with self._resources_lock:
+            self._active_resources = [
+                item for item in self._active_resources
+                if item[0] != p
+            ]
+            
+        if profile_dir and os.path.exists(profile_dir):
+            try:
+                shutil.rmtree(profile_dir)
+            except:
+                pass
+                
+        if hasattr(self.thread_local, "playwright"):
+            del self.thread_local.playwright
+        if hasattr(self.thread_local, "browser"):
+            del self.thread_local.browser
+        if hasattr(self.thread_local, "context"):
+            del self.thread_local.context
+        if hasattr(self.thread_local, "profile_dir"):
+            del self.thread_local.profile_dir
+        if hasattr(self.thread_local, "list_page"):
+            del self.thread_local.list_page
+
     def _http_get(self, url, timeout=20):
         """使用 curl_cffi 模拟浏览器获取 URL，处理反爬和编码。返回 (final_url, html_text)"""
         try:
@@ -219,9 +267,17 @@ class SejuCrawler(BaseCrawler):
                 return r.url, r.text
             else:
                 print(f"[-] HTTP 请求失败 ({url}): 状态码 {r.status_code}")
+                if r.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
+                    manager = get_proxy_manager()
+                    if manager and "http" in proxies:
+                        manager.report_failure(proxies["http"])
                 return url, None
         except Exception as e:
             print(f"[-] HTTP 请求异常 ({url}): {e}")
+            if proxies and is_proxy_manager_enabled():
+                manager = get_proxy_manager()
+                if manager and "http" in proxies:
+                    manager.report_failure(proxies["http"])
             return url, None
  
     def _http_get_binary(self, url, timeout=25):
@@ -245,9 +301,17 @@ class SejuCrawler(BaseCrawler):
                 return r.content
             else:
                 print(f"[-] 二进制下载失败 ({url}): 状态码 {r.status_code}")
+                if r.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
+                    manager = get_proxy_manager()
+                    if manager and "http" in proxies:
+                        manager.report_failure(proxies["http"])
                 return None
         except Exception as e:
             print(f"[-] 二进制下载异常 ({url}): {e}")
+            if proxies and is_proxy_manager_enabled():
+                manager = get_proxy_manager()
+                if manager and "http" in proxies:
+                    manager.report_failure(proxies["http"])
             return None
 
     def on_start(self):
@@ -346,6 +410,14 @@ class SejuCrawler(BaseCrawler):
             return page.content()
         except Exception as e:
             print(f"[-] Playwright 列表页 {list_url} 抓取异常: {e}")
+            from config import is_proxy_manager_enabled
+            if is_proxy_manager_enabled():
+                manager = get_proxy_manager()
+                if manager:
+                    proxy_url = manager._thread_proxy_map.get(threading.get_ident())
+                    if proxy_url:
+                        manager.report_failure(proxy_url)
+            self._recreate_thread_resources()
             return None
 
     def parse_list_page(self, list_page_html, page_num):
@@ -490,6 +562,14 @@ class SejuCrawler(BaseCrawler):
                 html_text = sub_page.content()
             except Exception as err:
                 print(f"[-] 使用 Playwright 抓取子页面 {sub_url} 异常: {err}")
+                from config import is_proxy_manager_enabled
+                if is_proxy_manager_enabled():
+                    manager = get_proxy_manager()
+                    if manager:
+                        proxy_url = manager._thread_proxy_map.get(threading.get_ident())
+                        if proxy_url:
+                            manager.report_failure(proxy_url)
+                self._recreate_thread_resources()
             finally:
                 if sub_page:
                     try:

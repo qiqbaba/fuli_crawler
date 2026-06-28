@@ -238,6 +238,43 @@ class DatangCrawler(BaseCrawler):
                 
         return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
 
+    def _recreate_thread_resources(self):
+        """清理当前线程的 Playwright 资源，以便下一次重新创建"""
+        import threading
+        print(f"[*] 线程 {threading.get_ident()} 检测到代理失效，正在重构 Playwright 资源...")
+        p = getattr(self.thread_local, "playwright", None)
+        browser = getattr(self.thread_local, "browser", None)
+        context = getattr(self.thread_local, "context", None)
+        
+        try:
+            if context:
+                context.close()
+        except:
+            pass
+        try:
+            if browser:
+                browser.close()
+        except:
+            pass
+        try:
+            if p:
+                p.stop()
+        except:
+            pass
+            
+        with self._resources_lock:
+            self._active_resources = [
+                item for item in self._active_resources
+                if item[0] != p
+            ]
+                
+        if hasattr(self.thread_local, "playwright"):
+            del self.thread_local.playwright
+        if hasattr(self.thread_local, "browser"):
+            del self.thread_local.browser
+        if hasattr(self.thread_local, "context"):
+            del self.thread_local.context
+
     def _get_pdf_local_tmp_path(self, publish_date, title):
         """获取 PDF 本地路径 (带 source_name 尾缀)"""
         if self.r2_uploader:
@@ -389,6 +426,15 @@ class DatangCrawler(BaseCrawler):
             
             # 1. 优先使用 requests
             for attempt in range(2):
+                # 每次重试重新获取代理配置
+                proxies = None
+                from config import get_crawler_proxy, is_proxy_manager_enabled
+                crawler_proxy = get_crawler_proxy()
+                if crawler_proxy:
+                    proxies = {"http": crawler_proxy, "https": crawler_proxy}
+                elif is_proxy_manager_enabled():
+                    proxies = get_proxy_dict()
+                
                 try:
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies)
                     if response.status_code == 200:
@@ -397,9 +443,18 @@ class DatangCrawler(BaseCrawler):
                             return decrypted
                     elif response.status_code == 403:
                         print(f"[!] 列表页返回 403，疑似触发反爬: {url}")
+                        if proxies and is_proxy_manager_enabled():
+                            from utils.proxy_manager import get_proxy_manager
+                            manager = get_proxy_manager()
+                            if manager and "http" in proxies:
+                                manager.report_failure(proxies["http"])
                         break  # 跳出重试，直接换域名
-                except Exception:
-                    pass
+                except Exception as e:
+                    if proxies and is_proxy_manager_enabled():
+                        from utils.proxy_manager import get_proxy_manager
+                        manager = get_proxy_manager()
+                        if manager and "http" in proxies:
+                            manager.report_failure(proxies["http"])
                 time.sleep(random.uniform(2.0, 4.0))
                 
             # 2. 兜底使用 Playwright
@@ -418,6 +473,14 @@ class DatangCrawler(BaseCrawler):
                     return decrypted
             except Exception as e:
                 print(f"[-] Playwright 兜底抓取列表页异常: {e}")
+                if is_proxy_manager_enabled():
+                    from utils.proxy_manager import get_proxy_manager
+                    manager = get_proxy_manager()
+                    if manager:
+                        proxy_url = manager._thread_proxy_map.get(threading.get_ident())
+                        if proxy_url:
+                            manager.report_failure(proxy_url)
+                self._recreate_thread_resources()
                 
             # 当前域名请求失败或解密结果为虚假发布页，冷却等待后轮换域名重试
             print(f"[!] 当前域名疑似被封，冷却等待后切换...")
@@ -515,6 +578,15 @@ class DatangCrawler(BaseCrawler):
             
             # 1. 优先使用 requests
             for attempt in range(2):
+                # 每次重试重新获取代理配置
+                proxies = None
+                from config import get_crawler_proxy, is_proxy_manager_enabled
+                crawler_proxy = get_crawler_proxy()
+                if crawler_proxy:
+                    proxies = {"http": crawler_proxy, "https": crawler_proxy}
+                elif is_proxy_manager_enabled():
+                    proxies = get_proxy_dict()
+                
                 try:
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies)
                     if response.status_code == 200:
