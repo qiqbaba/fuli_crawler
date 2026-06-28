@@ -132,6 +132,9 @@ class BaseCrawler:
 
             # 正式爬取模式
             for page_num in range(start_page, end_page + 1):
+                # Bug 8 修复：每页开始时重置连续已存在计数，避免跨页累积导致误触早停
+                consecutive_count = 0
+                
                 is_gha = os.environ.get('GITHUB_ACTIONS') == 'true'
                 if is_gha:
                     print(f"::group::正在抓取第 {page_num}/{end_page} 页", flush=True)

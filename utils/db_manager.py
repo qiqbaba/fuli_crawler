@@ -5,7 +5,9 @@ class DBManager:
     """本地 SQLite 数据库管理器（本地开发使用）"""
     def __init__(self, db_path):
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path, check_same_thread=False, isolation_level=None)
+        # Bug 5 修复：使用默认隔离级别（DEFERRED），而非 isolation_level=None（autocommit）
+        # 这样 commit() 调用才有实际意义，保证事务一致性
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.cursor = self.conn.cursor()
         self.lock = threading.Lock()
         self.init_db()

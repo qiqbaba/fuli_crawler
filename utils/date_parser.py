@@ -17,15 +17,18 @@ def parse_date(date_str):
         return year, f"{year}-{month}-{day}"
         
     # 格式2: X个月前
-    match_month_ago = re.search(r'(\d+)\s*个月前[（(]?(\d{1,2})[^\d]+(\d{1,2})[）)]?', date_str)
+    match_month_ago = re.search(r'(\d+)\s*个月前(?:[（(]?(\d{1,2})[^\d]+(\d{1,2})[）)])?', date_str)
     if match_month_ago:
         months_ago = int(match_month_ago.group(1))
-        month = match_month_ago.group(2).zfill(2)
-        day = match_month_ago.group(3).zfill(2)
-        total_months = now.year * 12 + now.month - 1
-        target_year = str((total_months - months_ago) // 12)
-        return target_year, f"{target_year}-{month}-{day}"
-        
+        # 计算目标年份和月份，避免跨年错误
+        total_months = now.year * 12 + now.month - 1 - months_ago
+        target_year = total_months // 12
+        target_month = total_months % 12 + 1
+        if match_month_ago.group(2) and match_month_ago.group(3):
+            month = match_month_ago.group(2).zfill(2)
+            day = match_month_ago.group(3).zfill(2)
+            return str(target_year), f"{target_year}-{month}-{day}"
+        return str(target_year), f"{target_year}-{str(target_month).zfill(2)}-{now.strftime('%d')}"        
     # 格式3: X天前
     match_day_ago = re.search(r'(\d+)\s*天前', date_str)
     if match_day_ago:

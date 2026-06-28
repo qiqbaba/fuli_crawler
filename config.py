@@ -135,7 +135,9 @@ _runtime_enable_proxy_manager = None
 def set_runtime_proxy(proxy_url, disable_proxy=False, enable_proxy_manager=None):
     """设置运行时代理参数（通常由 main.py 命令行参数指定）"""
     global _runtime_proxy_override, _runtime_disable_proxy, _runtime_enable_proxy_manager
-    _runtime_proxy_override = proxy_url
+    # Bug 9 修复：只有当 proxy_url 不为 None 时才设置覆盖值，避免空字符串覆盖环境变量配置
+    if proxy_url is not None:
+        _runtime_proxy_override = proxy_url
     _runtime_disable_proxy = disable_proxy
     if enable_proxy_manager is not None:
         _runtime_enable_proxy_manager = enable_proxy_manager
