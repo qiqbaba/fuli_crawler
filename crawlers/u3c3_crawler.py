@@ -1,6 +1,6 @@
 import time
 import random
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from config import USER_AGENTS

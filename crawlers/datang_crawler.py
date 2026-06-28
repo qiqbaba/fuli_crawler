@@ -301,7 +301,13 @@ class DatangCrawler(BaseCrawler):
 
     def _save_pdf(self, target_url, publish_date, title):
         """直接用 Playwright 打开详情页并保存为 PDF"""
+        # 确保日期有效，避免生成 Unknown_Date 文件名
+        if not publish_date or publish_date == "Unknown_Date":
+            from datetime import datetime
+            publish_date = datetime.now().strftime("%Y-%m-%d")
+            
         local_path = self._get_pdf_local_tmp_path(publish_date, title)
+        page = None
         try:
             _, _, context = self._get_thread_resources()
             page = context.new_page()
@@ -350,11 +356,12 @@ class DatangCrawler(BaseCrawler):
             print(f"[+] PDF 已保存至临时路径: {local_path}")
         except Exception as e:
             print(f"[-] PDF 生成失败: {e}")
-            try:
-                page.close()
-            except:
-                pass
-            return ""
+            if page:
+                try:
+                    page.close()
+                except:
+                    pass
+            return None
 
 
         if self.r2_uploader:
