@@ -40,23 +40,32 @@ class U3c3Crawler(BaseCrawler):
             "User-Agent": random.choice(USER_AGENTS)
         }
         
-        # 获取代理配置
-        proxies = None
         from config import get_crawler_proxy, is_proxy_manager_enabled
-        crawler_proxy = get_crawler_proxy()
-        if crawler_proxy:
-            proxies = {"http": crawler_proxy, "https": crawler_proxy}
-        elif is_proxy_manager_enabled():
-            proxies = get_proxy_dict()
         
         for attempt in range(3):
+            # 获取代理配置
+            proxies = None
+            crawler_proxy = get_crawler_proxy()
+            if crawler_proxy:
+                proxies = {"http": crawler_proxy, "https": crawler_proxy}
+            elif is_proxy_manager_enabled():
+                proxies = get_proxy_dict()
+            
             try:
                 response = requests.get(url, headers=headers, timeout=20, proxies=proxies)
                 if response.status_code == 200:
                     return response.text
                 print(f"[*] 页面 {page_num} 抓取失败 (HTTP {response.status_code})，尝试重试 ({attempt + 1}/3)...")
+                if response.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
+                    manager = get_proxy_manager()
+                    if manager and "http" in proxies:
+                        manager.report_failure(proxies["http"])
             except Exception as e:
                 print(f"[*] 页面 {page_num} 抓取异常 ({e})，尝试重试 ({attempt + 1}/3)...")
+                if proxies and is_proxy_manager_enabled():
+                    manager = get_proxy_manager()
+                    if manager and "http" in proxies:
+                        manager.report_failure(proxies["http"])
             time.sleep(random.uniform(2.0, 4.0))
             
         return None
