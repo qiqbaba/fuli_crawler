@@ -8,6 +8,10 @@ import time
 import random
 import threading
 import requests
+import sys
+import asyncio
+import aiohttp
+from aiohttp_socks import ProxyConnector
 from typing import List, Optional, Dict
 from config import is_local_mode, PROXY_VERIFY_TIMEOUT, PROXY_CACHE_TTL, PROXY_VERIFY_WORKERS
 
@@ -242,7 +246,7 @@ class ProxyManager:
         
         Args:
             force: 是否强制重新验证
-            max_workers: 并发验证线程数，默认使用 config 中的 PROXY_VERIFY_WORKERS
+            max_workers: 并发验证协程数，默认使用 config 中的 PROXY_VERIFY_WORKERS
             target_count: 目标可用代理数量，达到后提前退出
             
         Returns:
@@ -267,91 +271,77 @@ class ProxyManager:
         # 验证超时取配置值，但不超过 5 秒以加速验证
         verify_timeout = min(PROXY_VERIFY_TIMEOUT, 5)
         
-        print(f"[ProxyManager] 开始验证 {len(self._proxies)} 个代理（并发数: {max_workers}，超时: {verify_timeout}s，目标数: {target_count}）...")
+        print(f"[ProxyManager] 开始异步验证 {len(self._proxies)} 个代理（并发协程数: {max_workers}，超时: {verify_timeout}s，目标数: {target_count}）...")
         
         working = []
         total = len(self._proxies)
-        verified_count = 0
+        verified_count = [0]
         start_time = time.time()
         
-        # 轻量级测试 URL 列表（按速度排序，优先用快的）
-        test_urls = [
-            "http://httpbin.org/ip",
-            "https://api.myip.com",
-            "https://www.cloudflare.com",
-        ]
+        # 使用百度作为核心测试源
+        test_url = "http://www.baidu.com"
         
-
-
-        # Bug 8 修复：用 threading.Event 传递停止信号
-        # future.cancel() 只能取消「尚未开始」的任务，无法中断正在运行的线程。
-        # 改为在 verify_proxy 内部检查 stop_event，达到目标数后通知所有线程自行结束。
-        import threading as _threading
-        stop_event = _threading.Event()
-
-        def verify_proxy(proxy):
-            """验证单个代理 - 使用轻量级 HEAD 请求加速，支持提前停止信号"""
-            # Bug 8 修复：先检查停止信号，避免在已有足够代理时继续占用资源
+        # 异步事件循环的停止信号与信号量
+        stop_event = asyncio.Event()
+        sem = asyncio.Semaphore(max_workers)
+        
+        async def verify_proxy(proxy):
             if stop_event.is_set():
-                return None
-            protocol = proxy["protocol"]
+                return
+            
+            protocol = proxy["protocol"].lower()
             address = proxy["address"]
             proxy_url = f"{protocol}://{address}"
-
-            proxies_dict = {
-                "http": proxy_url,
-                "https": proxy_url,
-            }
-
-            # 优先尝试 HEAD 请求（更快），失败再尝试 GET
-            for test_url in test_urls:
-                if stop_event.is_set():
-                    return None
-                try:
-                    resp = requests.head(
-                        test_url,
-                        proxies=proxies_dict,
-                        timeout=verify_timeout,
-                        headers={"User-Agent": "Mozilla/5.0"}
-                    )
-                    if resp.status_code < 500:
-                        return proxy
-                except Exception:
-                    pass
-                # HEAD 失败，尝试 GET（某些服务器不支持 HEAD）
-                if stop_event.is_set():
-                    return None
-                try:
-                    resp = requests.get(
-                        test_url,
-                        proxies=proxies_dict,
-                        timeout=verify_timeout,
-                        headers={"User-Agent": "Mozilla/5.0"}
-                    )
-                    if resp.status_code == 200:
-                        return proxy
-                except Exception:
-                    pass
-            return None
-
-        # 使用线程池并发验证
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(verify_proxy, p): p for p in self._proxies}
-            for future in concurrent.futures.as_completed(futures):
-                verified_count += 1
-                result = future.result()
-                if result:
-                    working.append(result)
-                    if len(working) >= target_count:
-                        print(f"[ProxyManager] 已获取足够可用代理 ({len(working)} 个)，正在通知剩余线程退出...")
-                        # Bug 8 修复：设置停止信号，让正在运行的线程自行退出
-                        stop_event.set()
-                        break
-                # 每验证 50 个打印一次进度
-                if verified_count % 50 == 0 or verified_count == total:
+            
+            connector = None
+            client_proxy = None
+            try:
+                # 配置代理类型
+                if protocol in ("socks5", "socks4"):
+                    connector = ProxyConnector.from_url(proxy_url)
+                else:
+                    client_proxy = proxy_url
+                
+                async with sem:
+                    if stop_event.is_set():
+                        return
+                    
+                    # 禁用 SSL 验证，因为我们只需要测试连接和 HTTP 连通性，不用关心证书
+                    async with aiohttp.ClientSession(connector=connector) as session:
+                        async with session.get(
+                            test_url,
+                            proxy=client_proxy,
+                            timeout=aiohttp.ClientTimeout(total=verify_timeout),
+                            headers={"User-Agent": "Mozilla/5.0"},
+                            ssl=False
+                        ) as resp:
+                            if resp.status == 200:
+                                if not stop_event.is_set():
+                                    working.append(proxy)
+                                    if len(working) >= target_count:
+                                        stop_event.set()
+            except Exception:
+                pass
+            finally:
+                verified_count[0] += 1
+                curr_count = verified_count[0]
+                if curr_count % 50 == 0 or curr_count == total:
                     elapsed = time.time() - start_time
-                    print(f"[ProxyManager]   进度: {verified_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
+                    print(f"[ProxyManager]   进度: {curr_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
+
+        async def main_verify():
+            tasks = [asyncio.create_task(verify_proxy(p)) for p in self._proxies]
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        # 为当前线程配置独立的事件循环并同步执行，确保外部同步接口兼容性
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(main_verify())
+        except Exception as e:
+            print(f"[ProxyManager] 异步事件循环发生异常: {e}")
+        finally:
+            loop.close()
 
         with self._lock:
             self._working_proxies = working
@@ -570,21 +560,21 @@ def init_proxy_manager(force_fetch=False, force_verify=False) -> Optional[ProxyM
 
 def get_proxy_string() -> str:
     """
-    获取当前代理字符串（兼容原有的 CRAWLER_PROXY 配置）
-    
-    Returns:
-        代理URL字符串，如果没有可用代理则返回空字符串
+    获取当前代理字符串，遵循 config 的运行时参数覆盖及禁用设置
     """
-    # 优先使用环境变量配置的代理
-    env_proxy = os.environ.get("CRAWLER_PROXY", "")
-    if env_proxy:
-        return env_proxy
+    from config import get_crawler_proxy, is_proxy_manager_enabled
     
-    # 否则使用代理管理器
-    manager = get_proxy_manager()
-    if manager:
-        return manager.get_random_proxy() or ""
-    
+    # 1. 优先使用命令行或环境变量中配置的固定代理
+    fixed_proxy = get_crawler_proxy()
+    if fixed_proxy:
+        return fixed_proxy
+        
+    # 2. 如果没有指定固定代理且启用了代理IP管理器，使用管理器拿随机代理
+    if is_proxy_manager_enabled():
+        manager = get_proxy_manager()
+        if manager:
+            return manager.get_random_proxy() or ""
+            
     return ""
 
 

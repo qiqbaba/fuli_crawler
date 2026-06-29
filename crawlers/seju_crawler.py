@@ -320,6 +320,12 @@ class SejuCrawler(BaseCrawler):
                 print(f"[!] 固定代理二进制请求异常，请检查代理是否有效: {crawler_proxy}")
             return None
 
+    def cleanup_thread_resources(self):
+        """实现基类生命周期钩子，释放当前工作线程持有的 Playwright 资源"""
+        if hasattr(self.thread_local, "playwright"):
+            print(f"[+] 正在自主释放工作线程 {threading.get_ident()} 的 Playwright 资源...")
+            self._recreate_thread_resources()
+
     def on_start(self):
         """初始化 R2 上传器和代理管理器"""
         self.r2_uploader = get_r2_uploader()
@@ -345,43 +351,40 @@ class SejuCrawler(BaseCrawler):
 
     def on_finish(self):
         """释放所有线程的 Playwright 资源并清理临时目录"""
-        print("[*] 正在释放所有线程的 Playwright 资源...")
+        print("[*] 正在释放主线程 Playwright 资源...")
+        # 1. 优先清理主线程自身的资源
+        self.cleanup_thread_resources()
+        
+        # 2. 如果还有残留资源（例如异常中断导致未被 cleanup_thread_resources 释放的工作线程资源），在主线程中做兜底关闭
         with self._resources_lock:
-            for item in self._active_resources:
-                # 兼容 3 元素和 4 元素元组
-                p = item[0]
-                browser = item[1]
-                context = item[2]
-                profile_dir = item[3] if len(item) > 3 else None
-                
-                try:
-                    if context:
-                        context.close()
-                except Exception as e:
-                    print(f"[-] 关闭 Context 失败: {e}")
-                
-                try:
-                    # Bug 5 修复：持久化 context 下 browser 可能为 None，安全判断后再关闭
-                    if browser is not None:
-                        browser.close()
-                except Exception as e:
-                    if "cannot switch to a different thread" not in str(e):
-                        print(f"[-] 关闭浏览器失败: {e}")
-                try:
-                    p.stop()
-                except Exception as e:
-                    if "cannot switch to a different thread" not in str(e):
-                        print(f"[-] 停止 Playwright 失败: {e}")
-                
-                if profile_dir and os.path.exists(profile_dir):
+            if self._active_resources:
+                print(f"[!] 发现 {len(self._active_resources)} 个未被工作线程自主清理的残留资源，执行主线程兜底关闭...")
+                for item in self._active_resources:
+                    p = item[0]
+                    browser = item[1]
+                    context = item[2]
+                    profile_dir = item[3] if len(item) > 3 else None
+                    
                     try:
-                        time.sleep(0.5)
-                        shutil.rmtree(profile_dir)
-                        print(f"[+] 成功清理临时用户数据目录: {profile_dir}")
-                    except Exception as clean_err:
-                        print(f"[-] 清理临时用户数据目录 {profile_dir} 失败: {clean_err}")
-                        
-            self._active_resources.clear()
+                        if context:
+                            context.close()
+                    except:
+                        pass
+                    try:
+                        if browser is not None:
+                            browser.close()
+                    except:
+                        pass
+                    try:
+                        p.stop()
+                    except:
+                        pass
+                    if profile_dir and os.path.exists(profile_dir):
+                        try:
+                            shutil.rmtree(profile_dir)
+                        except:
+                            pass
+                self._active_resources.clear()
         self.db_manager.commit()
 
     def fetch_list_page(self, page_num):

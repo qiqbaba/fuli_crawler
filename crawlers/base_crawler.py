@@ -19,6 +19,10 @@ class BaseCrawler:
         """生命周期钩子：爬网结束后（子类可选覆盖）"""
         pass
 
+    def cleanup_thread_resources(self):
+        """生命周期钩子：释放线程局部资源（子类可选覆盖）"""
+        pass
+
     def fetch_list_page(self, page_num):
         """抓取列表页内容，返回原始页面内容或对象"""
         raise NotImplementedError("子类必须实现 fetch_list_page 方法")
@@ -241,6 +245,18 @@ class BaseCrawler:
                                             results_dict[idx] = data
                                 except Exception as e:
                                     print(f"[-] 线程处理索引为 [{idx}] 的项目时发生异常: {e}")
+
+                            # 并发抓取解析已全部完成，向线程池所有工作线程发送清理指令以释放 Playwright 资源
+                            print("[*] 正在向并发工作线程发送资源清理指令...")
+                            cleanup_futures = [
+                                executor.submit(self.cleanup_thread_resources)
+                                for _ in range(max_workers)
+                            ]
+                            for f in as_completed(cleanup_futures):
+                                try:
+                                    f.result()
+                                except Exception as e:
+                                    print(f"[-] 清理工作线程资源时发生异常: {e}")
 
                     # 按原始索引顺序重建结果列表，保证入库顺序与提交顺序一致
                     results = [results_dict[idx] for idx in sorted(results_dict.keys())]
