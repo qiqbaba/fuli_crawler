@@ -119,7 +119,7 @@ CRAWLER_PROXY = os.environ.get("CRAWLER_PROXY", "")
 # ========== 代理IP管理器配置 ==========
 # 是否启用自动代理管理（从免费代理源获取并轮换代理）
 ENABLE_PROXY_MANAGER = os.environ.get("ENABLE_PROXY_MANAGER", "false").lower() == "true"
-# 代理缓存有效期（秒），默认5分钟
+# 代理缓存有效期（秒），默认12小时（43200秒）
 PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "43200"))
 # 代理验证超时时间（秒）
 PROXY_VERIFY_TIMEOUT = int(os.environ.get("PROXY_VERIFY_TIMEOUT", "10"))

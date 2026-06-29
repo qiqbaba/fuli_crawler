@@ -195,7 +195,11 @@ class SejuCrawler(BaseCrawler):
                 return True
         except:
             pass
-        print(f"[-] 智能等待 Cloudflare 结束，但当前页面 Title 依然为: '{page.title()}'")
+        try:
+            current_title = page.title()
+            print(f"[-] 智能等待 Cloudflare 结束，但当前页面 Title 依然为: '{current_title}'")
+        except Exception:
+            print(f"[-] 智能等待 Cloudflare 结束，但无法获取页面标题（页面可能已关闭）")
         return False
  
     def _recreate_thread_resources(self):
@@ -247,10 +251,11 @@ class SejuCrawler(BaseCrawler):
 
     def _http_get(self, url, timeout=20):
         """使用 curl_cffi 模拟浏览器获取 URL，处理反爬和编码。返回 (final_url, html_text)"""
+        proxies = None
+        crawler_proxy = None
         try:
             ua = random.choice(USER_AGENTS)
             headers = {"User-Agent": ua}
-            proxies = None
             
             # 优先使用运行时配置的代理
             from config import get_crawler_proxy, is_proxy_manager_enabled
@@ -278,17 +283,17 @@ class SejuCrawler(BaseCrawler):
                 manager = get_proxy_manager()
                 if manager and "http" in proxies:
                     manager.report_failure(proxies["http"])
-            elif proxies and crawler_proxy:
-                # Bug 7 修复：固定代理失败时记录日志，提醒用户固定代理可能失效
+            elif crawler_proxy:
                 print(f"[!] 固定代理请求异常，请检查代理是否有效: {crawler_proxy}")
             return url, None
  
     def _http_get_binary(self, url, timeout=25):
         """使用 curl_cffi 下载二进制文件（如图片）"""
+        proxies = None
+        crawler_proxy = None
         try:
             ua = random.choice(USER_AGENTS)
             headers = {"User-Agent": ua}
-            proxies = None
             
             # 优先使用运行时配置的代理
             from config import get_crawler_proxy, is_proxy_manager_enabled
@@ -315,8 +320,7 @@ class SejuCrawler(BaseCrawler):
                 manager = get_proxy_manager()
                 if manager and "http" in proxies:
                     manager.report_failure(proxies["http"])
-            elif proxies and crawler_proxy:
-                # Bug 7 修复：固定代理失败时记录日志，提醒用户固定代理可能失效
+            elif crawler_proxy:
                 print(f"[!] 固定代理二进制请求异常，请检查代理是否有效: {crawler_proxy}")
             return None
 

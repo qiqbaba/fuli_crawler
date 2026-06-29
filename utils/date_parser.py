@@ -1,5 +1,12 @@
 import re
+import calendar
 from datetime import datetime, timedelta
+
+def _safe_date(year, month, day):
+    """校验年月日是否合法，非法时自动修正（day 超出该月范围时取最大值）"""
+    max_day = calendar.monthrange(year, month)[1]
+    safe_day = min(day, max_day)
+    return f"{year}-{str(month).zfill(2)}-{str(safe_day).zfill(2)}"
 
 def parse_date(date_str):
     """从字符串中提取/推算年份和格式化日期 (YYYY-MM-DD)"""
@@ -11,10 +18,10 @@ def parse_date(date_str):
     # 格式1: YYYY-MM-DD 或类似
     match_full = re.search(r'(\d{4})[^\d]+(\d{1,2})[^\d]+(\d{1,2})', date_str)
     if match_full:
-        year = match_full.group(1)
-        month = match_full.group(2).zfill(2)
-        day = match_full.group(3).zfill(2)
-        return year, f"{year}-{month}-{day}"
+        year = int(match_full.group(1))
+        month = int(match_full.group(2))
+        day = int(match_full.group(3))
+        return str(year), _safe_date(year, month, day)
         
     # 格式2: X个月前
     match_month_ago = re.search(r'(\d+)\s*个?月前(?:[（(]?(\d{1,2})[^\d]+(\d{1,2})[）)])?', date_str)
@@ -25,10 +32,11 @@ def parse_date(date_str):
         target_year = total_months // 12
         target_month = total_months % 12 + 1
         if match_month_ago.group(2) and match_month_ago.group(3):
-            month = match_month_ago.group(2).zfill(2)
-            day = match_month_ago.group(3).zfill(2)
-            return str(target_year), f"{target_year}-{month}-{day}"
-        return str(target_year), f"{target_year}-{str(target_month).zfill(2)}-{now.strftime('%d')}"        
+            month = int(match_month_ago.group(2))
+            day = int(match_month_ago.group(3))
+            return str(target_year), _safe_date(target_year, month, day)
+        safe_day = min(int(now.strftime('%d')), calendar.monthrange(target_year, target_month)[1])
+        return str(target_year), f"{target_year}-{str(target_month).zfill(2)}-{str(safe_day).zfill(2)}"        
     # 格式3: X天前
     match_day_ago = re.search(r'(\d+)\s*天前', date_str)
     if match_day_ago:
@@ -49,9 +57,6 @@ def parse_date(date_str):
         day_val = int(match_short.group(2))
         # 月份范围验证：防止误匹配（如 "13-32" 这类无效日期）
         if 1 <= month_val <= 12 and 1 <= day_val <= 31:
-            year = str(now.year)
-            month = str(month_val).zfill(2)
-            day = str(day_val).zfill(2)
-            return year, f"{year}-{month}-{day}"
+            return str(now.year), _safe_date(now.year, month_val, day_val)
         
     return "Unknown_Year", "Unknown_Date"
