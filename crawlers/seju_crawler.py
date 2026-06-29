@@ -540,11 +540,8 @@ class SejuCrawler(BaseCrawler):
         """
         处理单个子页面的抓取、信息提取、PDF 保存/上传。
         """
-        # 1. 检查子页面链接是否已存在
-        is_existing = self.db_manager.check_url_exists(sub_url)
-        if is_existing and not self.is_test:
-            print(f"[{idx}] 网址已存在数据库中，跳过抓取: {sub_url}")
-            return True, None
+        # 1. 检查子页面链接是否已存在 (外部 BaseCrawler 已进行过批量去重过滤)
+        is_existing = False
 
         html_text = None
         current_url = sub_url

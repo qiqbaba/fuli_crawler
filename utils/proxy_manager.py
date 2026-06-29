@@ -281,55 +281,55 @@ class ProxyManager:
         # 使用百度作为核心测试源
         test_url = "http://www.baidu.com"
         
-        # 异步事件循环的停止信号与信号量
-        stop_event = asyncio.Event()
-        sem = asyncio.Semaphore(max_workers)
-        
-        async def verify_proxy(proxy):
-            if stop_event.is_set():
-                return
-            
-            protocol = proxy["protocol"].lower()
-            address = proxy["address"]
-            proxy_url = f"{protocol}://{address}"
-            
-            connector = None
-            client_proxy = None
-            try:
-                # 配置代理类型
-                if protocol in ("socks5", "socks4"):
-                    connector = ProxyConnector.from_url(proxy_url)
-                else:
-                    client_proxy = proxy_url
-                
-                async with sem:
-                    if stop_event.is_set():
-                        return
-                    
-                    # 禁用 SSL 验证，因为我们只需要测试连接和 HTTP 连通性，不用关心证书
-                    async with aiohttp.ClientSession(connector=connector) as session:
-                        async with session.get(
-                            test_url,
-                            proxy=client_proxy,
-                            timeout=aiohttp.ClientTimeout(total=verify_timeout),
-                            headers={"User-Agent": "Mozilla/5.0"},
-                            ssl=False
-                        ) as resp:
-                            if resp.status == 200:
-                                if not stop_event.is_set():
-                                    working.append(proxy)
-                                    if len(working) >= target_count:
-                                        stop_event.set()
-            except Exception:
-                pass
-            finally:
-                verified_count[0] += 1
-                curr_count = verified_count[0]
-                if curr_count % 50 == 0 or curr_count == total:
-                    elapsed = time.time() - start_time
-                    print(f"[ProxyManager]   进度: {curr_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
-
         async def main_verify():
+            # 异步事件循环的停止信号与信号量
+            stop_event = asyncio.Event()
+            sem = asyncio.Semaphore(max_workers)
+            
+            async def verify_proxy(proxy):
+                if stop_event.is_set():
+                    return
+                
+                protocol = proxy["protocol"].lower()
+                address = proxy["address"]
+                proxy_url = f"{protocol}://{address}"
+                
+                connector = None
+                client_proxy = None
+                try:
+                    # 配置代理类型
+                    if protocol in ("socks5", "socks4"):
+                        connector = ProxyConnector.from_url(proxy_url)
+                    else:
+                        client_proxy = proxy_url
+                    
+                    async with sem:
+                        if stop_event.is_set():
+                            return
+                        
+                        # 禁用 SSL 验证，因为我们只需要测试连接和 HTTP 连通性，不用关心证书
+                        async with aiohttp.ClientSession(connector=connector) as session:
+                            async with session.get(
+                                test_url,
+                                proxy=client_proxy,
+                                timeout=aiohttp.ClientTimeout(total=verify_timeout),
+                                headers={"User-Agent": "Mozilla/5.0"},
+                                ssl=False
+                            ) as resp:
+                                if resp.status == 200:
+                                    if not stop_event.is_set():
+                                        working.append(proxy)
+                                        if len(working) >= target_count:
+                                            stop_event.set()
+                except Exception:
+                    pass
+                finally:
+                    verified_count[0] += 1
+                    curr_count = verified_count[0]
+                    if curr_count % 50 == 0 or curr_count == total:
+                        elapsed = time.time() - start_time
+                        print(f"[ProxyManager]   进度: {curr_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
+
             tasks = [asyncio.create_task(verify_proxy(p)) for p in self._proxies]
             await asyncio.gather(*tasks, return_exceptions=True)
 

@@ -541,9 +541,7 @@ class DatangCrawler(BaseCrawler):
     def process_sub_page_if_needed(self, raw_item, idx):
         """请求详情页，解析资源元数据并生成 PDF，支持域名轮换重试"""
         original_url = raw_item['url']
-        is_existing = self.db_manager.check_url_exists(original_url)
-        if is_existing and not self.is_test:
-            return True, None
+        is_existing = False  # 外部 BaseCrawler 已进行过批量去重过滤
 
         # 每个详情页请求前随机延迟，模拟人类浏览行为
         time.sleep(random.uniform(2.0, 5.0))
