@@ -157,32 +157,39 @@ class DatangCrawler(BaseCrawler):
                 stats = manager.get_stats()
                 print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个")
 
+    def cleanup_thread_resources(self):
+        """实现基类生命周期钩子，释放当前工作线程持有的 Playwright 资源"""
+        if hasattr(self.thread_local, "playwright"):
+            print(f"[+] 正在自主释放工作线程 {threading.get_ident()} 的 Playwright 资源...")
+            self._recreate_thread_resources()
+
     def on_finish(self):
         """释放 Playwright 渲染资源"""
-        print("[*] 正在释放 datang 爬虫 Playwright 资源...")
+        print("[*] 正在释放主线程 Playwright 资源...")
+        # 1. 优先清理主线程自身的资源
+        self.cleanup_thread_resources()
+        
+        # 2. 如果还有残留资源（例如异常中断导致未被 cleanup_thread_resources 释放的工作线程资源），在主线程中做兜底关闭
         with self._resources_lock:
-            for item in self._active_resources:
-                p, browser, context, _ = item
-                try:
-                    if context:
-                        context.close()
-                except Exception:
-                    pass
-                try:
-                    if browser:
-                        browser.close()
-                except Exception:
-                    pass
-                try:
-                    p.stop()
-                except Exception:
-                    pass
-            self._active_resources.clear()
-
-        # Bug 2 修复：thread_local 属性是线程私有的，在主线程中 delattr 工作线程的
-        # thread_local 完全无效（每个线程只能看到自己的 thread_local 属性）。
-        # 工作线程自己的 thread_local 清理已由 _recreate_thread_resources 负责。
-        # 这里正确做法是什么都不做，资源已通过 _active_resources 循环关闭。
+            if self._active_resources:
+                print(f"[!] 发现 {len(self._active_resources)} 个未被工作线程自主清理的残留资源，执行主线程兜底关闭...")
+                for item in self._active_resources:
+                    p, browser, context, _ = item
+                    try:
+                        if context:
+                            context.close()
+                    except:
+                        pass
+                    try:
+                        if browser:
+                            browser.close()
+                    except:
+                        pass
+                    try:
+                        p.stop()
+                    except:
+                        pass
+                self._active_resources.clear()
             
         self.db_manager.commit()
 

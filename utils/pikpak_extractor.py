@@ -26,9 +26,18 @@ def get_pikpak_link(keepshare_url, timeout=30, poll_interval=2, quiet=False):
     }
     
     log(f"[*] 开始请求 KeepShare 链接: {keepshare_url}")
+    
+    # 获取全局代理配置以规避网络异常
+    proxies = None
+    try:
+        from utils.proxy_manager import get_proxy_dict
+        proxies = get_proxy_dict()
+    except Exception:
+        pass
+
     try:
         # 发送 GET 请求，禁止自动跳转
-        res = requests.get(keepshare_url, headers=headers, allow_redirects=False, timeout=10)
+        res = requests.get(keepshare_url, headers=headers, allow_redirects=False, timeout=10, proxies=proxies)
         
         # 1. 检查重定向地址
         location = res.headers.get("Location")
@@ -65,7 +74,7 @@ def get_pikpak_link(keepshare_url, timeout=30, poll_interval=2, quiet=False):
             start_time = time.time()
             while time.time() - start_time < timeout:
                 try:
-                    api_res = requests.get(api_url, headers=headers, timeout=10)
+                    api_res = requests.get(api_url, headers=headers, timeout=10, proxies=proxies)
                     if api_res.status_code == 200:
                         data = api_res.json()
                         state = data.get("state")

@@ -47,6 +47,7 @@ class DBManager:
                 pass
                 
         self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_url ON resources(url)")
+        self.conn.commit()
 
     def check_url_exists(self, url):
         """检查 URL 是否已存在于数据库"""

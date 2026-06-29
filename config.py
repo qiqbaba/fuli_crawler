@@ -124,7 +124,7 @@ PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "43200"))
 # 代理验证超时时间（秒）
 PROXY_VERIFY_TIMEOUT = int(os.environ.get("PROXY_VERIFY_TIMEOUT", "10"))
 # 代理验证并发线程数
-PROXY_VERIFY_WORKERS = int(os.environ.get("PROXY_VERIFY_WORKERS", "20"))
+PROXY_VERIFY_WORKERS = int(os.environ.get("PROXY_VERIFY_WORKERS", "100"))
 
 # ========== 运行时代理覆盖（由 main.py 命令行参数设置） ==========
 _runtime_proxy_override = None
