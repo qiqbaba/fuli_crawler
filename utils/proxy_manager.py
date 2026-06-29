@@ -32,7 +32,31 @@ PROXY_SOURCES = {
     "proxyscraper_http": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/http.txt",
     "proxyscraper_socks4": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks4.txt",
     "proxyscraper_socks5": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks5.txt",
+    
+    # 新增代理源：
+    # proxifly/free-proxy-list - 自动更新
+    "proxifly_all": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/all/data.txt",
+    # TheSpeedX/PROXY-List - 每天更新的 HTTP 列表
+    "speedx_proxy_list_http": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+    "speedx_proxy_list_socks5": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
+    # monosans/proxy-list
+    "monosans_http": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+    "monosans_socks5": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
+    # mmpx12/proxy-list
+    "mmpx12_https": "https://raw.githubusercontent.com/mmpx12/proxy-list/master/https.txt",
+    "mmpx12_socks5": "https://raw.githubusercontent.com/mmpx12/proxy-list/master/socks5.txt",
+    # proxy-list.download - SOCKS5 代理
+    "proxylistdownload_socks5": "https://www.proxy-list.download/api/v1/get?type=socks5",
+    # elliottophellia/proxylist - 经检测的代理
+    "elliottophellia_http": "https://raw.githubusercontent.com/elliottophellia/proxylist/master/results/http/global/http_checked.txt",
+    # roosterkid/openproxylist - 每小时更新的 RAW 列表
+    "roosterkid_https": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
+    "roosterkid_socks5": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt",
+    # Anonym0usWork1221/Free-Proxies - 每两小时更新
+    "anonym0uswork_http": "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/http_proxies.txt",
+    "anonym0uswork_socks4": "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/socks4_proxies.txt",
 }
+
 
 # 测试目标URL（用于验证代理是否可用）
 PROXY_TEST_URLS = [
