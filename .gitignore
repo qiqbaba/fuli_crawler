@@ -40,6 +40,7 @@ logs/
 decrypted_*.html
 raw_*.html
 datang_top10.txt
+proxies.txt
 
 temp_profiles/
 
