@@ -55,6 +55,21 @@ class DBManager:
             self.cursor.execute("SELECT 1 FROM resources WHERE url = ?", (url,))
             return self.cursor.fetchone() is not None
 
+    def filter_existing_urls(self, urls):
+        """批量检查哪些 URL 已存在于数据库中，返回已存在的 URL 集合"""
+        if not urls:
+            return set()
+        with self.lock:
+            existing = set()
+            urls_list = list(urls)
+            for i in range(0, len(urls_list), 100):
+                chunk = urls_list[i:i+100]
+                placeholders = ",".join(["?"] * len(chunk))
+                self.cursor.execute(f"SELECT url FROM resources WHERE url IN ({placeholders})", chunk)
+                for row in self.cursor.fetchall():
+                    existing.add(row[0])
+            return existing
+
     def insert_resource(self, data):
         """
         向数据库写入数据字典
@@ -131,6 +146,28 @@ class SupabaseDBManager:
         except Exception as e:
             print(f"[-] Supabase check_url_exists 失败: {e}")
             return False
+
+    def filter_existing_urls(self, urls):
+        """批量检查哪些 URL 已存在于 Supabase 表中，返回已存在的 URL 集合"""
+        if not urls:
+            return set()
+        existing = set()
+        urls_list = list(urls)
+        try:
+            for i in range(0, len(urls_list), 100):
+                chunk = urls_list[i:i+100]
+                resp = (
+                    self.client.table(self.table)
+                    .select("url")
+                    .in_("url", chunk)
+                    .execute()
+                )
+                if resp.data:
+                    for row in resp.data:
+                        existing.add(row["url"])
+        except Exception as e:
+            print(f"[-] Supabase filter_existing_urls 失败: {e}")
+        return existing
 
     def insert_resource(self, data):
         """

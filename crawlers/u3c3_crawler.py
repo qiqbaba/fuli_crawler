@@ -158,11 +158,7 @@ class U3c3Crawler(BaseCrawler):
         但在这里需要通过 pikpak_extractor 获取真实的 pikpak 链接。
         """
         url = raw_item['url']
-        
-        # 1. 检查是否已存在
-        is_existing = self.db_manager.check_url_exists(url)
-        if is_existing and not self.is_test:
-            return True, None
+        is_existing = False  # 外部 BaseCrawler 已进行过批量去重过滤
             
         pikpak_link = raw_item['pikpak_link']
         real_pikpak = None

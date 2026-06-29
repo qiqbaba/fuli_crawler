@@ -165,9 +165,13 @@ class BaseCrawler:
                     skipped_count = 0
                     early_stop_triggered = False
                     
+                    # 批量查重
+                    urls_to_check = [raw_item if isinstance(raw_item, str) else raw_item.get('url') for raw_item in raw_items]
+                    existing_urls = self.db_manager.filter_existing_urls(urls_to_check)
+
                     for idx, raw_item in enumerate(raw_items, 1):
                         url = raw_item if isinstance(raw_item, str) else raw_item.get('url')
-                        is_existing = self.db_manager.check_url_exists(url)
+                        is_existing = url in existing_urls
                         
                         if is_existing:
                             skipped_count += 1
