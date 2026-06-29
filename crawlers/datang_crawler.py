@@ -5,7 +5,7 @@ import random
 import time
 import threading
 import shutil
-import requests
+from curl_cffi import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from playwright.sync_api import sync_playwright
@@ -75,6 +75,8 @@ class DatangCrawler(BaseCrawler):
         # 域名冷却机制：记录每个域名最后失败时间
         self._domain_cooldown = {}
         self._cooldown_seconds = 60  # 域名冷却 60 秒
+        # 域名轮换线程安全锁
+        self._domain_lock = threading.Lock()
 
     def _rate_limit(self):
         """线程安全的全局限速，确保请求间隔不低于 1 秒"""
@@ -383,38 +385,39 @@ class DatangCrawler(BaseCrawler):
             return rel_path.replace('\\', '/')
 
     def _rotate_domain(self):
-        """轮换至下一个可用域名（带冷却机制）"""
-        # 记录当前域名的冷却时间
-        failed_domain = self.domains[self.current_domain_idx]
-        self._domain_cooldown[failed_domain] = time.time()
-        
-        # 寻找不在冷却中的域名
-        now = time.time()
-        for i in range(1, len(self.domains) + 1):
-            candidate_idx = (self.current_domain_idx + i) % len(self.domains)
-            candidate = self.domains[candidate_idx]
-            last_fail = self._domain_cooldown.get(candidate, 0)
-            if now - last_fail >= self._cooldown_seconds:
-                self.current_domain_idx = candidate_idx
-                self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
-                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
-                print(f"[!] 大唐BT域名切换至: {self.base_domain}")
-                return
-        
-        # 所有域名都在冷却中，等待最短冷却时间后使用
-        min_wait = min(
-            self._cooldown_seconds - (now - self._domain_cooldown.get(d, 0))
-            for d in self.domains
-        )
-        wait_time = max(min_wait, 10) + random.uniform(2, 5)
-        print(f"[!] 所有域名均在冷却中，等待 {wait_time:.1f} 秒...")
-        time.sleep(wait_time)
-        self.current_domain_idx = (self.current_domain_idx + 1) % len(self.domains)
-        self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
-        self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
-        # 清除该域名的冷却记录
-        self._domain_cooldown.pop(self.domains[self.current_domain_idx], None)
-        print(f"[!] 冷却结束，大唐BT域名切换至: {self.base_domain}")
+        """轮换至下一个可用域名（带冷却机制），线程安全"""
+        with self._domain_lock:
+            # 记录当前域名的冷却时间
+            failed_domain = self.domains[self.current_domain_idx]
+            self._domain_cooldown[failed_domain] = time.time()
+            
+            # 寻找不在冷却中的域名
+            now = time.time()
+            for i in range(1, len(self.domains) + 1):
+                candidate_idx = (self.current_domain_idx + i) % len(self.domains)
+                candidate = self.domains[candidate_idx]
+                last_fail = self._domain_cooldown.get(candidate, 0)
+                if now - last_fail >= self._cooldown_seconds:
+                    self.current_domain_idx = candidate_idx
+                    self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
+                    self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+                    print(f"[!] 大唐BT域名切换至: {self.base_domain}")
+                    return
+            
+            # 所有域名都在冷却中，等待最短冷却时间后使用
+            min_wait = min(
+                self._cooldown_seconds - (now - self._domain_cooldown.get(d, 0))
+                for d in self.domains
+            )
+            wait_time = max(min_wait, 10) + random.uniform(2, 5)
+            print(f"[!] 所有域名均在冷却中，等待 {wait_time:.1f} 秒...")
+            time.sleep(wait_time)
+            self.current_domain_idx = (self.current_domain_idx + 1) % len(self.domains)
+            self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
+            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            # 清除该域名的冷却记录
+            self._domain_cooldown.pop(self.domains[self.current_domain_idx], None)
+            print(f"[!] 冷却结束，大唐BT域名切换至: {self.base_domain}")
 
     def fetch_list_page(self, page_num):
         """请求列表页并解密 HTML，支持域名轮换重试"""
@@ -438,7 +441,7 @@ class DatangCrawler(BaseCrawler):
                     proxies = get_proxy_dict()
                 
                 try:
-                    response = requests.get(url, headers=headers, timeout=15, proxies=proxies)
+                    response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
                     if response.status_code == 200:
                         decrypted = self.decrypt_html(response.text)
                         if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
@@ -551,10 +554,12 @@ class DatangCrawler(BaseCrawler):
         
         # 最多尝试轮换所有域名的次数
         for _ in range(len(self.domains)):
-            # 动态替换域名为当前的最优域名
+            # 动态替换域名为当前的最优域名（线程安全读取）
             from urllib.parse import urlparse, urlunparse
             parsed_url = urlparse(original_url)
-            parsed_base = urlparse(self.base_domain)
+            with self._domain_lock:
+                current_base = self.base_domain
+            parsed_base = urlparse(current_base)
             if any(d in parsed_url.netloc for d in self.domains) or "685835.xyz" in parsed_url.netloc:
                 parsed_url = parsed_url._replace(netloc=parsed_base.netloc, scheme=parsed_base.scheme)
                 url = urlunparse(parsed_url)
@@ -581,7 +586,7 @@ class DatangCrawler(BaseCrawler):
                     proxies = get_proxy_dict()
                 
                 try:
-                    response = requests.get(url, headers=headers, timeout=15, proxies=proxies)
+                    response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
                     if response.status_code == 200:
                         decrypted = self.decrypt_html(response.text)
                         if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
@@ -697,9 +702,35 @@ class DatangCrawler(BaseCrawler):
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """大唐BT爬虫入口，对三个板块依次进行爬取"""
         self.is_test = is_test
+        self.quiet = kwargs.get('quiet', False)
         classes = ["guochan", "wuma", "oumei"]
-        
-        for cls in classes:
-            self.current_class = cls
-            print(f"\n[*] ================= 开始爬取大唐BT板块: {cls} =================")
-            super().run(is_test=is_test, start_page=start_page, end_page=end_page, max_workers=max_workers, **kwargs)
+
+        # 只调用一次 on_start（初始化 R2、代理管理器），避免重复创建/释放资源
+        print(f"[*] 启动 {self.source_name} 爬虫流程...")
+        self.on_start()
+
+        no_early_stop = kwargs.get('no_early_stop', False)
+        if no_early_stop:
+            print("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
+            self.max_consecutive_existing = None
+            self.max_consecutive_duplicate_pages = None
+
+        if max_workers is None:
+            max_workers = 10
+
+        try:
+            if is_test:
+                self._run_test_mode(start_page)
+                return
+
+            for cls in classes:
+                self.current_class = cls
+                print(f"\n[*] ================= 开始爬取大唐BT板块: {cls} =================")
+                self._crawl_pages(start_page, end_page, max_workers)
+
+        except KeyboardInterrupt:
+            print("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
+        except Exception as e:
+            print(f"\n[致命错误] 运行中发生未捕获的异常: {e}")
+        finally:
+            self.on_finish()

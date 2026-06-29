@@ -99,6 +99,7 @@ class DBManager:
             
             if self.cursor.rowcount == 0:
                 return False
+            self.conn.commit()  # 立即提交，防止崩溃丢数据
             return True
 
     def commit(self):
@@ -112,8 +113,8 @@ class DBManager:
             if self.conn:
                 try:
                     self.conn.commit()
-                except:
-                    pass
+                except Exception as e:
+                    print(f"[-] 关闭连接时提交事务失败: {e}")
                 self.conn.close()
 
 
@@ -174,7 +175,8 @@ class SupabaseDBManager:
         向 Supabase 表写入数据字典（upsert，url 为唯一键）
         返回：
             True: 写入成功（新记录）
-            False: 已存在（被 ignore）或写入失败
+            False: 已存在（被 ignore）
+            None: 写入失败（网络/API 错误），调用方应区分此值与 False
         """
         record = {
             "title":           data.get("title"),
@@ -201,8 +203,8 @@ class SupabaseDBManager:
                 return True
             return False
         except Exception as e:
-            print(f"[-] Supabase insert_resource 失败: {e}")
-            return False
+            print(f"[-] Supabase insert_resource 失败 (网络/API 错误): {e}")
+            return None
 
     def commit(self):
         """兼容接口，Supabase 自动提交，此处为空操作"""
