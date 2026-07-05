@@ -359,23 +359,6 @@ class GcbtCrawler(BaseCrawler):
             page = context.new_page()
             page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
             time.sleep(3.0)
-            
-            # 屏蔽广告与不必要页面框架元素
-            try:
-                page.evaluate("""
-                    () => {
-                        const header = document.querySelector('header');
-                        if (header) header.style.display = 'none';
-                        const footer = document.querySelector('footer');
-                        if (footer) footer.style.display = 'none';
-                        const sidebar = document.querySelector('aside') || document.querySelector('.sidebar');
-                        if (sidebar) sidebar.style.display = 'none';
-                        const ads = document.querySelectorAll('.ads, .ad, [id*="float"]');
-                        ads.forEach(el => el.style.display = 'none');
-                    }
-                """)
-            except Exception as ad_err:
-                print(f"[-] 屏蔽广告脚本执行失败: {ad_err}")
 
             page.pdf(
                 path=local_path,
