@@ -54,11 +54,11 @@ class DatangCrawler(BaseCrawler):
         # source_name 设为 datang
         super().__init__(db_manager, "datang")
         self.domains = [
-            "tms.883835.xyz",
-            "iut.983292.xyz",
-            "nrt.322953.xyz",
-            "eta.389838.xyz",
-            "fip.553892.xyz"
+            "ipk.383296.xyz",
+            "dyh.393659.xyz",
+            "anh.355996.xyz",
+            "tcm.589656.xyz",
+            "sne.896825.xyz"
         ]
         self.current_domain_idx = 0
         self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
