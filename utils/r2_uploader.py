@@ -46,10 +46,8 @@ class R2Uploader:
             )
             print(f"[+] PDF 已上传至 R2: {remote_key}")
 
-            # 上传成功后立即删除本地临时文件
             try:
                 os.remove(local_path)
-                print(f"[+] 本地临时文件已删除: {local_path}")
             except OSError as e:
                 print(f"[-] 删除本地临时文件失败（不影响主流程）: {e}")
 

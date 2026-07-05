@@ -514,7 +514,6 @@ class SejuCrawler(BaseCrawler):
                 margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
             )
             page.close()
-            print(f"[+] PDF 已保存至临时路径: {local_path}")
         except Exception as e:
             print(f"[-] PDF 生成失败: {e}")
             if page:

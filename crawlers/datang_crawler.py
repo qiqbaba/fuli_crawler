@@ -369,7 +369,6 @@ class DatangCrawler(BaseCrawler):
                 margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"}
             )
             page.close()
-            print(f"[+] PDF 已保存至临时路径: {local_path}")
         except Exception as e:
             print(f"[-] PDF 生成失败: {e}")
             if page:

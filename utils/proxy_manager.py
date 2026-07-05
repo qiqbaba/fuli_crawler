@@ -473,6 +473,18 @@ class ProxyManager:
                 self._thread_proxy_map[current_thread_id] = selected_proxy
                 return selected_proxy
                 
+    def get_random_pool_proxy(self) -> Optional[str]:
+        """
+        随机从已验证可用的代理池中获取一个代理 IP，不与线程绑定，每次调用都可能不同。
+        """
+        # 前置检测并执行动态补充
+        self.check_and_replenish(threshold=200, target_count=300)
+        with self._lock:
+            if not self._working_proxies:
+                return None
+            p = random.choice(self._working_proxies)
+            return f"{p['protocol']}://{p['address']}"
+
     def get_random_proxy(self) -> Optional[str]:
         """
         获取当前线程独占的代理（原随机获取改为独占队列轮询模式）
@@ -529,7 +541,6 @@ def get_proxy_manager() -> Optional[ProxyManager]:
     from config import is_proxy_manager_enabled
     local_on = is_local_mode()
     mgr_on = is_proxy_manager_enabled()
-    print(f"[DEBUG] get_proxy_manager() 被调用. _proxy_manager = {_proxy_manager}, is_local_mode = {local_on}, is_proxy_manager_enabled = {mgr_on}", flush=True)
     if _proxy_manager is None:
         if local_on or mgr_on:
             from config import PROXY_CACHE_TTL
@@ -565,9 +576,12 @@ def init_proxy_manager(force_fetch=False, force_verify=False) -> Optional[ProxyM
     return manager
 
 
-def get_proxy_string() -> str:
+def get_proxy_string(exclusive: bool = True) -> str:
     """
     获取当前代理字符串，遵循 config 的运行时参数覆盖及禁用设置
+    
+    Args:
+        exclusive: 是否使用线程独占模式。默认为 True（给 Playwright 等长效客户端使用）
     """
     from config import get_crawler_proxy, is_proxy_manager_enabled
     
@@ -576,23 +590,29 @@ def get_proxy_string() -> str:
     if fixed_proxy:
         return fixed_proxy
         
-    # 2. 如果没有指定固定代理且启用了代理IP管理器，使用管理器拿随机代理
+    # 2. 如果没有指定固定代理且启用了代理IP管理器，使用管理器拿代理
     if is_proxy_manager_enabled():
         manager = get_proxy_manager()
         if manager:
-            return manager.get_random_proxy() or ""
+            if exclusive:
+                return manager.get_thread_exclusive_proxy() or ""
+            else:
+                return manager.get_random_pool_proxy() or ""
             
     return ""
 
 
-def get_proxy_dict() -> Optional[Dict[str, str]]:
+def get_proxy_dict(exclusive: bool = False) -> Optional[Dict[str, str]]:
     """
-    获取代理字典（用于 requests 库）
+    获取代理字典（用于 requests/curl_cffi 库）
+    默认使用非线程独占模式，每次请求使用高频随机轮换的代理IP
     
+    Args:
+        exclusive: 是否使用线程独占模式。默认为 False（requests 默认不独占）
     Returns:
         {"http": "...", "https": "..."} 或 None
     """
-    proxy_url = get_proxy_string()
+    proxy_url = get_proxy_string(exclusive=exclusive)
     if proxy_url:
         return {"http": proxy_url, "https": proxy_url}
     return None
