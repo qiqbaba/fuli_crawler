@@ -5,6 +5,7 @@ from utils.db_manager import DBManager, SupabaseDBManager
 from crawlers.seju_crawler import SejuCrawler
 from crawlers.u3c3_crawler import U3c3Crawler
 from crawlers.datang_crawler import DatangCrawler
+from crawlers.gcbt_crawler import GcbtCrawler
 
 # Windows下控制台强制使用utf-8编码输出，防止中文乱码
 if sys.platform.startswith('win'):
@@ -20,8 +21,8 @@ def main():
     parser.add_argument(
         "--crawler", "-c",
         required=False,
-        choices=["seju", "u3c3", "datang"],
-        help="指定运行哪一个网站的爬虫 (seju, u3c3 或 datang)"
+        choices=["seju", "u3c3", "datang", "gcbt"],
+        help="指定运行哪一个网站的爬虫 (seju, u3c3, datang 或 gcbt)"
     )
     
     # 互斥参数：测试模式或正式爬取模式
@@ -103,12 +104,15 @@ def main():
         print("    1. seju (默认)")
         print("    2. u3c3")
         print("    3. datang")
+        print("    4. gcbt")
         try:
-            choice = input("请输入序号 [1/2/3] (直接回车默认 1): ").strip()
+            choice = input("请输入序号 [1/2/3/4] (直接回车默认 1): ").strip()
             if choice == "2":
                 args.crawler = "u3c3"
             elif choice == "3":
                 args.crawler = "datang"
+            elif choice == "4":
+                args.crawler = "gcbt"
             else:
                 args.crawler = "seju"
         except (KeyboardInterrupt, EOFError):
@@ -170,6 +174,11 @@ def main():
     elif args.crawler == "datang":
         crawler = DatangCrawler(db_manager)
         default_end = 60
+        if args.workers is None:
+            args.workers = 10
+    elif args.crawler == "gcbt":
+        crawler = GcbtCrawler(db_manager)
+        default_end = 20
         if args.workers is None:
             args.workers = 10
         
