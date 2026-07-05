@@ -93,6 +93,7 @@ class ProxyManager:
         self._current_proxy_idx = 0
         self._thread_proxy_map: Dict[int, str] = {}  # thread_id -> proxy_url
         self._is_replenishing = False
+        self.test_url = "http://www.baidu.com"
         
         # 确保缓存目录存在
         os.makedirs(_PROXY_CACHE_DIR, exist_ok=True)
@@ -240,7 +241,7 @@ class ProxyManager:
 
         return proxies
     
-    def verify_proxies(self, force=False, max_workers=None, target_count=300) -> int:
+    def verify_proxies(self, force=False, max_workers=None, target_count=300, test_url=None) -> int:
         """
         验证代理IP是否可用
         
@@ -248,6 +249,7 @@ class ProxyManager:
             force: 是否强制重新验证
             max_workers: 并发验证协程数，默认使用 config 中的 PROXY_VERIFY_WORKERS
             target_count: 目标可用代理数量，达到后提前退出
+            test_url: 可选。用于测试的网址，如果不传则使用 self.test_url，如果 self.test_url 也没有则使用 http://www.baidu.com
             
         Returns:
             可用代理数量
@@ -271,15 +273,16 @@ class ProxyManager:
         # 验证超时取配置值，但不超过 5 秒以加速验证
         verify_timeout = min(PROXY_VERIFY_TIMEOUT, 5)
         
-        print(f"[ProxyManager] 开始异步验证 {len(self._proxies)} 个代理（并发协程数: {max_workers}，超时: {verify_timeout}s，目标数: {target_count}）...")
+        if test_url:
+            self.test_url = test_url
+        current_test_url = self.test_url
+        
+        print(f"[ProxyManager] 开始异步验证 {len(self._proxies)} 个代理（并发协程数: {max_workers}，超时: {verify_timeout}s，目标数: {target_count}，测试目标: {current_test_url}）...")
         
         working = []
         total = len(self._proxies)
         verified_count = [0]
         start_time = time.time()
-        
-        # 使用百度作为核心测试源
-        test_url = "http://www.baidu.com"
         
         async def main_verify():
             # 异步事件循环的停止信号与信号量
@@ -310,7 +313,7 @@ class ProxyManager:
                         # 禁用 SSL 验证，因为我们只需要测试连接和 HTTP 连通性，不用关心证书
                         async with aiohttp.ClientSession(connector=connector) as session:
                             async with session.get(
-                                test_url,
+                                current_test_url,
                                 proxy=client_proxy,
                                 timeout=aiohttp.ClientTimeout(total=verify_timeout),
                                 headers={"User-Agent": "Mozilla/5.0"},
