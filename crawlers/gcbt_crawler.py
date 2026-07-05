@@ -357,8 +357,40 @@ class GcbtCrawler(BaseCrawler):
         try:
             _, _, context = self._get_thread_resources()
             page = context.new_page()
-            page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
+            
+            # 1. 先访问首页以建立 Cookie/Session 并绕过重定向检测
+            try:
+                page.goto("https://gcbt.net/", timeout=20000, wait_until="domcontentloaded")
+                time.sleep(1.5)
+            except Exception as e_home:
+                print(f"[!] 详情页前置访问首页异常 (不影响后续): {e_home}")
+                
+            # 2. 携带 Referer 访问真正的详情页
+            page.goto(target_url, referer="https://gcbt.net/", timeout=30000, wait_until="domcontentloaded")
             time.sleep(3.0)
+
+            # 3. 动态清除阻挡视线的“收藏发布页”弹窗及半透明黑色遮罩层
+            try:
+                page.evaluate("""
+                    () => {
+                        const selectors = [
+                            '.layui-layer', '.layui-layer-shade',
+                            '.modal', '.modal-backdrop',
+                            '.swal-overlay', '.swal-modal', '.swal2-container',
+                            '[id*="layui-layer"]'
+                        ];
+                        selectors.forEach(sel => {
+                            const elms = document.querySelectorAll(sel);
+                            elms.forEach(el => el.remove());
+                        });
+                        
+                        // 恢复滚动条
+                        if (document.body) document.body.style.overflow = 'auto';
+                        if (document.documentElement) document.documentElement.style.overflow = 'auto';
+                    }
+                """)
+            except Exception as eval_err:
+                print(f"[-] 清理弹窗脚本执行异常: {eval_err}")
 
             page.pdf(
                 path=local_path,
@@ -478,6 +510,8 @@ class GcbtCrawler(BaseCrawler):
         pdf_path = ''
         if not self.is_test and article:
             pdf_path = self._save_pdf(sub_url, pub_time, title)
+            if pdf_path:
+                print(f"[PDF-SAVE] 网页地址: {sub_url} -> PDF 路径: {pdf_path}")
             
         # 7. 调用通用清洗逻辑
         data = self.clean_common_metadata(

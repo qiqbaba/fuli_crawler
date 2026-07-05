@@ -96,6 +96,7 @@ jobs:
             echo "定时触发，执行默认日常爬取..."
             python main.py --crawler seju --crawl || true
             python main.py --crawler u3c3 --crawl || true
+            python main.py --crawler datang --crawl || true
           fi
 
       - name: 清理临时 PDF 目录
