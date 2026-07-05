@@ -525,8 +525,9 @@ def get_proxy_manager() -> Optional[ProxyManager]:
     """获取全局代理管理器实例"""
     global _proxy_manager
     if _proxy_manager is None:
-        # 仅在本地模式下启用代理管理（云端使用环境变量配置）
-        if is_local_mode():
+        from config import is_proxy_manager_enabled
+        # 只要是本地模式，或者显式启用了代理管理器，都允许初始化 ProxyManager
+        if is_local_mode() or is_proxy_manager_enabled():
             from config import PROXY_CACHE_TTL
             _proxy_manager = ProxyManager(cache_ttl=PROXY_CACHE_TTL)
         else:
