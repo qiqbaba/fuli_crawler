@@ -346,8 +346,8 @@ class GcbtCrawler(BaseCrawler):
 
         return pdf_path
 
-    def _save_pdf(self, html_content, publish_date, title):
-        """将网页内容格式化并渲染保存为 PDF 文件"""
+    def _save_pdf(self, target_url, publish_date, title):
+        """直接用 Playwright 打开详情页并保存为 PDF"""
         if not publish_date or publish_date == "Unknown_Date":
             from datetime import datetime
             publish_date = datetime.now().strftime("%Y-%m-%d")
@@ -357,12 +357,31 @@ class GcbtCrawler(BaseCrawler):
         try:
             _, _, context = self._get_thread_resources()
             page = context.new_page()
-            page.set_content(html_content, wait_until="networkidle")
+            page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
+            time.sleep(3.0)
+            
+            # 屏蔽广告与不必要页面框架元素
+            try:
+                page.evaluate("""
+                    () => {
+                        const header = document.querySelector('header');
+                        if (header) header.style.display = 'none';
+                        const footer = document.querySelector('footer');
+                        if (footer) footer.style.display = 'none';
+                        const sidebar = document.querySelector('aside') || document.querySelector('.sidebar');
+                        if (sidebar) sidebar.style.display = 'none';
+                        const ads = document.querySelectorAll('.ads, .ad, [id*="float"]');
+                        ads.forEach(el => el.style.display = 'none');
+                    }
+                """)
+            except Exception as ad_err:
+                print(f"[-] 屏蔽广告脚本执行失败: {ad_err}")
+
             page.pdf(
                 path=local_path,
                 format="A4",
                 print_background=True,
-                margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
+                margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"}
             )
             page.close()
         except Exception as e:
@@ -472,114 +491,10 @@ class GcbtCrawler(BaseCrawler):
             
         print(f"[{idx}] 抓取成功: {title} | 发布时间: {pub_time} | 大小: {size} | 链接: {resource_link[:60]}...")
         
-        # 6. 生成并渲染 PDF 文件（测试模式跳过保存）
+        # 6. 生成并渲染 PDF 文件（直接保存原网页，测试模式跳过）
         pdf_path = ''
         if not self.is_test and article:
-            import html as html_escape
-            safe_title = html_escape.escape(title)
-            safe_pub_time = html_escape.escape(pub_time)
-            safe_category = html_escape.escape(category)
-            safe_current_url = html_escape.escape(sub_url)
-            safe_resource_link = html_escape.escape(resource_link)
-            safe_size = html_escape.escape(size)
-            safe_fmt = html_escape.escape(fmt)
-            
-            # 使用列表段落格式化正文，使 PDF 更加美观整洁
-            content_html = ""
-            for p_text in article_text.split('\n'):
-                p_text = p_text.strip()
-                if p_text:
-                    content_html += f"<p>{html_escape.escape(p_text)}</p>"
-                    
-            html_template = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>{safe_title}</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.8;
-            color: #333;
-            max-width: 850px;
-            margin: 0 auto;
-            padding: 40px 30px;
-            background-color: #fff;
-        }}
-        h1 {{
-            font-size: 24px;
-            color: #111;
-            margin-bottom: 12px;
-            font-weight: 600;
-            line-height: 1.4;
-        }}
-        .meta {{
-            font-size: 14px;
-            color: #666;
-            border-bottom: 1px dashed #ddd;
-            padding-bottom: 15px;
-            margin-bottom: 30px;
-        }}
-        .meta span {{
-            margin-right: 20px;
-        }}
-        .download-box {{
-            background-color: #f7f9fa;
-            border-left: 4px solid #0066cc;
-            padding: 15px;
-            margin-bottom: 30px;
-            border-radius: 0 4px 4px 0;
-            word-wrap: break-word;
-            word-break: break-all;
-        }}
-        .download-box h3 {{
-            margin: 0 0 8px 0;
-            font-size: 16px;
-            color: #0066cc;
-        }}
-        .content {{
-            font-size: 15px;
-            color: #222;
-        }}
-        .content p {{
-            margin-bottom: 18px;
-            white-space: pre-wrap;
-        }}
-        .footer {{
-            margin-top: 50px;
-            font-size: 12px;
-            color: #999;
-            text-align: center;
-            border-top: 1px dashed #ddd;
-            padding-top: 20px;
-        }}
-    </style>
-</head>
-<body>
-    <h1>{safe_title}</h1>
-    <div class="meta">
-        <span><strong>发布日期:</strong> {safe_pub_time}</span>
-        <span><strong>分类:</strong> {safe_category}</span>
-        <span><strong>格式:</strong> {safe_fmt}</span>
-        <span><strong>大小:</strong> {safe_size}</span>
-    </div>
-    
-    <div class="download-box">
-        <h3>下载资源链接:</h3>
-        <code>{safe_resource_link}</code>
-    </div>
-    
-    <div class="content">
-        {content_html}
-    </div>
-    
-    <div class="footer">
-        <p>本文档由全自动爬虫生成于 {safe_pub_time}。原始网址: <a href="{safe_current_url}">{safe_current_url}</a></p>
-    </div>
-</body>
-</html>
-"""
-            pdf_path = self._save_pdf(html_template, pub_time, title)
+            pdf_path = self._save_pdf(sub_url, pub_time, title)
             
         # 7. 调用通用清洗逻辑
         data = self.clean_common_metadata(
