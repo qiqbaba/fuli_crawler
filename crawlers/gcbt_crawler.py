@@ -204,38 +204,42 @@ class GcbtCrawler(BaseCrawler):
             del self.thread_local.profile_dir
 
     def _http_get(self, url, timeout=20):
-        """使用 curl_cffi 模拟浏览器获取 URL"""
-        proxies = None
-        crawler_proxy = None
-        try:
-            ua = random.choice(USER_AGENTS)
-            headers = {"User-Agent": ua}
-            
-            from config import get_crawler_proxy, is_proxy_manager_enabled
-            crawler_proxy = get_crawler_proxy()
-            if crawler_proxy:
-                proxies = {"http": crawler_proxy, "https": crawler_proxy}
-            elif is_proxy_manager_enabled():
-                proxies = get_proxy_dict()
-            
-            r = requests.get(url, headers=headers, impersonate="chrome120", timeout=timeout, proxies=proxies)
-            r.encoding = 'utf-8'
-            if r.status_code == 200:
-                return r.url, r.text
-            else:
-                print(f"[-] HTTP 请求失败 ({url}): 状态码 {r.status_code}")
-                if r.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
+        """使用 curl_cffi 模拟浏览器获取 URL，最多重试 3 次，都失败再跳过"""
+        for attempt in range(1, 4):
+            proxies = None
+            crawler_proxy = None
+            try:
+                ua = random.choice(USER_AGENTS)
+                headers = {"User-Agent": ua}
+                
+                from config import get_crawler_proxy, is_proxy_manager_enabled
+                crawler_proxy = get_crawler_proxy()
+                if crawler_proxy:
+                    proxies = {"http": crawler_proxy, "https": crawler_proxy}
+                elif is_proxy_manager_enabled():
+                    proxies = get_proxy_dict()
+                
+                r = requests.get(url, headers=headers, impersonate="chrome120", timeout=timeout, proxies=proxies)
+                r.encoding = 'utf-8'
+                if r.status_code == 200:
+                    return r.url, r.text
+                else:
+                    print(f"[-] HTTP 请求失败 ({url}) [第 {attempt}/3 次尝试]: 状态码 {r.status_code}")
+                    if r.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
+                        manager = get_proxy_manager()
+                        if manager and "http" in proxies:
+                            manager.report_failure(proxies["http"])
+            except Exception as e:
+                print(f"[-] HTTP 请求异常 ({url}) [第 {attempt}/3 次尝试]: {e}")
+                if proxies and is_proxy_manager_enabled():
                     manager = get_proxy_manager()
                     if manager and "http" in proxies:
                         manager.report_failure(proxies["http"])
-                return url, None
-        except Exception as e:
-            print(f"[-] HTTP 请求异常 ({url}): {e}")
-            if proxies and is_proxy_manager_enabled():
-                manager = get_proxy_manager()
-                if manager and "http" in proxies:
-                    manager.report_failure(proxies["http"])
-            return url, None
+            
+            if attempt < 3:
+                time.sleep(random.uniform(1.0, 3.0))
+                
+        return url, None
 
     def cleanup_thread_resources(self):
         """生命周期钩子，释放当前工作线程持有的 Playwright 资源"""
@@ -575,9 +579,19 @@ class GcbtCrawler(BaseCrawler):
         # 6. 生成并渲染 PDF 文件（直接保存原网页，测试模式跳过）
         pdf_path = ''
         if not self.is_test and article:
-            pdf_path = self._save_pdf(sub_url, pub_time, title)
-            if pdf_path:
-                print(f"[PDF-SAVE] 网页地址: {sub_url} -> PDF 路径: {pdf_path}")
+            for attempt in range(1, 4):
+                pdf_path = self._save_pdf(sub_url, pub_time, title)
+                if pdf_path:
+                    print(f"[PDF-SAVE] 网页地址: {sub_url} -> PDF 路径: {pdf_path}")
+                    break
+                else:
+                    print(f"[-] [PDF-SAVE] 网页地址: {sub_url} 生成 PDF 失败，进行第 {attempt}/3 次尝试")
+                    if attempt < 3:
+                        try:
+                            self._recreate_thread_resources()
+                        except Exception as recreate_err:
+                            print(f"[!] 重构 Playwright 资源失败: {recreate_err}")
+                        time.sleep(random.uniform(1.5, 3.0))
             
         # 7. 调用通用清洗逻辑
         data = self.clean_common_metadata(
