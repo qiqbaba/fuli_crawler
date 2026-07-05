@@ -343,6 +343,7 @@ class ProxyManager:
             print(f"[ProxyManager] 异步事件循环发生异常: {e}")
         finally:
             loop.close()
+            asyncio.set_event_loop(None)
 
         with self._lock:
             self._working_proxies = working
