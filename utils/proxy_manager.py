@@ -324,11 +324,12 @@ class ProxyManager:
                 except Exception:
                     pass
                 finally:
-                    verified_count[0] += 1
-                    curr_count = verified_count[0]
-                    if curr_count % 50 == 0 or curr_count == total:
-                        elapsed = time.time() - start_time
-                        print(f"[ProxyManager]   进度: {curr_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
+                    if not stop_event.is_set():
+                        verified_count[0] += 1
+                        curr_count = verified_count[0]
+                        if curr_count % 50 == 0 or curr_count == total:
+                            elapsed = time.time() - start_time
+                            print(f"[ProxyManager]   进度: {curr_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
 
             tasks = [asyncio.create_task(verify_proxy(p)) for p in self._proxies]
             await asyncio.gather(*tasks, return_exceptions=True)
