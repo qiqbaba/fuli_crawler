@@ -139,25 +139,36 @@ class DatangCrawler(BaseCrawler):
         """初始化 R2 上传器和代理管理器"""
         self.r2_uploader = get_r2_uploader()
         if self.r2_uploader:
-            print("[*] Cloudflare R2 上传器已启用")
+            print("[*] Cloudflare R2 上传器已启用", flush=True)
         else:
             if is_local_mode():
-                print("[*] 本地模式已激活，PDF 将保存到本地目录")
+                print("[*] 本地模式已激活，PDF 将保存到本地目录", flush=True)
             else:
-                print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录")
+                print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录", flush=True)
         
         # 初始化代理管理器
         from config import is_proxy_manager_enabled
+        print(f"[DEBUG] is_proxy_manager_enabled() = {is_proxy_manager_enabled()}", flush=True)
         if is_proxy_manager_enabled():
-            print("[*] 代理管理器已启用，正在获取和验证代理IP...")
+            print("[*] 代理管理器已启用，正在获取和验证代理IP...", flush=True)
             from utils.proxy_manager import get_proxy_manager
             from config import PROXY_VERIFY_WORKERS
-            manager = get_proxy_manager()
-            if manager:
-                manager.fetch_proxies(force=True)
-                manager.verify_proxies(force=True, max_workers=PROXY_VERIFY_WORKERS)
-                stats = manager.get_stats()
-                print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个")
+            try:
+                manager = get_proxy_manager()
+                print(f"[DEBUG] get_proxy_manager() 实例: {manager}", flush=True)
+                if manager:
+                    print("[DEBUG] 开始 fetch_proxies...", flush=True)
+                    manager.fetch_proxies(force=True)
+                    print("[DEBUG] 开始 verify_proxies...", flush=True)
+                    manager.verify_proxies(force=True, max_workers=PROXY_VERIFY_WORKERS)
+                    stats = manager.get_stats()
+                    print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个", flush=True)
+                else:
+                    print("[DEBUG] manager 为 None，未初始化", flush=True)
+            except Exception as e:
+                print(f"[DEBUG] 初始化代理管理器时发生异常: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
 
     def cleanup_thread_resources(self):
         """实现基类生命周期钩子，释放当前工作线程持有的 Playwright 资源"""

@@ -524,13 +524,17 @@ _proxy_manager: Optional[ProxyManager] = None
 def get_proxy_manager() -> Optional[ProxyManager]:
     """获取全局代理管理器实例"""
     global _proxy_manager
+    from config import is_proxy_manager_enabled
+    local_on = is_local_mode()
+    mgr_on = is_proxy_manager_enabled()
+    print(f"[DEBUG] get_proxy_manager() 被调用. _proxy_manager = {_proxy_manager}, is_local_mode = {local_on}, is_proxy_manager_enabled = {mgr_on}", flush=True)
     if _proxy_manager is None:
-        from config import is_proxy_manager_enabled
-        # 只要是本地模式，或者显式启用了代理管理器，都允许初始化 ProxyManager
-        if is_local_mode() or is_proxy_manager_enabled():
+        if local_on or mgr_on:
             from config import PROXY_CACHE_TTL
             _proxy_manager = ProxyManager(cache_ttl=PROXY_CACHE_TTL)
+            print(f"[DEBUG] get_proxy_manager() 初始化成功: {_proxy_manager}", flush=True)
         else:
+            print("[DEBUG] get_proxy_manager() 条件不满足，返回 None", flush=True)
             return None
     return _proxy_manager
 
