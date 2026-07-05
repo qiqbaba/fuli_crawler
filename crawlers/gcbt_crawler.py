@@ -49,7 +49,7 @@ class GcbtCrawler(BaseCrawler):
             p = sync_playwright().start()
             
             local_mode = is_local_mode()
-            headless = not local_mode
+            headless = True
             
             launch_args = [
                 "--disable-blink-features=AutomationControlled",
@@ -358,6 +358,42 @@ class GcbtCrawler(BaseCrawler):
             _, _, context = self._get_thread_resources()
             page = context.new_page()
             
+            # 在网络层添加图片代理请求拦截器，在 Python 后台下载图片喂给浏览器以绕过防盗链和 GFW
+            try:
+                def img_router(route):
+                    req_url = route.request.url
+                    if "plugin/img_layer/data/" in req_url and "?src=" in req_url:
+                        try:
+                            import urllib.parse
+                            real_url = urllib.parse.unquote(req_url.split("?src=")[1])
+                            
+                            # 获取爬虫全局配置代理
+                            from config import get_crawler_proxy
+                            p_url = get_crawler_proxy()
+                            p_dict = {"http": p_url, "https": p_url} if p_url else None
+                            
+                            headers = {
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+                            }
+                            
+                            import requests
+                            r = requests.get(real_url, headers=headers, proxies=p_dict, timeout=15)
+                            if r.status_code == 200:
+                                route.fulfill(
+                                    status=200,
+                                    content_type=r.headers.get("Content-Type", "image/jpeg"),
+                                    body=r.content
+                                )
+                                return
+                        except Exception as route_err:
+                            print(f"[!] 路由代理图片下载失败: {route_err}")
+                    route.continue_()
+
+                page.route("**/*", img_router)
+            except Exception as route_setup_err:
+                print(f"[!] 配置网络拦截路由异常: {route_setup_err}")
+            
             # 1. 先访问首页以建立 Cookie/Session 并绕过重定向检测
             try:
                 page.goto("https://gcbt.net/", timeout=20000, wait_until="domcontentloaded")
@@ -368,6 +404,26 @@ class GcbtCrawler(BaseCrawler):
             # 2. 携带 Referer 访问真正的详情页
             page.goto(target_url, referer="https://gcbt.net/", timeout=30000, wait_until="domcontentloaded")
             time.sleep(3.0)
+
+            # 2.5 强行模拟屏幕媒体排版，确保以网页真实外观进行 PDF 打印而绝不缺漏样式
+            try:
+                page.emulate_media(media="screen")
+            except Exception as media_err:
+                print(f"[!] 模拟 screen 媒体状态异常: {media_err}")
+
+            # 自动微滚动一下以触发有些图片可能存在的 Lazy Load（延迟加载）
+            try:
+                page.evaluate("window.scrollTo(0, 500);")
+                time.sleep(0.5)
+                page.evaluate("window.scrollTo(0, 0);")
+            except:
+                pass
+
+            # 尽量等待网络静止以防海报大图没有下载完
+            try:
+                page.wait_for_load_state(state="networkidle", timeout=5000)
+            except:
+                pass
 
             # 3. 动态清除阻挡视线的“收藏发布页”弹窗及半透明黑色遮罩层
             try:
@@ -391,6 +447,16 @@ class GcbtCrawler(BaseCrawler):
                 """)
             except Exception as eval_err:
                 print(f"[-] 清理弹窗脚本执行异常: {eval_err}")
+
+            # 保存一张同名的 PNG 截图到 scratch/ 目录，方便自检
+            try:
+                import os
+                os.makedirs("scratch/pdf_previews", exist_ok=True)
+                preview_path = os.path.join("scratch/pdf_previews", f"{os.path.basename(local_path)}.png")
+                page.screenshot(path=preview_path, full_page=True)
+                print(f"[PDF-PREVIEW] 预览截图已保存: {preview_path}")
+            except Exception as e_snap:
+                print(f"[-] 自动截图预览失败: {e_snap}")
 
             page.pdf(
                 path=local_path,
