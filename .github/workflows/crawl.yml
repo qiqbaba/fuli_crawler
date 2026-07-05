@@ -47,6 +47,8 @@ jobs:
       R2_ENDPOINT_URL:       ${{ secrets.R2_ENDPOINT_URL }}
       # 云端临时 PDF 目录（上传 R2 后自动删除）
       PDF_BASE_DIR:          /tmp/seju_pdfs
+      # 启用内置代理IP管理器（自动获取并轮换免费代理）
+      ENABLE_PROXY_MANAGER:  'true'
 
     steps:
       - name: 检出代码
