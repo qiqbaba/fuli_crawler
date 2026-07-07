@@ -59,6 +59,33 @@ PROXY_SOURCES = {
     # Anonym0usWork1221/Free-Proxies - 每两小时更新
     "anonym0uswork_http": "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/http_proxies.txt",
     "anonym0uswork_socks4": "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/socks4_proxies.txt",
+
+    # 新增代理源：
+    # Thordata/awesome-free-proxy-list (每天更新)
+    "thordata_all": "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/all.txt",
+    "thordata_http": "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt",
+    "thordata_socks5": "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/socks5.txt",
+    # VPSLabCloud/VPSLab-Free-Proxy-List (15分钟更新)
+    "vpslab_all_elite": "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/all_elite.txt",
+    "vpslab_http_all": "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/http_all.txt",
+    "vpslab_socks5_all": "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/socks5_all.txt",
+
+    # 新增代理源（第三批）：
+    # r00tee/Proxy-List（每5分钟更新）
+    "r00tee_https": "https://raw.githubusercontent.com/r00tee/Proxy-List/main/Https.txt",
+    "r00tee_socks5": "https://raw.githubusercontent.com/r00tee/Proxy-List/main/Socks5.txt",
+    # gfpcom/free-proxy-list（高容量代理列表）
+    "gfpcom_http": "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/http.txt",
+    "gfpcom_socks5": "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/socks5.txt",
+    # databay-labs/free-proxy-list（SSL校验，5分钟更新）
+    "databay_http": "https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/http.txt",
+    "databay_socks5": "https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/socks5.txt",
+    # vakhov/fresh-proxy-list（5-20分钟更新）
+    "vakhov_http": "https://vakhov.github.io/fresh-proxy-list/http.txt",
+    "vakhov_socks5": "https://vakhov.github.io/fresh-proxy-list/socks5.txt",
+    # komutan234/Proxy-List-Free（高频更新）
+    "komutan_http": "https://raw.githubusercontent.com/komutan234/Proxy-List-Free/main/proxies/http.txt",
+    "komutan_socks5": "https://raw.githubusercontent.com/komutan234/Proxy-List-Free/main/proxies/socks5.txt",
 }
 
 
@@ -302,8 +329,11 @@ class ProxyManager:
                 try:
                     # 配置代理类型
                     if protocol in ("socks5", "socks4"):
-                        connector = ProxyConnector.from_url(proxy_url)
+                        # rdns=True 表示域名解析由 SOCKS 代理服务器在远端执行，避免本地 DNS 拥堵与误判
+                        connector = ProxyConnector.from_url(proxy_url, rdns=True)
                     else:
+                        # 开启本地 DNS 缓存，防止高并发 HTTP 代理请求下的本地 DNS 超时
+                        connector = aiohttp.TCPConnector(use_dns_cache=True)
                         client_proxy = proxy_url
                     
                     async with sem:
@@ -330,7 +360,7 @@ class ProxyManager:
                     if not stop_event.is_set():
                         verified_count[0] += 1
                         curr_count = verified_count[0]
-                        if curr_count % 50 == 0 or curr_count == total:
+                        if curr_count % 500 == 0 or curr_count == total:
                             elapsed = time.time() - start_time
                             print(f"[ProxyManager]   进度: {curr_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
 

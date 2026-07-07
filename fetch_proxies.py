@@ -28,6 +28,21 @@ PROXY_SOURCES = [
     # 6. GitHub: sunny9577/proxy-scraper
     "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt",
 
+    # 新增代理源
+    # 7. GitHub: Thordata/awesome-free-proxy-list (每天更新)
+    "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/all.txt",
+    "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt",
+    "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/socks5.txt",
+    # 8. GitHub: VPSLabCloud/VPSLab-Free-Proxy-List (15分钟更新)
+    "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/all_elite.txt",
+    "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/http_all.txt",
+    "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/socks5_all.txt",
+    # 9. GitHub: Au1rxx/free-vpn-subscriptions (每小时更新，Clash/V2ray)
+    "https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/clash.yaml",
+    "https://raw.githubusercontent.com/Au1rxx/free-vpn-subscriptions/main/output/v2ray-base64.txt",
+    # 10. GitHub: freefq/free (长期维护，V2ray)
+    "https://raw.githubusercontent.com/freefq/free/master/v2",
+
     # 原有代理源
     "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
     "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",

@@ -415,15 +415,64 @@ class GcbtCrawler(BaseCrawler):
             except Exception as media_err:
                 print(f"[!] 模拟 screen 媒体状态异常: {media_err}")
 
-            # 自动微滚动一下以触发有些图片可能存在的 Lazy Load（延迟加载）
+            # 自动滚动整页以触发所有图片的懒加载（Lazy Load），并替换可能存在的懒加载属性
             try:
-                page.evaluate("window.scrollTo(0, 500);")
-                time.sleep(0.5)
-                page.evaluate("window.scrollTo(0, 0);")
-            except:
-                pass
+                page.evaluate("""
+                    async () => {
+                        // 1. 替换页面上可能存在的懒加载图片属性
+                        const replaceLazyAttrs = () => {
+                            const images = document.querySelectorAll('img');
+                            const lazyAttrs = ['data-src', 'data-original', 'data-lazy-src', 'data-src-webp', 'data-cfsrc', 'lazy-src'];
+                            images.forEach(img => {
+                                for (const attr of lazyAttrs) {
+                                    const val = img.getAttribute(attr);
+                                    if (val) {
+                                        img.src = val;
+                                        break;
+                                    }
+                                }
+                            });
+                        };
+                        replaceLazyAttrs();
 
-            # 尽量等待网络静止以防海报大图没有下载完
+                        // 2. 逐步滚动到底部触发懒加载
+                        await new Promise((resolve) => {
+                            let totalHeight = 0;
+                            const distance = 600;
+                            const timer = setInterval(() => {
+                                const scrollHeight = document.body.scrollHeight;
+                                window.scrollBy(0, distance);
+                                totalHeight += distance;
+                                replaceLazyAttrs(); // 滚动时再次替换，以防动态生成
+
+                                if (totalHeight >= scrollHeight || window.scrollY + window.innerHeight >= scrollHeight) {
+                                    clearInterval(timer);
+                                    resolve();
+                                }
+                            }, 150);
+                        });
+
+                        // 3. 滚回顶部，准备打印PDF
+                        window.scrollTo(0, 0);
+                        await new Promise(r => setTimeout(r, 500));
+
+                        // 4. 等待所有图片完全加载
+                        const images = Array.from(document.querySelectorAll('img'));
+                        const imagePromises = images.map(img => {
+                            if (img.complete) return Promise.resolve();
+                            return new Promise(resolve => {
+                                img.addEventListener('load', resolve);
+                                img.addEventListener('error', resolve); // 即使加载失败也 resolve，避免卡死
+                            });
+                        });
+                        await Promise.all(imagePromises);
+                    }
+                """)
+                print(f"[+] 线程 {threading.get_ident()} 完成页面全滚动及所有图片加载等待")
+            except Exception as scroll_err:
+                print(f"[!] 页面滚动或等待图片加载异常: {scroll_err}")
+
+            # 尽量等待网络静止以防有其它动态资源在加载
             try:
                 page.wait_for_load_state(state="networkidle", timeout=5000)
             except:
@@ -452,15 +501,7 @@ class GcbtCrawler(BaseCrawler):
             except Exception as eval_err:
                 print(f"[-] 清理弹窗脚本执行异常: {eval_err}")
 
-            # 保存一张同名的 PNG 截图到 scratch/ 目录，方便自检
-            try:
-                import os
-                os.makedirs("scratch/pdf_previews", exist_ok=True)
-                preview_path = os.path.join("scratch/pdf_previews", f"{os.path.basename(local_path)}.png")
-                page.screenshot(path=preview_path, full_page=True)
-                print(f"[PDF-PREVIEW] 预览截图已保存: {preview_path}")
-            except Exception as e_snap:
-                print(f"[-] 自动截图预览失败: {e_snap}")
+
 
             page.pdf(
                 path=local_path,

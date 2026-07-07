@@ -124,7 +124,52 @@ PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "43200"))
 # 代理验证超时时间（秒）
 PROXY_VERIFY_TIMEOUT = int(os.environ.get("PROXY_VERIFY_TIMEOUT", "10"))
 # 代理验证并发线程数
-PROXY_VERIFY_WORKERS = int(os.environ.get("PROXY_VERIFY_WORKERS", "100"))
+def get_auto_workers(base_multiplier=30, max_limit=300, min_limit=50):
+    """
+    根据设备的 CPU 核心数和内存大小动态计算代理验证的最大并发协程数
+    """
+    import sys
+    try:
+        # 1. 获取 CPU 核心数
+        cpu_count = os.cpu_count() or 1
+        workers = cpu_count * base_multiplier
+        
+        # 2. 根据内存调整（尝试使用 psutil，若未安装则自动跳过）
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            total_gb = mem.total / (1024 ** 3)
+            
+            # 针对低配机器（例如 1G 内存的轻量云服务器）强行限制并发，防止 OOM
+            if total_gb < 1.5:
+                workers = min(workers, 50)
+            elif total_gb < 3.5:
+                workers = min(workers, 120)
+        except ImportError:
+            # 未安装 psutil 时，如果 CPU 核心数极少（例如 1 核），给一个温和的并发值
+            if cpu_count == 1:
+                workers = min(workers, 60)
+                
+        # 3. 针对操作系统的限制做保护
+        # Windows 的 IOCP/Select 在高并发下较容易达到网络句柄瓶颈，在此限制最高并发
+        if sys.platform.startswith("win"):
+            max_limit = min(max_limit, 200)
+            
+    except Exception:
+        # 任何异常情况下回退到安全的默认并发数
+        workers = 80
+        
+    # 限制在安全区间内 [min_limit, max_limit]
+    return max(min_limit, min(workers, max_limit))
+
+_env_workers = os.environ.get("PROXY_VERIFY_WORKERS")
+if _env_workers:
+    try:
+        PROXY_VERIFY_WORKERS = int(_env_workers)
+    except ValueError:
+        PROXY_VERIFY_WORKERS = get_auto_workers()
+else:
+    PROXY_VERIFY_WORKERS = get_auto_workers()
 
 # ========== 运行时代理覆盖（由 main.py 命令行参数设置） ==========
 _runtime_proxy_override = None
