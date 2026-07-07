@@ -29,9 +29,6 @@ PROXY_SOURCES = {
     # TheSpeedX/PROXY-List - 每天更新
     "speedx_http": "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
     "speedx_socks5": "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
-    # proxy-list.download - 常见 HTTP/HTTPS 代理
-    "proxylistdownload_http": "https://proxy-list.download/api/v1/get?type=http",
-    "proxylistdownload_https": "https://proxy-list.download/api/v1/get?type=https",
     # ProxyScraper/ProxyScraper - 每小时自动更新
     "proxyscraper_http": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/http.txt",
     "proxyscraper_socks4": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks4.txt",
@@ -46,11 +43,6 @@ PROXY_SOURCES = {
     # monosans/proxy-list
     "monosans_http": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
     "monosans_socks5": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
-    # mmpx12/proxy-list
-    "mmpx12_https": "https://raw.githubusercontent.com/mmpx12/proxy-list/master/https.txt",
-    "mmpx12_socks5": "https://raw.githubusercontent.com/mmpx12/proxy-list/master/socks5.txt",
-    # proxy-list.download - SOCKS5 代理
-    "proxylistdownload_socks5": "https://www.proxy-list.download/api/v1/get?type=socks5",
     # elliottophellia/proxylist - 经检测的代理
     "elliottophellia_http": "https://raw.githubusercontent.com/elliottophellia/proxylist/master/results/http/global/http_checked.txt",
     # roosterkid/openproxylist - 每小时更新的 RAW 列表
@@ -101,6 +93,23 @@ _PROXY_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 _PROXY_CACHE_FILE = os.path.join(_PROXY_CACHE_DIR, "proxy_cache.json")
 
 
+async def _check_tcp_port(ip: str, port: int, timeout: float = 1.0) -> bool:
+    """快速进行 TCP 握手以预筛代理"""
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port),
+            timeout=timeout
+        )
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
 class ProxyManager:
     """代理IP管理器 - 支持从多个源获取、验证和轮换代理IP"""
     
@@ -121,6 +130,7 @@ class ProxyManager:
         self._thread_proxy_map: Dict[int, str] = {}  # thread_id -> proxy_url
         self._is_replenishing = False
         self.test_url = "http://www.baidu.com"
+        self.expected_content = None
         
         # 确保缓存目录存在
         os.makedirs(_PROXY_CACHE_DIR, exist_ok=True)
@@ -139,6 +149,17 @@ class ProxyManager:
                     self._last_fetch_time = data.get("timestamp", 0)
                     self._working_proxies = data.get("working_proxies", [])
                     self._last_verify_time = data.get("last_verify_time", 0)
+                    
+                    # 确保加载出的每个代理都包含统计和评分字段，提供向前兼容性
+                    for p in self._proxies:
+                        p["success_count"] = p.get("success_count", 0)
+                        p["fail_count"] = p.get("fail_count", 0)
+                        p["score"] = p.get("score", 0.0)
+                    for p in self._working_proxies:
+                        p["success_count"] = p.get("success_count", 0)
+                        p["fail_count"] = p.get("fail_count", 0)
+                        p["score"] = p.get("score", 0.0)
+                        
                     print(f"[ProxyManager] 从缓存加载了 {len(self._proxies)} 个代理 (其中已验证可用 {len(self._working_proxies)} 个)")
             except Exception as e:
                 print(f"[ProxyManager] 加载缓存失败: {e}")
@@ -176,12 +197,33 @@ class ProxyManager:
         print(f"[ProxyManager] 开始从 {len(PROXY_SOURCES)} 个源获取代理IP...")
         all_proxies = {}  # 使用字典去重
         
+        # 1. 提取当前已存在代理的历史数据映射以供继承
+        existing_history = {}
+        with self._lock:
+            for p in self._proxies:
+                key = f"{p['protocol']}://{p['address']}"
+                existing_history[key] = {
+                    "success_count": p.get("success_count", 0),
+                    "fail_count": p.get("fail_count", 0),
+                    "score": p.get("score", 0.0)
+                }
+        
         for source_name, url in PROXY_SOURCES.items():
             try:
                 proxies = self._fetch_from_source(source_name, url)
                 for proxy in proxies:
                     key = f"{proxy['protocol']}://{proxy['address']}"
                     if key not in all_proxies:
+                        # 2. 如果之前已有该代理的评分历史，则予以保留继承
+                        history = existing_history.get(key)
+                        if history:
+                            proxy["success_count"] = history["success_count"]
+                            proxy["fail_count"] = history["fail_count"]
+                            proxy["score"] = history["score"]
+                        else:
+                            proxy["success_count"] = 0
+                            proxy["fail_count"] = 0
+                            proxy["score"] = 0.0
                         all_proxies[key] = proxy
                 print(f"[ProxyManager]   {source_name}: 获取到 {len(proxies)} 个代理")
             except Exception as e:
@@ -268,7 +310,7 @@ class ProxyManager:
 
         return proxies
     
-    def verify_proxies(self, force=False, max_workers=None, target_count=300, test_url=None) -> int:
+    def verify_proxies(self, force=False, max_workers=None, target_count=300, test_url=None, expected_content=None) -> int:
         """
         验证代理IP是否可用
         
@@ -277,6 +319,7 @@ class ProxyManager:
             max_workers: 并发验证协程数，默认使用 config 中的 PROXY_VERIFY_WORKERS
             target_count: 目标可用代理数量，达到后提前退出
             test_url: 可选。用于测试的网址，如果不传则使用 self.test_url，如果 self.test_url 也没有则使用 http://www.baidu.com
+            expected_content: 可选。验证页面内是否包含此内容，如果不包含则认为测试失败
             
         Returns:
             可用代理数量
@@ -303,6 +346,14 @@ class ProxyManager:
         if test_url:
             self.test_url = test_url
         current_test_url = self.test_url
+
+        if expected_content is not None:
+            self.expected_content = expected_content
+        current_expected_content = self.expected_content
+        
+        # 在多协程验证队列开始前，将待校验代理按历史评分 score 降序排序，使表现好的优秀代理排在最前面，优先测试
+        with self._lock:
+            self._proxies.sort(key=lambda x: x.get("score", 0.0), reverse=True)
         
         print(f"[ProxyManager] 开始异步验证 {len(self._proxies)} 个代理（并发协程数: {max_workers}，超时: {verify_timeout}s，目标数: {target_count}，测试目标: {current_test_url}）...")
         
@@ -312,60 +363,109 @@ class ProxyManager:
         start_time = time.time()
         
         async def main_verify():
-            # 异步事件循环的停止信号与信号量
             stop_event = asyncio.Event()
-            sem = asyncio.Semaphore(max_workers)
-            
-            async def verify_proxy(proxy):
-                if stop_event.is_set():
-                    return
-                
-                protocol = proxy["protocol"].lower()
-                address = proxy["address"]
-                proxy_url = f"{protocol}://{address}"
-                
-                connector = None
-                client_proxy = None
-                try:
-                    # 配置代理类型
-                    if protocol in ("socks5", "socks4"):
-                        # rdns=True 表示域名解析由 SOCKS 代理服务器在远端执行，避免本地 DNS 拥堵与误判
-                        connector = ProxyConnector.from_url(proxy_url, rdns=True)
-                    else:
-                        # 开启本地 DNS 缓存，防止高并发 HTTP 代理请求下的本地 DNS 超时
-                        connector = aiohttp.TCPConnector(use_dns_cache=True)
-                        client_proxy = proxy_url
-                    
-                    async with sem:
-                        if stop_event.is_set():
-                            return
-                        
-                        # 禁用 SSL 验证，因为我们只需要测试连接和 HTTP 连通性，不用关心证书
-                        async with aiohttp.ClientSession(connector=connector) as session:
-                            async with session.get(
-                                current_test_url,
-                                proxy=client_proxy,
-                                timeout=aiohttp.ClientTimeout(total=verify_timeout),
-                                headers={"User-Agent": "Mozilla/5.0"},
-                                ssl=False
-                            ) as resp:
-                                if resp.status == 200:
-                                    if not stop_event.is_set():
-                                        working.append(proxy)
-                                        if len(working) >= target_count:
-                                            stop_event.set()
-                except Exception:
-                    pass
-                finally:
-                    if not stop_event.is_set():
-                        verified_count[0] += 1
-                        curr_count = verified_count[0]
-                        if curr_count % 500 == 0 or curr_count == total:
-                            elapsed = time.time() - start_time
-                            print(f"[ProxyManager]   进度: {curr_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
+            queue = asyncio.Queue()
+            for p in self._proxies:
+                queue.put_nowait(p)
 
-            tasks = [asyncio.create_task(verify_proxy(p)) for p in self._proxies]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            workers = []
+
+            async def worker():
+                while not queue.empty() and not stop_event.is_set():
+                    proxy = await queue.get()
+                    protocol = proxy["protocol"].lower()
+                    address = proxy["address"]
+
+                    try:
+                        # 1. 快速 TCP 端口预检测
+                        try:
+                            ip, port_str = address.split(":", 1)
+                            port = int(port_str)
+                        except ValueError:
+                            proxy["fail_count"] = proxy.get("fail_count", 0) + 1
+                            proxy["score"] = proxy.get("success_count", 0) - 3 * proxy["fail_count"]
+                            continue
+
+                        tcp_ok = await _check_tcp_port(ip, port, timeout=min(verify_timeout, 1.5))
+                        if not tcp_ok:
+                            proxy["fail_count"] = proxy.get("fail_count", 0) + 1
+                            proxy["score"] = proxy.get("success_count", 0) - 3 * proxy["fail_count"]
+                            continue
+
+                        # 2. 完整协议与连通性检测
+                        proxy_url = f"{protocol}://{address}"
+                        connector = None
+                        client_proxy = None
+                        try:
+                            # 配置代理类型
+                            if protocol in ("socks5", "socks4"):
+                                # rdns=True 表示域名解析由 SOCKS 代理服务器在远端执行，避免本地 DNS 拥堵与误判
+                                connector = ProxyConnector.from_url(proxy_url, rdns=True)
+                            else:
+                                # 开启本地 DNS 缓存，防止高并发 HTTP 代理请求下的本地 DNS 超时
+                                connector = aiohttp.TCPConnector(use_dns_cache=True)
+                                client_proxy = proxy_url
+
+                            async with aiohttp.ClientSession(connector=connector) as session:
+                                async with session.get(
+                                    current_test_url,
+                                    proxy=client_proxy,
+                                    timeout=aiohttp.ClientTimeout(total=verify_timeout),
+                                    headers={"User-Agent": "Mozilla/5.0"},
+                                    ssl=False
+                                ) as resp:
+                                    if resp.status == 200:
+                                        is_valid = True
+                                        if current_expected_content:
+                                            try:
+                                                html = await resp.text(errors='ignore')
+                                                if current_expected_content not in html:
+                                                    is_valid = False
+                                            except Exception:
+                                                is_valid = False
+                                        
+                                        if is_valid:
+                                            if not stop_event.is_set():
+                                                proxy["success_count"] = proxy.get("success_count", 0) + 1
+                                                proxy["score"] = proxy["success_count"] - 3 * proxy.get("fail_count", 0)
+                                                working.append(proxy)
+                                                if len(working) >= target_count:
+                                                    stop_event.set()
+                                                    # 立即取消所有 Worker 任务，终止剩余在途请求
+                                                    for w in workers:
+                                                        w.cancel()
+                                        else:
+                                            proxy["fail_count"] = proxy.get("fail_count", 0) + 1
+                                            proxy["score"] = proxy.get("success_count", 0) - 3 * proxy["fail_count"]
+                                    else:
+                                        proxy["fail_count"] = proxy.get("fail_count", 0) + 1
+                                        proxy["score"] = proxy.get("success_count", 0) - 3 * proxy["fail_count"]
+                        except asyncio.CancelledError:
+                            break
+                        except Exception:
+                            proxy["fail_count"] = proxy.get("fail_count", 0) + 1
+                            proxy["score"] = proxy.get("success_count", 0) - 3 * proxy["fail_count"]
+                    except asyncio.CancelledError:
+                        break
+                    except Exception:
+                        proxy["fail_count"] = proxy.get("fail_count", 0) + 1
+                        proxy["score"] = proxy.get("success_count", 0) - 3 * proxy["fail_count"]
+                    finally:
+                        queue.task_done()
+                        if not stop_event.is_set():
+                            verified_count[0] += 1
+                            curr_count = verified_count[0]
+                            if curr_count % 500 == 0 or curr_count == total:
+                                elapsed = time.time() - start_time
+                                print(f"[ProxyManager]   进度: {curr_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
+
+            # 启动并发 worker 协程
+            num_workers = min(max_workers, total)
+            for _ in range(num_workers):
+                t = asyncio.create_task(worker())
+                workers.append(t)
+
+            await asyncio.gather(*workers, return_exceptions=True)
 
         # 为当前线程配置独立的事件循环并同步执行，确保外部同步接口兼容性
         loop = asyncio.new_event_loop()
@@ -415,8 +515,18 @@ class ProxyManager:
                 for tid in tids_to_del:
                     del self._thread_proxy_map[tid]
 
-                if len(self._working_proxies) < initial_len:
-                    print(f"[ProxyManager] 剔除失效代理: {proxy_url}，当前剩余可用: {len(self._working_proxies)} 个")
+                # 更新历史评分数据：增加 fail_count，扣减 score
+                updated_history = False
+                for p in self._proxies:
+                    if p["protocol"] == protocol and p["address"] == address:
+                        p["fail_count"] = p.get("fail_count", 0) + 1
+                        p["score"] = p.get("success_count", 0) - 3 * p["fail_count"]
+                        updated_history = True
+                        break
+
+                if len(self._working_proxies) < initial_len or updated_history:
+                    if len(self._working_proxies) < initial_len:
+                        print(f"[ProxyManager] 剔除失效代理: {proxy_url}，当前剩余可用: {len(self._working_proxies)} 个")
                     should_save = True  # 标记需要保存，但在锁外执行
             except Exception as e:
                 print(f"[ProxyManager] 剔除代理失败: {e}")
