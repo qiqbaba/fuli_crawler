@@ -9,20 +9,21 @@ on:
       crawler:
         description: '指定运行的爬虫模块'
         required: true
-        default: 'u3c3'
+        default: 'gcbt'
         type: choice
         options:
           - u3c3
           - seju
           - datang
+          - gcbt
       start:
         description: '起始页码 (留空则默认为 1)'
         required: false
-        default: '5751'
+        default: '1'
       end:
         description: '结束页码 (留空则使用对应爬虫的默认值)'
         required: false
-        default: '9000'
+        default: '10000'
       no_early_stop:
         description: '是否禁用早停机制 (true 强制爬取所有指定页，false 在检测到重复时早停)'
         required: true
@@ -75,7 +76,9 @@ jobs:
         run: playwright install chromium --with-deps
 
       - name: 创建临时 PDF 目录
-        run: mkdir -p /tmp/seju_pdfs
+        run: |
+          mkdir -p /tmp/seju_pdfs
+          mkdir -p /tmp/gcbt_pdfs
 
       - name: 执行爬虫任务
         run: |
@@ -97,8 +100,11 @@ jobs:
             python main.py --crawler seju --crawl || true
             python main.py --crawler u3c3 --crawl || true
             python main.py --crawler datang --crawl || true
+            python main.py --crawler gcbt --crawl || true
           fi
 
       - name: 清理临时 PDF 目录
         if: always()
-        run: rm -rf /tmp/seju_pdfs
+        run: |
+          rm -rf /tmp/seju_pdfs
+          rm -rf /tmp/gcbt_pdfs
