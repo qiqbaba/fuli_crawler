@@ -825,7 +825,21 @@ class SejuCrawler(BaseCrawler):
 """
                     # 使用安全的日期字符串作为 PDF 文件名，避免 Unknown_Date
                     pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"
-                    saved_path = self._save_pdf(html_template, pdf_date, title)
+                    # 最多重试 3 次，失败时重建 Playwright 资源
+                    saved_path = ""
+                    for attempt in range(1, 4):
+                        saved_path = self._save_pdf(html_template, pdf_date, title)
+                        if saved_path:
+                            print(f"[PDF-SAVE] 标题: {title} -> PDF 路径: {saved_path}")
+                            break
+                        else:
+                            print(f"[-] [PDF-SAVE] 标题: {title} 生成 PDF 失败，进行第 {attempt}/3 次尝试")
+                            if attempt < 3:
+                                try:
+                                    self._recreate_thread_resources()
+                                except Exception as recreate_err:
+                                    print(f"[!] 重构 Playwright 资源失败: {recreate_err}")
+                                time.sleep(random.uniform(1.5, 3.0))
                     data['pdf_path'] = saved_path
             else:
                 print("-> 外部网站，已跳过 PDF 保存")

@@ -704,8 +704,22 @@ class DatangCrawler(BaseCrawler):
         if self.is_test:
             print("-> 测试模式下跳过保存 PDF 以节省时间")
         else:
-            saved_pdf = self._save_pdf(url, date_str, raw_item['title'])
-            data['pdf_path'] = saved_pdf if saved_pdf else ''
+            # 最多重试 3 次，失败时重建 Playwright 资源
+            saved_pdf = ""
+            for attempt in range(1, 4):
+                saved_pdf = self._save_pdf(url, date_str, raw_item['title'])
+                if saved_pdf:
+                    print(f"[PDF-SAVE] 标题: {raw_item['title']} -> PDF 路径: {saved_pdf}")
+                    break
+                else:
+                    print(f"[-] [PDF-SAVE] 标题: {raw_item['title']} 生成 PDF 失败，进行第 {attempt}/3 次尝试")
+                    if attempt < 3:
+                        try:
+                            self._recreate_thread_resources()
+                        except Exception as recreate_err:
+                            print(f"[!] 重构 Playwright 资源失败: {recreate_err}")
+                        time.sleep(random.uniform(1.5, 3.0))
+            data['pdf_path'] = saved_pdf
 
         return is_existing, data
 
