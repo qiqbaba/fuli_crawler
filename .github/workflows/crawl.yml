@@ -81,6 +81,7 @@ jobs:
         run: |
           mkdir -p /tmp/seju_pdfs
           mkdir -p /tmp/gcbt_pdfs
+          mkdir -p /tmp/datang_pdfs
 
       - name: 执行爬虫任务
         run: |
@@ -118,3 +119,4 @@ jobs:
         run: |
           rm -rf /tmp/seju_pdfs
           rm -rf /tmp/gcbt_pdfs
+          rm -rf /tmp/datang_pdfs

@@ -218,6 +218,8 @@ class DatangCrawler(BaseCrawler):
                 "--disable-web-security",
                 "--ignore-certificate-errors",
                 "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
             ]
             
             playwright_proxy = None
