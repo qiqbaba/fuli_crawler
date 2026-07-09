@@ -173,7 +173,6 @@ class DatangCrawler(BaseCrawler):
     def cleanup_thread_resources(self):
         """实现基类生命周期钩子，释放当前工作线程持有的 Playwright 资源"""
         if hasattr(self.thread_local, "playwright"):
-            print(f"[+] 正在自主释放工作线程 {threading.get_ident()} 的 Playwright 资源...")
             self._recreate_thread_resources()
 
     def on_finish(self):
@@ -258,7 +257,6 @@ class DatangCrawler(BaseCrawler):
 
     def _recreate_thread_resources(self):
         """清理当前线程的 Playwright 资源，以便下一次重新创建"""
-        print(f"[*] 线程 {threading.get_ident()} 检测到代理失效，正在重构 Playwright 资源...")
         p = getattr(self.thread_local, "playwright", None)
         browser = getattr(self.thread_local, "browser", None)
         context = getattr(self.thread_local, "context", None)
@@ -725,9 +723,12 @@ class DatangCrawler(BaseCrawler):
         return is_existing, data
 
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
-        """大唐BT爬虫入口，对三个板块依次进行爬取"""
+        """大唐BT爬虫入口，对三个板块依次进行爬取，支持断点续爬"""
         self.is_test = is_test
         self.quiet = kwargs.get('quiet', False)
+        resume = kwargs.get('resume', False)
+        self.resume = resume
+        
         classes = ["guochan", "wuma", "oumei"]
 
         # 只调用一次 on_start（初始化 R2、代理管理器），避免重复创建/释放资源
@@ -743,15 +744,92 @@ class DatangCrawler(BaseCrawler):
         if max_workers is None:
             max_workers = 10
 
+        # ========== 断点续爬逻辑：确定各板块的起始状态 ==========
+        resume_class = None          # 需要从中断处恢复的板块
+        resume_page = start_page     # 该板块的起始页码
+
+        if resume:
+            all_states = self.db_manager.load_crawl_state(self.source_name)
+            if all_states:
+                # 检查是否有 '__all__' 标记表示全部完成
+                if "__all__" in all_states and all_states["__all__"].get("completed", False):
+                    print(f"[*] 检测到 {self.source_name} 已完成全部爬取，跳过所有板块")
+                    self.db_manager.clear_crawl_state(self.source_name)
+                    print(f"[+] 已清除完成标记，下次运行将重新爬取")
+                    try:
+                        if is_test:
+                            self._run_test_mode(start_page)
+                        return
+                    finally:
+                        self.on_finish()
+                    return
+                
+                # 找到第一个未完成的板块（page_num <= end_page 表示未完成）
+                for cls in classes:
+                    state = all_states.get(cls)
+                    if state:
+                        saved_page = state["page_num"]
+                        if saved_page <= end_page:
+                            # 该板块未完成，从中断处继续
+                            resume_class = cls
+                            resume_page = saved_page
+                            print(f"[*] 检测到板块 {cls} 爬取断点，从第 {resume_page} 页继续")
+                            break
+                        # saved_page > end_page，该板块已完成，继续检查下一个
+                        print(f"[断点续爬] 板块 {cls} 已完成，跳过")
+                    else:
+                        # 没有记录说明还没开始，从这里开始
+                        resume_class = cls
+                        resume_page = start_page
+                        print(f"[*] 板块 {cls} 无历史记录，从头开始爬取")
+                        break
+                else:
+                    # 所有板块都已完成
+                    print(f"[*] 所有板块已完成，无需爬取")
+                    try:
+                        if is_test:
+                            self._run_test_mode(start_page)
+                        return
+                    finally:
+                        self.on_finish()
+                    return
+            else:
+                print(f"[*] 未检测到历史断点，从头开始爬取")
+
         try:
             if is_test:
                 self._run_test_mode(start_page)
                 return
 
             for cls in classes:
+                # 断点续爬：跳过 resume_class 之前的板块
+                if resume and resume_class is not None:
+                    cls_index = classes.index(cls)
+                    resume_index = classes.index(resume_class)
+                    if cls_index < resume_index:
+                        print(f"\n[断点续爬] 板块 {cls} 已完成，跳过")
+                        continue
+                    # resume_class 及之后的板块正常爬取
+                    if cls == resume_class:
+                        actual_start = resume_page
+                    else:
+                        actual_start = start_page
+                else:
+                    actual_start = start_page
+
                 self.current_class = cls
-                print(f"\n[*] ================= 开始爬取大唐BT板块: {cls} =================")
-                self._crawl_pages(start_page, end_page, max_workers)
+                print(f"\n[*] ================= 开始爬取大唐BT板块: {cls} (起始页码: {actual_start}) =================")
+                self._crawl_pages(actual_start, end_page, max_workers, class_name=cls)
+                
+                # 当前板块正常结束后，保存状态为完成，以便后续板块依次执行
+                if resume and cls == resume_class:
+                    # 如果该板块正常爬完（未提前退出），把 resume_class 置空，后续板块从 start_page 开始
+                    resume_class = None
+            
+            # 所有板块全部爬取完毕，标记为完全完成
+            if not is_test:
+                self.db_manager.mark_source_completed(self.source_name)
+                print(f"[+] {self.source_name} 所有板块爬取完成，已标记完成状态")
 
         except KeyboardInterrupt:
             print("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")

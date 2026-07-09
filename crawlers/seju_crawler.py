@@ -201,7 +201,6 @@ class SejuCrawler(BaseCrawler):
  
     def _recreate_thread_resources(self):
         """清理当前线程的 Playwright 资源，以便下一次重新创建"""
-        print(f"[*] 线程 {threading.get_ident()} 检测到代理失效，正在重构 Playwright 资源...")
         p = getattr(self.thread_local, "playwright", None)
         browser = getattr(self.thread_local, "browser", None)
         context = getattr(self.thread_local, "context", None)
@@ -324,7 +323,6 @@ class SejuCrawler(BaseCrawler):
     def cleanup_thread_resources(self):
         """实现基类生命周期钩子，释放当前工作线程持有的 Playwright 资源"""
         if hasattr(self.thread_local, "playwright"):
-            print(f"[+] 正在自主释放工作线程 {threading.get_ident()} 的 Playwright 资源...")
             self._recreate_thread_resources()
 
     def on_start(self):

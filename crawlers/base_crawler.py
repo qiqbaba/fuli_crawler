@@ -110,10 +110,19 @@ class BaseCrawler:
                 print("-" * 80)
         print("\n[+] 测试完毕。")
 
-    def _crawl_pages(self, start_page, end_page, max_workers):
+    def _save_page_state(self, class_name, page_num, completed=False):
+        """保存当前爬取进度到数据库（断点续爬）"""
+        try:
+            self.db_manager.save_crawl_state(self.source_name, class_name, page_num, completed=completed)
+        except Exception as e:
+            print(f"[!] 保存爬虫断点状态失败: {e}")
+
+    def _crawl_pages(self, start_page, end_page, max_workers, class_name=None):
         """
         爬虫页面循环核心逻辑（不含 on_start/on_finish），
         供 DatangCrawler 多板块循环复用。
+        
+        class_name: 可选，用于断点续爬时记录当前板块名称
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import time
@@ -123,6 +132,7 @@ class BaseCrawler:
         consecutive_count = 0
         consecutive_duplicate_pages = 0
         is_gha = os.environ.get('GITHUB_ACTIONS') == 'true'
+        early_break = False  # 跟踪是否因早停而跳出循环
 
         for page_num in range(start_page, end_page + 1):
             if is_gha:
@@ -187,8 +197,12 @@ class BaseCrawler:
 
                 if not items_to_process:
                     print(f"[+] 页面 {page_num} 所有项均已被跳过。")
+                    # 保存断点（每页完成时记录）
+                    if class_name is not None:
+                        self._save_page_state(class_name, page_num + 1)
                     if early_stop_triggered or (self.max_consecutive_existing is not None and consecutive_count >= self.max_consecutive_existing):
                         print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
+                        early_break = True
                         break
                     time.sleep(random.uniform(3.0, 6.0))
                     continue
@@ -266,14 +280,24 @@ class BaseCrawler:
 
                 print(f"[+] 页面 {page_num} 处理完成：写入 {inserted_count} 条，跳过 {skipped_count} 条。")
 
+                # 保存断点状态（每页完成时记录）
+                if class_name is not None:
+                    self._save_page_state(class_name, page_num + 1)
+
                 if early_stop_triggered or (self.max_consecutive_existing is not None and consecutive_count >= self.max_consecutive_existing):
                     print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
+                    early_break = True
                     break
 
                 time.sleep(random.uniform(1.5, 3.0))
             finally:
                 if is_gha:
                     print("::endgroup::", flush=True)
+        
+        # 所有页正常爬完（for 循环自然结束且未早停），保存当前板块已完成
+        if class_name is not None and not early_break:
+            self._save_page_state(class_name, end_page + 1)
+            print(f"[+] 板块 {class_name} 所有页面爬取完成")
 
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """
@@ -281,6 +305,12 @@ class BaseCrawler:
         """
         self.is_test = is_test
         self.quiet = kwargs.get('quiet', False)
+        resume = kwargs.get('resume', False)
+        self.resume = resume
+        
+        if resume:
+            print(f"[*] 启用断点续爬模式，将自动跳过已完成的板块/页面")
+        
         print(f"[*] 启动 {self.source_name} 爬虫流程...")
         self.on_start()
 

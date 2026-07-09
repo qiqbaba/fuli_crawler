@@ -75,6 +75,12 @@ def main():
         default=False,
         help="静音模式，减少控制台日志输出 (不打印每个重复跳过的网址)"
     )
+    parser.add_argument(
+        "--resume", "-r",
+        action="store_true",
+        default=False,
+        help="断点续爬模式，自动跳过已完成的板块/页面，从上一次中断处继续 (默认: 从头开始)"
+    )
     
     # 代理相关参数
     parser.add_argument(
@@ -237,6 +243,8 @@ def main():
         
     print(f"[*] 模式: {'【测试模式 (不入库)】' if is_test else '【正式爬取模式 (入库)】'}")
     print(f"[*] 页码范围: {start_page} 到 {end_page}")
+    if args.resume:
+        print(f"[*] 断点续爬模式已启用，将自动跳过已完成板块/页面")
     
     try:
         crawler.run(
@@ -245,7 +253,8 @@ def main():
             end_page=end_page,
             max_workers=args.workers,
             no_early_stop=args.no_early_stop,
-            quiet=args.quiet
+            quiet=args.quiet,
+            resume=args.resume
         )
     finally:
         print("[*] 正在释放数据库资源...")

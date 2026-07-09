@@ -32,6 +32,14 @@ on:
         options:
           - 'true'
           - 'false'
+      resume:
+        description: '是否启用断点续爬模式 (跳过已完成板块/页面，从上一次中断处继续)'
+        required: true
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
 
 jobs:
   crawl:
@@ -96,6 +104,9 @@ jobs:
             if [ "${{ github.event.inputs.no_early_stop }}" = "true" ]; then
               CMD="$CMD --no-early-stop"
             fi
+            if [ "${{ github.event.inputs.resume }}" = "true" ]; then
+              CMD="$CMD --resume"
+            fi
             echo "手动运行命令: $CMD"
             eval $CMD
           else
@@ -107,7 +118,7 @@ jobs:
             python main.py --crawler u3c3 --crawl || true
             echo "=== u3c3 完成 ==="
             echo "=== 开始爬取 datang ==="
-            python main.py --crawler datang --crawl || true
+            python main.py --crawler datang --crawl --resume || true
             echo "=== datang 完成 ==="
             echo "=== 开始爬取 gcbt ==="
             python main.py --crawler gcbt --crawl || true

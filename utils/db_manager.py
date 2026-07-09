@@ -47,6 +47,19 @@ class DBManager:
                 pass
                 
         self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_url ON resources(url)")
+        
+        # 爬虫断点续爬状态表（按 source + class_name 分别记录）
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS crawl_state (
+                source TEXT NOT NULL,
+                class_name TEXT NOT NULL,
+                page_num INTEGER NOT NULL DEFAULT 1,
+                completed INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (source, class_name)
+            )
+        ''')
+        
         self.conn.commit()
 
     def check_url_exists(self, url):
@@ -116,6 +129,68 @@ class DBManager:
                 except Exception as e:
                     print(f"[-] 关闭连接时提交事务失败: {e}")
                 self.conn.close()
+
+    # ========== 爬虫断点续爬状态管理 ==========
+
+    def save_crawl_state(self, source, class_name, page_num, completed=False):
+        """保存爬虫断点状态（upsert），按 source + class_name 分别记录"""
+        with self.lock:
+            self.cursor.execute('''
+                INSERT INTO crawl_state (source, class_name, page_num, completed, updated_at)
+                VALUES (?, ?, ?, ?, datetime('now'))
+                ON CONFLICT(source, class_name) DO UPDATE SET
+                    page_num=excluded.page_num,
+                    completed=excluded.completed,
+                    updated_at=datetime('now')
+            ''', (source, class_name, page_num, 1 if completed else 0))
+            self.conn.commit()
+
+    def load_crawl_state(self, source):
+        """
+        加载爬虫所有板块的断点状态，返回 dict {class_name: {"page_num": int, "completed": bool}}
+        如果没有记录则返回空 dict
+        """
+        with self.lock:
+            self.cursor.execute(
+                "SELECT class_name, page_num, completed FROM crawl_state WHERE source = ?",
+                (source,)
+            )
+            rows = self.cursor.fetchall()
+            result = {}
+            for row in rows:
+                result[row[0]] = {
+                    "page_num": row[1],
+                    "completed": bool(row[2])
+                }
+            return result
+
+    def clear_crawl_state(self, source):
+        """清除爬虫所有断点状态"""
+        with self.lock:
+            self.cursor.execute("DELETE FROM crawl_state WHERE source = ?", (source,))
+            self.conn.commit()
+
+    def mark_source_completed(self, source):
+        """将指定爬虫标记为完全完成（在所有板块都完成后调用）"""
+        with self.lock:
+            self.cursor.execute('''
+                INSERT INTO crawl_state (source, class_name, page_num, completed, updated_at)
+                VALUES (?, '__all__', 0, 1, datetime('now'))
+                ON CONFLICT(source, class_name) DO UPDATE SET
+                    completed=1,
+                    updated_at=datetime('now')
+            ''', (source,))
+            self.conn.commit()
+
+    def is_source_completed(self, source):
+        """检查爬虫是否已全部完成"""
+        with self.lock:
+            self.cursor.execute(
+                "SELECT completed FROM crawl_state WHERE source = ? AND class_name = '__all__'",
+                (source,)
+            )
+            row = self.cursor.fetchone()
+            return row is not None and bool(row[0])
 
 
 class SupabaseDBManager:
@@ -213,3 +288,92 @@ class SupabaseDBManager:
     def close(self):
         """兼容接口，Supabase HTTP 无需显式关闭"""
         pass
+
+    # ========== 爬虫断点续爬状态管理 ==========
+
+    def save_crawl_state(self, source, class_name, page_num, completed=False):
+        """保存爬虫断点状态到 Supabase（upsert），按 source + class_name 分别记录"""
+        try:
+            record = {
+                "source": source,
+                "class_name": class_name,
+                "page_num": page_num,
+                "completed": completed,
+                "updated_at": "now()"
+            }
+            self.client.table("crawl_state").upsert(record, on_conflict="source,class_name").execute()
+        except Exception as e:
+            print(f"[-] Supabase save_crawl_state 失败: {e}")
+            print("[!] 请确保 Supabase 中已创建 crawl_state 表:")
+            print("    CREATE TABLE crawl_state (")
+            print("        source TEXT NOT NULL,")
+            print("        class_name TEXT NOT NULL,")
+            print("        page_num INTEGER,")
+            print("        completed BOOLEAN,")
+            print("        updated_at TIMESTAMPTZ DEFAULT NOW(),")
+            print("        PRIMARY KEY (source, class_name)")
+            print("    );")
+
+    def load_crawl_state(self, source):
+        """
+        从 Supabase 加载爬虫所有板块的断点状态
+        返回 dict {class_name: {"page_num": int, "completed": bool}}
+        """
+        try:
+            resp = (
+                self.client.table("crawl_state")
+                .select("class_name, page_num, completed")
+                .eq("source", source)
+                .execute()
+            )
+            result = {}
+            if resp.data:
+                for row in resp.data:
+                    if row["class_name"] == "__all__":
+                        continue
+                    result[row["class_name"]] = {
+                        "page_num": row["page_num"],
+                        "completed": bool(row["completed"])
+                    }
+            return result
+        except Exception as e:
+            print(f"[-] Supabase load_crawl_state 失败: {e}")
+            return {}
+
+    def clear_crawl_state(self, source):
+        """清除 Supabase 中的爬虫断点状态"""
+        try:
+            self.client.table("crawl_state").delete().eq("source", source).execute()
+        except Exception as e:
+            print(f"[-] Supabase clear_crawl_state 失败: {e}")
+
+    def mark_source_completed(self, source):
+        """将指定爬虫标记为完全完成"""
+        try:
+            record = {
+                "source": source,
+                "class_name": "__all__",
+                "page_num": 0,
+                "completed": True,
+                "updated_at": "now()"
+            }
+            self.client.table("crawl_state").upsert(record, on_conflict="source,class_name").execute()
+        except Exception as e:
+            print(f"[-] Supabase mark_source_completed 失败: {e}")
+
+    def is_source_completed(self, source):
+        """检查爬虫是否已全部完成"""
+        try:
+            resp = (
+                self.client.table("crawl_state")
+                .select("completed")
+                .eq("source", source)
+                .eq("class_name", "__all__")
+                .eq("completed", True)
+                .limit(1)
+                .execute()
+            )
+            return len(resp.data) > 0
+        except Exception as e:
+            print(f"[-] Supabase is_source_completed 失败: {e}")
+            return False
