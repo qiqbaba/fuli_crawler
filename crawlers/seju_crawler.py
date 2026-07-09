@@ -82,13 +82,11 @@ class SejuCrawler(BaseCrawler):
             crawler_proxy = get_crawler_proxy()
             if crawler_proxy:
                 playwright_proxy = {"server": crawler_proxy}
-                print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理: {crawler_proxy}")
             elif is_proxy_manager_enabled():
                 # 使用代理管理器获取随机代理
                 proxy_url = get_proxy_string()
                 if proxy_url:
                     playwright_proxy = {"server": proxy_url}
-                    print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理 (代理管理器): {proxy_url}")
             
             context = None
             browser = None
@@ -106,7 +104,6 @@ class SejuCrawler(BaseCrawler):
                     locale="zh-CN",
                     timezone_id="Asia/Shanghai"
                 )
-                print(f"[+] 线程 {threading.get_ident()} 成功启动真实 Chrome 持久化上下文")
             except Exception as e:
                 print(f"[*] 启动真实 Chrome 失败，回退到内置 Chromium: {e}")
                 try:

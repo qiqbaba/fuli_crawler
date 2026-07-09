@@ -80,12 +80,10 @@ class GcbtCrawler(BaseCrawler):
             crawler_proxy = get_crawler_proxy()
             if crawler_proxy:
                 playwright_proxy = {"server": crawler_proxy}
-                print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理: {crawler_proxy}")
             elif is_proxy_manager_enabled():
                 proxy_url = get_proxy_string()
                 if proxy_url:
                     playwright_proxy = {"server": proxy_url}
-                    print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理 (代理管理器): {proxy_url}")
             
             context = None
             browser = None
@@ -102,7 +100,6 @@ class GcbtCrawler(BaseCrawler):
                     locale="zh-CN",
                     timezone_id="Asia/Shanghai"
                 )
-                print(f"[+] 线程 {threading.get_ident()} 成功启动真实 Chrome 持久化上下文")
             except Exception as e:
                 print(f"[*] 启动真实 Chrome 失败，回退到内置 Chromium: {e}")
                 try:
@@ -244,7 +241,6 @@ class GcbtCrawler(BaseCrawler):
     def cleanup_thread_resources(self):
         """生命周期钩子，释放当前工作线程持有的 Playwright 资源"""
         if hasattr(self.thread_local, "playwright"):
-            print(f"[+] 正在释放工作线程 {threading.get_ident()} 的 Playwright 资源...")
             self._recreate_thread_resources()
 
     def on_start(self):
@@ -473,7 +469,7 @@ class GcbtCrawler(BaseCrawler):
                         await Promise.all(imagePromises);
                     }
                 """)
-                print(f"[+] 线程 {threading.get_ident()} 完成页面全滚动及所有图片加载等待")
+                # print(f"[+] 线程 {threading.get_ident()} 完成页面全滚动及所有图片加载等待")
             except Exception as scroll_err:
                 print(f"[!] 页面滚动或等待图片加载异常: {scroll_err}")
 

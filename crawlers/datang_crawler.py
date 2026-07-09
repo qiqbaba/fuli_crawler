@@ -232,7 +232,6 @@ class DatangCrawler(BaseCrawler):
                 proxy_url = get_proxy_string()
                 if proxy_url:
                     playwright_proxy = {"server": proxy_url}
-                    print(f"[+] 线程 {threading.get_ident()} 配置 Playwright 代理 (代理管理器): {proxy_url}")
                 
             browser = p.chromium.launch(headless=True, args=launch_args, proxy=playwright_proxy)
             
