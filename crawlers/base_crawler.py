@@ -3,6 +3,7 @@ import time
 import random
 from utils.date_parser import parse_date
 from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak_link
+from utils.lang_filter import is_japanese
 
 class BaseCrawler:
     def __init__(self, db_manager, source_name):
@@ -11,6 +12,7 @@ class BaseCrawler:
         self.max_consecutive_existing = 20
         self.max_consecutive_duplicate_pages = None
         self.check_resource_link = False  # 是否额外检查 resource_link（磁力链接）去重，子类按需开启
+        self.skip_japanese = True  # 是否跳过日语标题
 
     def on_start(self):
         """生命周期钩子：爬网开始前（子类可选覆盖）"""
@@ -77,6 +79,22 @@ class BaseCrawler:
             'pdf_path': pdf_path,
             'source': self.source_name
         }
+
+    def _is_japanese_title(self, raw_item):
+        """
+        检查 raw_item 中的标题是否为日语。
+        如果 skip_japanese 为 False 或 raw_item 中没有 title 字段，返回 False。
+        """
+        if not self.skip_japanese:
+            return False
+        title = None
+        if isinstance(raw_item, dict):
+            title = raw_item.get('title', '')
+        elif isinstance(raw_item, str):
+            return False  # 纯字符串(如 URL)无法检测
+        if not title:
+            return False
+        return is_japanese(title)
 
     def _run_test_mode(self, start_page):
         """测试模式：抓取第一页前 5 条并输出，不入库"""
@@ -165,6 +183,13 @@ class BaseCrawler:
                 for idx, raw_item in enumerate(raw_items, 1):
                     url = raw_item if isinstance(raw_item, str) else raw_item.get('url')
                     is_existing = url in existing_urls
+
+                    # 日语标题预过滤（仅对标题已在 raw_item 中的爬虫有效）
+                    if not is_existing and self._is_japanese_title(raw_item):
+                        if not self.quiet:
+                            title_preview = raw_item.get('title', '')[:40]
+                            print(f"[{idx}] 标题检测为日语，跳过: {title_preview}")
+                        continue
 
                     if is_existing:
                         skipped_count += 1
@@ -255,6 +280,22 @@ class BaseCrawler:
                 results = [results_dict[idx] for idx in sorted(results_dict.keys())]
 
                 if results:
+                    # 日语标题后置过滤（针对预过滤无法获取标题的爬虫）
+                    if self.skip_japanese:
+                        filtered_jp = []
+                        jp_skipped = 0
+                        for d in results:
+                            title = d.get('title', '')
+                            if title and is_japanese(title):
+                                jp_skipped += 1
+                                if not self.quiet:
+                                    print(f"[*] 结果标题检测为日语，过滤: {title[:40]}")
+                            else:
+                                filtered_jp.append(d)
+                        if jp_skipped > 0:
+                            print(f"[*] 日语标题后置过滤掉 {jp_skipped} 条")
+                        results = filtered_jp
+
                     # 可选：对已获取的 resource_link（磁力链接）进行二次去重
                     if self.check_resource_link:
                         resource_links = [d.get('resource_link') for d in results]

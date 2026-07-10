@@ -9,5 +9,6 @@ playwright-stealth
 curl_cffi
 aiohttp
 aiohttp-socks
+lingua-language-detector
 
 
