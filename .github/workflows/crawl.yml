@@ -16,6 +16,7 @@ on:
           - seju
           - datang
           - gcbt
+          - madou
       start:
         description: '起始页码 (留空则默认为 1)'
         required: false
@@ -87,6 +88,7 @@ jobs:
 
       - name: 创建临时 PDF 目录
         run: |
+          mkdir -p /tmp/madou_pdfs
           mkdir -p /tmp/seju_pdfs
           mkdir -p /tmp/gcbt_pdfs
           mkdir -p /tmp/datang_pdfs
@@ -123,11 +125,15 @@ jobs:
             echo "=== 开始爬取 gcbt ==="
             python main.py --crawler gcbt --crawl || true
             echo "=== gcbt 完成 ==="
+            echo "=== 开始爬取 madou ==="
+            python main.py --crawler madou --crawl || true
+            echo "=== madou 完成 ==="
           fi
 
       - name: 清理临时 PDF 目录
         if: always()
         run: |
+          rm -rf /tmp/madou_pdfs
           rm -rf /tmp/seju_pdfs
           rm -rf /tmp/gcbt_pdfs
           rm -rf /tmp/datang_pdfs
