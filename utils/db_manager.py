@@ -83,6 +83,21 @@ class DBManager:
                     existing.add(row[0])
             return existing
 
+    def filter_existing_resource_links(self, resource_links):
+        """批量检查哪些 resource_link 已存在于数据库中，返回已存在的 resource_link 集合"""
+        if not resource_links:
+            return set()
+        with self.lock:
+            existing = set()
+            links_list = list(resource_links)
+            for i in range(0, len(links_list), 100):
+                chunk = links_list[i:i+100]
+                placeholders = ",".join(["?"] * len(chunk))
+                self.cursor.execute(f"SELECT resource_link FROM resources WHERE resource_link IN ({placeholders})", chunk)
+                for row in self.cursor.fetchall():
+                    existing.add(row[0])
+            return existing
+
     def insert_resource(self, data):
         """
         向数据库写入数据字典
@@ -246,6 +261,28 @@ class SupabaseDBManager:
                         existing.add(row["url"])
         except Exception as e:
             print(f"[-] Supabase filter_existing_urls 失败: {e}")
+        return existing
+
+    def filter_existing_resource_links(self, resource_links):
+        """批量检查哪些 resource_link 已存在于 Supabase 表中，返回已存在的 resource_link 集合"""
+        if not resource_links:
+            return set()
+        existing = set()
+        links_list = list(resource_links)
+        try:
+            for i in range(0, len(links_list), 100):
+                chunk = links_list[i:i+100]
+                resp = (
+                    self.client.table(self.table)
+                    .select("resource_link")
+                    .in_("resource_link", chunk)
+                    .execute()
+                )
+                if resp.data:
+                    for row in resp.data:
+                        existing.add(row["resource_link"])
+        except Exception as e:
+            print(f"[-] Supabase filter_existing_resource_links 失败: {e}")
         return existing
 
     def insert_resource(self, data):

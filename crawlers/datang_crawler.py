@@ -53,6 +53,7 @@ class DatangCrawler(BaseCrawler):
     def __init__(self, db_manager):
         # source_name 设为 datang
         super().__init__(db_manager, "datang")
+        self.check_resource_link = True  # 启用磁力链接二次去重
         self.domains = [
             "ipk.383296.xyz",
             "dyh.393659.xyz",

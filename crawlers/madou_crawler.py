@@ -43,6 +43,7 @@ _STEALTH_JS = """
 class MadouCrawler(BaseCrawler):
     def __init__(self, db_manager):
         super().__init__(db_manager, "madou")
+        self.check_resource_link = True  # 启用磁力链接二次去重
         self.domains = [
             "hfc.232668.xyz"
         ]

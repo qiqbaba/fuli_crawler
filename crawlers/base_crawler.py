@@ -10,6 +10,7 @@ class BaseCrawler:
         self.source_name = source_name
         self.max_consecutive_existing = 20
         self.max_consecutive_duplicate_pages = None
+        self.check_resource_link = False  # 是否额外检查 resource_link（磁力链接）去重，子类按需开启
 
     def on_start(self):
         """生命周期钩子：爬网开始前（子类可选覆盖）"""
@@ -254,6 +255,24 @@ class BaseCrawler:
                 results = [results_dict[idx] for idx in sorted(results_dict.keys())]
 
                 if results:
+                    # 可选：对已获取的 resource_link（磁力链接）进行二次去重
+                    if self.check_resource_link:
+                        resource_links = [d.get('resource_link') for d in results]
+                        existing_links = self.db_manager.filter_existing_resource_links(resource_links)
+                        filtered_results = []
+                        resource_link_skipped = 0
+                        for d in results:
+                            link = d.get('resource_link', '')
+                            if link and link in existing_links:
+                                resource_link_skipped += 1
+                                if not self.quiet:
+                                    print(f"[*] 磁力链接已存在数据库中，跳过: {link[:60]}...")
+                            else:
+                                filtered_results.append(d)
+                        if resource_link_skipped > 0:
+                            print(f"[*] 磁力链接去重过滤掉 {resource_link_skipped} 条")
+                        results = filtered_results
+
                     print(f"[*] 正在写入 {len(results)} 条新纪录到数据库...")
                     for data in results:
                         success = self.db_manager.insert_resource(data)
