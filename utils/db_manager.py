@@ -334,6 +334,7 @@ class SupabaseDBManager:
     def _ensure_crawl_state_table(self):
         """通过 Supabase REST API 的 /sql 端点执行建表语句"""
         import requests
+        from datetime import datetime, timezone
 
         create_sql = """
         CREATE TABLE IF NOT EXISTS crawl_state (
@@ -347,35 +348,98 @@ class SupabaseDBManager:
         """
         try:
             # 使用 Supabase 的 /rest/v1/sql 端点执行原始 SQL
+            # 注意: 使用 text/plain 发送原始 SQL 文本
+            headers = {
+                "apikey": self.supabase_key,
+                "Authorization": f"Bearer {self.supabase_key}",
+                "Content-Type": "text/plain"
+            }
+            resp = requests.post(
+                f"{self.supabase_url}/rest/v1/sql",
+                data=create_sql.strip(),
+                headers=headers,
+                timeout=15
+            )
+            if resp.status_code in (200, 201):
+                print("[+] crawl_state 表已自动创建")
+                # 通知 PostgREST 重新加载 schema cache
+                self._reload_schema_cache()
+                return
+            else:
+                # 如果 text/plain 失败，尝试以 JSON 格式重试
+                headers["Content-Type"] = "application/json"
+                resp2 = requests.post(
+                    f"{self.supabase_url}/rest/v1/sql",
+                    json={"query": create_sql.strip()},
+                    headers=headers,
+                    timeout=15
+                )
+                if resp2.status_code in (200, 201):
+                    print("[+] crawl_state 表已自动创建")
+                    self._reload_schema_cache()
+                    return
+                else:
+                    print(f"[*] 建表请求返回状态码 {resp2.status_code}: {resp2.text}")
+        except Exception as exc:
+            print(f"[*] 建表请求异常: {exc}")
+
+        print("[!] 无法自动创建 crawl_state 表，请在 Supabase Dashboard -> SQL Editor 中执行：")
+        print(create_sql)
+
+    def _reload_schema_cache(self):
+        """通知 PostgREST 重新加载 schema cache，使新创建的表立即可见"""
+        import requests
+        # 方式1: 通过 /rest/v1/rpc/pgrst_reload_schema RPC
+        try:
             headers = {
                 "apikey": self.supabase_key,
                 "Authorization": f"Bearer {self.supabase_key}",
                 "Content-Type": "application/json"
             }
             resp = requests.post(
-                f"{self.supabase_url}/rest/v1/sql",
-                data=create_sql,
+                f"{self.supabase_url}/rest/v1/rpc/pgrst_reload_schema",
                 headers=headers,
                 timeout=10
             )
-            if resp.status_code == 200 or resp.status_code == 201:
-                print("[+] crawl_state 表已自动创建")
+            if resp.status_code in (200, 201, 204):
+                print("[+] PostgREST schema cache 已刷新 (via rpc)")
                 return
         except Exception:
             pass
-
-        print("[!] 无法自动创建 crawl_state 表，请在 Supabase Dashboard -> SQL Editor 中执行：")
-        print(create_sql)
+        # 方式2: 通过 SQL 通知 PostgREST 重新加载 schema
+        try:
+            headers = {
+                "apikey": self.supabase_key,
+                "Authorization": f"Bearer {self.supabase_key}",
+                "Content-Type": "text/plain"
+            }
+            resp = requests.post(
+                f"{self.supabase_url}/rest/v1/sql",
+                data="NOTIFY pgrst, 'reload schema'",
+                headers=headers,
+                timeout=10
+            )
+            if resp.status_code in (200, 201, 204):
+                print("[+] PostgREST schema cache 已刷新 (via NOTIFY)")
+                return
+        except Exception:
+            pass
+        # 方式3: 等待 3 秒让 schema cache 自动过期
+        import time
+        print("[*] 等待 3 秒让 PostgREST schema cache 自动刷新...")
+        time.sleep(3)
 
     def save_crawl_state(self, source, class_name, page_num, completed=False):
         """保存爬虫断点状态到 Supabase（upsert），按 source + class_name 分别记录"""
+        from datetime import datetime, timezone
+
         try:
             record = {
                 "source": source,
                 "class_name": class_name,
                 "page_num": page_num,
                 "completed": completed,
-                "updated_at": "now()"
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }
             self.client.table("crawl_state").upsert(record, on_conflict="source,class_name").execute()
         except Exception as e:
@@ -429,13 +493,15 @@ class SupabaseDBManager:
 
     def mark_source_completed(self, source):
         """将指定爬虫标记为完全完成"""
+        from datetime import datetime, timezone
+
         try:
             record = {
                 "source": source,
                 "class_name": "__all__",
                 "page_num": 0,
                 "completed": True,
-                "updated_at": "now()"
+                "updated_at": datetime.now(timezone.utc).isoformat()
             }
             self.client.table("crawl_state").upsert(record, on_conflict="source,class_name").execute()
         except Exception as e:
