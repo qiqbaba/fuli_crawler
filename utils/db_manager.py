@@ -200,8 +200,11 @@ class SupabaseDBManager:
         from supabase import create_client
         from urllib.parse import urlparse
         
+        self.supabase_url = supabase_url.strip()
+        self.supabase_key = supabase_key
+        
         # 清洗 URL，防止因带有 /rest/v1 等路径或末尾斜杠导致 PostgREST (PGRST125) 404 错误
-        parsed = urlparse(supabase_url.strip())
+        parsed = urlparse(self.supabase_url)
         clean_url = f"{parsed.scheme}://{parsed.netloc}"
         
         self.client = create_client(clean_url, supabase_key)
@@ -291,6 +294,42 @@ class SupabaseDBManager:
 
     # ========== 爬虫断点续爬状态管理 ==========
 
+    def _ensure_crawl_state_table(self):
+        """通过 Supabase REST API 的 /sql 端点执行建表语句"""
+        import requests
+
+        create_sql = """
+        CREATE TABLE IF NOT EXISTS crawl_state (
+            source TEXT NOT NULL,
+            class_name TEXT NOT NULL,
+            page_num INTEGER,
+            completed BOOLEAN,
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            PRIMARY KEY (source, class_name)
+        );
+        """
+        try:
+            # 使用 Supabase 的 /rest/v1/sql 端点执行原始 SQL
+            headers = {
+                "apikey": self.supabase_key,
+                "Authorization": f"Bearer {self.supabase_key}",
+                "Content-Type": "application/json"
+            }
+            resp = requests.post(
+                f"{self.supabase_url}/rest/v1/sql",
+                data=create_sql,
+                headers=headers,
+                timeout=10
+            )
+            if resp.status_code == 200 or resp.status_code == 201:
+                print("[+] crawl_state 表已自动创建")
+                return
+        except Exception:
+            pass
+
+        print("[!] 无法自动创建 crawl_state 表，请在 Supabase Dashboard -> SQL Editor 中执行：")
+        print(create_sql)
+
     def save_crawl_state(self, source, class_name, page_num, completed=False):
         """保存爬虫断点状态到 Supabase（upsert），按 source + class_name 分别记录"""
         try:
@@ -303,16 +342,20 @@ class SupabaseDBManager:
             }
             self.client.table("crawl_state").upsert(record, on_conflict="source,class_name").execute()
         except Exception as e:
-            print(f"[-] Supabase save_crawl_state 失败: {e}")
-            print("[!] 请确保 Supabase 中已创建 crawl_state 表:")
-            print("    CREATE TABLE crawl_state (")
-            print("        source TEXT NOT NULL,")
-            print("        class_name TEXT NOT NULL,")
-            print("        page_num INTEGER,")
-            print("        completed BOOLEAN,")
-            print("        updated_at TIMESTAMPTZ DEFAULT NOW(),")
-            print("        PRIMARY KEY (source, class_name)")
-            print("    );")
+            # 如果报错是表不存在，则自动建表并重试一次
+            err_str = str(e)
+            if "crawl_state" in err_str and ("PGRST205" in err_str or "relation" in err_str.lower() or "does not exist" in err_str.lower()):
+                print("[*] 检测到 crawl_state 表不存在，尝试自动创建...")
+                self._ensure_crawl_state_table()
+                # 重试一次
+                try:
+                    self.client.table("crawl_state").upsert(record, on_conflict="source,class_name").execute()
+                    print("[+] 自动创建 crawl_state 表成功，状态已保存")
+                    return
+                except Exception as e2:
+                    print(f"[-] Supabase save_crawl_state 重试仍失败: {e2}")
+            else:
+                print(f"[-] Supabase save_crawl_state 失败: {e}")
 
     def load_crawl_state(self, source):
         """
