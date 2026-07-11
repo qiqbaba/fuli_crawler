@@ -44,5 +44,5 @@ datang_top10.txt
 proxies.txt
 
 temp_profiles/
-upload_to_dynamodb.py
+/upload_to_dynamodb.py
 
