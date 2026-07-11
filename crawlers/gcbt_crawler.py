@@ -57,6 +57,7 @@ class GcbtCrawler(BaseCrawler):
                 "--disable-setuid-sandbox",
                 "--disable-web-security",
                 "--ignore-certificate-errors",
+                "--disable-features=UserAgentClientHint",
             ]
             if headless:
                 launch_args.extend([

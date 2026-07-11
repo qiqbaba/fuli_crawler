@@ -207,6 +207,7 @@ class DatangCrawler(BaseCrawler):
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
+                "--disable-features=UserAgentClientHint",
             ]
             
             playwright_proxy = None
