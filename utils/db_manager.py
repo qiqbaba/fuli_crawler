@@ -52,11 +52,16 @@ class DBManager:
             ("resource_format", "TEXT")
         ]
         
+        # 先检查已有哪些列，避免每次连接都运行 ALTER TABLE
+        self.cursor.execute("PRAGMA table_info(resources)")
+        existing_columns = {row[1] for row in self.cursor.fetchall()}
+        
         for col_name, col_type in columns_to_add:
-            try:
-                self.cursor.execute(f"ALTER TABLE resources ADD COLUMN {col_name} {col_type}")
-            except sqlite3.OperationalError:
-                pass
+            if col_name not in existing_columns:
+                try:
+                    self.cursor.execute(f"ALTER TABLE resources ADD COLUMN {col_name} {col_type}")
+                except sqlite3.OperationalError:
+                    pass
                 
         self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_url ON resources(url)")
         

@@ -1,6 +1,7 @@
 import os
 import time
 import random
+import threading
 from utils.date_parser import parse_date
 from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak_link
 from utils.lang_filter import is_japanese
@@ -221,8 +222,11 @@ class BaseCrawler:
                     else:
                         consecutive_duplicate_pages = 0
 
-                if not items_to_process:
-                    print(f"[+] 页面 {page_num} 所有项均已被跳过。")
+                if not items_to_process or early_stop_triggered:
+                    if not items_to_process:
+                        print(f"[+] 页面 {page_num} 所有项均已被跳过。")
+                    else:
+                        print(f"[+] 页面 {page_num} 触发早停，跳过 {len(items_to_process)} 条待处理项。")
                     # 保存断点（每页完成时记录）
                     if class_name is not None:
                         self._save_page_state(class_name, page_num + 1)
@@ -243,11 +247,22 @@ class BaseCrawler:
                         try:
                             res = self.process_sub_page_if_needed(raw_item, idx)
                             if res:
-                                _, data = res
+                                is_existing, data = res
+                                if is_existing:
+                                    skipped_count += 1
+                                    if self.max_consecutive_existing is not None:
+                                        consecutive_count += 1
+                                        if not self.quiet:
+                                            print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
+                                        if consecutive_count >= self.max_consecutive_existing:
+                                            early_stop_triggered = True
+                                            break
                                 if data:
                                     results_dict[idx] = data
                         except Exception as e:
                             print(f"[-] 处理索引为 [{idx}] 的项目时发生异常: {e}")
+                    # 单线程模式清理资源
+                    self.cleanup_thread_resources()
                 else:
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
                         future_to_idx = {
@@ -260,7 +275,15 @@ class BaseCrawler:
                             try:
                                 res = future.result()
                                 if res:
-                                    _, data = res
+                                    is_existing, data = res
+                                    if is_existing:
+                                        skipped_count += 1
+                                        if self.max_consecutive_existing is not None:
+                                            consecutive_count += 1
+                                            if not self.quiet:
+                                                print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
+                                            if consecutive_count >= self.max_consecutive_existing:
+                                                early_stop_triggered = True
                                     if data:
                                         results_dict[idx] = data
                             except Exception as e:
@@ -276,6 +299,10 @@ class BaseCrawler:
                                 f.result()
                             except Exception as e:
                                 print(f"[-] 清理工作线程资源时发生异常: {e}")
+
+                # 子页面级去重早停标记（已处理的结果仍会入库，稍后翻页循环会退出）
+                if early_stop_triggered:
+                    print(f"[!] 子页面级去重触发早停标记，已完成的结果将继续入库。")
 
                 results = [results_dict[idx] for idx in sorted(results_dict.keys())]
 

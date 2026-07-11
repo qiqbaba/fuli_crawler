@@ -38,6 +38,89 @@ class SejuCrawler(BaseCrawler):
         self._active_resources = []
         self._resources_lock = threading.Lock()
 
+    _PDF_HTML_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>{safe_title}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif;
+            line-height: 1.8;
+            color: #333;
+            max-width: 850px;
+            margin: 0 auto;
+            padding: 40px 30px;
+            background-color: #fff;
+        }}
+        h1 {{
+            font-size: 26px;
+            color: #111;
+            margin-bottom: 12px;
+            font-weight: 600;
+            line-height: 1.4;
+        }}
+        .meta {{
+            font-size: 14px;
+            color: #777;
+            border-bottom: 1px dashed #ddd;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+        }}
+        .meta span {{
+            margin-right: 15px;
+        }}
+        .content {{
+            font-size: 16px;
+            color: #222;
+        }}
+        .content p {{
+            margin-bottom: 20px;
+            word-wrap: break-word;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }}
+        .content img {{
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 25px auto;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }}
+        .footer {{
+            margin-top: 50px;
+            font-size: 12px;
+            color: #999;
+            text-align: center;
+            border-top: 1px dashed #ddd;
+            padding-top: 20px;
+        }}
+        a {{
+            color: #0066cc;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <h1>{safe_title}</h1>
+    <div class="meta">
+        <span><strong>发布时间:</strong> {safe_pub_time}</span>
+        <span><strong>分类:</strong> {safe_category}</span>
+        <span><strong>来源:</strong> <a href="{safe_current_url}">{safe_current_url}</a></span>
+    </div>
+    <div class="content">
+        {content_html}
+    </div>
+    <div class="footer">
+        PDF 由 Fuli Crawler 离线格式化生成
+    </div>
+</body>
+</html>"""
+
     def get_list_url(self, page_num):
         """获取指定页码的列表页 URL，针对第一页避免 301 重定向"""
         if page_num == 1:
@@ -734,90 +817,13 @@ class SejuCrawler(BaseCrawler):
                     safe_pub_time = html_escape.escape(pub_time)
                     safe_category = html_escape.escape(category)
                     safe_current_url = html_escape.escape(current_url)
-                    # content_html 来自 BeautifulSoup 解析，本身是合法 HTML，无需转义
-                    html_template = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>{safe_title}</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif;
-            line-height: 1.8;
-            color: #333;
-            max-width: 850px;
-            margin: 0 auto;
-            padding: 40px 30px;
-            background-color: #fff;
-        }}
-        h1 {{
-            font-size: 26px;
-            color: #111;
-            margin-bottom: 12px;
-            font-weight: 600;
-            line-height: 1.4;
-        }}
-        .meta {{
-            font-size: 14px;
-            color: #777;
-            border-bottom: 1px dashed #ddd;
-            padding-bottom: 15px;
-            margin-bottom: 30px;
-        }}
-        .meta span {{
-            margin-right: 15px;
-        }}
-        .content {{
-            font-size: 16px;
-            color: #222;
-        }}
-        .content p {{
-            margin-bottom: 20px;
-            word-wrap: break-word;
-            word-break: break-all;
-            white-space: pre-wrap;
-        }}
-        .content img {{
-            max-width: 100%;
-            height: auto;
-            display: block;
-            margin: 25px auto;
-            border-radius: 4px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        }}
-        .footer {{
-            margin-top: 50px;
-            font-size: 12px;
-            color: #999;
-            text-align: center;
-            border-top: 1px dashed #ddd;
-            padding-top: 20px;
-        }}
-        a {{
-            color: #0066cc;
-            text-decoration: none;
-        }}
-        a:hover {{
-            text-decoration: underline;
-        }}
-    </style>
-</head>
-<body>
-    <h1>{safe_title}</h1>
-    <div class="meta">
-        <span><strong>发布时间:</strong> {safe_pub_time}</span>
-        <span><strong>分类:</strong> {safe_category}</span>
-        <span><strong>来源:</strong> <a href="{safe_current_url}">{safe_current_url}</a></span>
-    </div>
-    <div class="content">
-        {content_html}
-    </div>
-    <div class="footer">
-        PDF 由 Fuli Crawler 离线格式化生成
-    </div>
-</body>
-</html>
-"""
+                    html_template = self._PDF_HTML_TEMPLATE.format(
+                        safe_title=safe_title,
+                        safe_pub_time=safe_pub_time,
+                        safe_category=safe_category,
+                        safe_current_url=safe_current_url,
+                        content_html=content_html
+                    )
                     # 使用安全的日期字符串作为 PDF 文件名，避免 Unknown_Date
                     pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"
                     # 最多重试 3 次，失败时重建 Playwright 资源

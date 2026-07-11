@@ -2,6 +2,7 @@ import sys
 import argparse
 from config import get_db_path, use_supabase, SUPABASE_URL, SUPABASE_KEY, is_local_mode
 from utils.db_manager import DBManager, SupabaseDBManager
+from utils import setup_console_utf8
 from crawlers.seju_crawler import SejuCrawler
 from crawlers.u3c3_crawler import U3c3Crawler
 from crawlers.datang_crawler import DatangCrawler
@@ -9,13 +10,7 @@ from crawlers.gcbt_crawler import GcbtCrawler
 from crawlers.madou_crawler import MadouCrawler
 
 # Windows下控制台强制使用utf-8编码输出，防止中文乱码
-if sys.platform.startswith('win'):
-    if sys.stdout.encoding != 'utf-8':
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-            sys.stderr.reconfigure(encoding='utf-8')
-        except AttributeError:
-            pass
+setup_console_utf8()
 
 def main():
     parser = argparse.ArgumentParser(description="多网站通用数据爬虫统一入口")
@@ -271,16 +266,19 @@ def main():
         print("📊 爬虫完成，正在输出平台数据统计...")
         print("=" * 50)
         try:
-            from sync.stats import query_supabase, query_r2, query_dynamodb
-            query_supabase()
-            query_r2()
-            query_dynamodb()
-        except Exception as e:
-            print(f"[-] 统计查询失败: {e}")
-        
-        print("[*] 正在释放数据库资源...")
-        db_manager.close()
-        print("[+] 数据库已安全关闭！")
+            try:
+                from sync.stats import query_supabase, query_r2, query_dynamodb
+                query_supabase()
+                query_r2()
+                query_dynamodb()
+            except ImportError as ie:
+                print(f"[-] 统计模块导入失败（不影响爬虫结果）: {ie}")
+            except Exception as e:
+                print(f"[-] 统计查询失败: {e}")
+        finally:
+            print("[*] 正在释放数据库资源...")
+            db_manager.close()
+            print("[+] 数据库已安全关闭！")
 
 if __name__ == "__main__":
     main()
