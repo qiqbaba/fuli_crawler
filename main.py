@@ -77,6 +77,12 @@ def main():
         default=False,
         help="断点续爬模式，自动跳过已完成的板块/页面，从上一次中断处继续 (默认: 从头开始)"
     )
+    parser.add_argument(
+        "--no-pdf",
+        action="store_true",
+        default=False,
+        help="禁用 PDF 生成和相关图片下载，仅爬取结构化元数据以实现极致提速"
+    )
     
     # 代理相关参数
     parser.add_argument(
@@ -258,7 +264,8 @@ def main():
             max_workers=args.workers,
             no_early_stop=args.no_early_stop,
             quiet=args.quiet,
-            resume=args.resume
+            resume=args.resume,
+            no_pdf=args.no_pdf
         )
     finally:
         # 输出三个平台的数据统计信息

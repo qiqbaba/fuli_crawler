@@ -318,6 +318,8 @@ class DatangCrawler(BaseCrawler):
 
     def _save_pdf(self, target_url, publish_date, title):
         """直接用 Playwright 打开详情页并保存为 PDF"""
+        if getattr(self, 'no_pdf', False):
+            return ""
         # 确保日期有效，避免生成 Unknown_Date 文件名
         if not publish_date or publish_date == "Unknown_Date":
             from datetime import datetime
@@ -555,7 +557,10 @@ class DatangCrawler(BaseCrawler):
         is_existing = False  # 外部 BaseCrawler 已进行过批量去重过滤
 
         # 每个详情页请求前随机延迟，模拟人类浏览行为
-        time.sleep(random.uniform(2.0, 5.0))
+        if getattr(self, 'no_pdf', False):
+            time.sleep(random.uniform(0.3, 0.8))
+        else:
+            time.sleep(random.uniform(2.0, 5.0))
         
         detail_html = None
         url = original_url  # Bug 6 修复：提前初始化 url，避免循环外 NameError
@@ -724,6 +729,7 @@ class DatangCrawler(BaseCrawler):
         self.quiet = kwargs.get('quiet', False)
         resume = kwargs.get('resume', False)
         self.resume = resume
+        self.no_pdf = kwargs.get('no_pdf', False)
         
         classes = ["guochan", "wuma", "oumei"]
 
@@ -738,7 +744,10 @@ class DatangCrawler(BaseCrawler):
             self.max_consecutive_duplicate_pages = None
 
         if max_workers is None:
-            max_workers = 10
+            if getattr(self, 'no_pdf', False):
+                max_workers = 30
+            else:
+                max_workers = 10
 
         # ========== 断点续爬逻辑：确定各板块的起始状态 ==========
         resume_class = None          # 需要从中断处恢复的板块

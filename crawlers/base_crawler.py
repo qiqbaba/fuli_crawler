@@ -234,7 +234,10 @@ class BaseCrawler:
                         print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                         early_break = True
                         break
-                    time.sleep(random.uniform(3.0, 6.0))
+                    if self.no_pdf:
+                        time.sleep(random.uniform(0.5, 1.5))
+                    else:
+                        time.sleep(random.uniform(3.0, 6.0))
                     continue
 
                 print(f"[*] 开始并发处理 {len(items_to_process)} 条新纪录 (并发线程数: {max_workers})...")
@@ -366,6 +369,7 @@ class BaseCrawler:
                                     print(f"[*] 写入失败或重复 (DB IGNORE)")
 
                 print(f"[+] 页面 {page_num} 处理完成：写入 {inserted_count} 条，跳过 {skipped_count} 条。")
+                self.db_manager.commit()
 
                 # 保存断点状态（每页完成时记录）
                 if class_name is not None:
@@ -376,7 +380,10 @@ class BaseCrawler:
                     early_break = True
                     break
 
-                time.sleep(random.uniform(1.5, 3.0))
+                if self.no_pdf:
+                    time.sleep(random.uniform(0.3, 0.8))
+                else:
+                    time.sleep(random.uniform(1.5, 3.0))
             finally:
                 if is_gha:
                     print("::endgroup::", flush=True)
@@ -394,9 +401,12 @@ class BaseCrawler:
         self.quiet = kwargs.get('quiet', False)
         resume = kwargs.get('resume', False)
         self.resume = resume
+        self.no_pdf = kwargs.get('no_pdf', False)
         
         if resume:
             print(f"[*] 启用断点续爬模式，将自动跳过已完成的板块/页面")
+        if self.no_pdf:
+            print("[*] 启用无 PDF 渲染模式，将跳过 PDF 生成与图片下载")
         
         print(f"[*] 启动 {self.source_name} 爬虫流程...")
         self.on_start()
@@ -410,7 +420,10 @@ class BaseCrawler:
         if max_workers is None:
             # Playwright 爬虫（datang, madou, gcbt, seju）每个线程启动一个浏览器，限制并发避免 OOM
             # 纯 curl_cffi 爬虫（u3c3）可开更高并发
-            if self.source_name in ("seju", "datang", "madou", "gcbt"):
+            if self.no_pdf:
+                # 无 PDF 模式无需浏览器进程，可大幅提升并发
+                max_workers = 30
+            elif self.source_name in ("seju", "datang", "madou", "gcbt"):
                 max_workers = 3
             else:
                 max_workers = 50

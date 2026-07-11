@@ -588,6 +588,8 @@ class SejuCrawler(BaseCrawler):
         保存 PDF：使用 Playwright 将 HTML 内容离线渲染并保存为 PDF。
         若配置了 R2 则上传并返回 R2 Key，否则返回本地路径。
         """
+        if getattr(self, 'no_pdf', False):
+            return ""
         # 确保日期有效，避免生成 Unknown_Date 文件名
         if not publish_date or publish_date == "Unknown_Date":
             from datetime import datetime
@@ -768,7 +770,7 @@ class SejuCrawler(BaseCrawler):
                 link_type = ""
 
                 # 处理图片下载与本地化
-                if content_div:
+                if content_div and not getattr(self, 'no_pdf', False):
                     img_tags = content_div.find_all('img')
                     if img_tags:
                         local_tmp_base = self._get_pdf_local_tmp_path(pub_time, title)

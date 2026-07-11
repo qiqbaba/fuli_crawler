@@ -287,6 +287,8 @@ class MadouCrawler(BaseCrawler):
 
     def _save_pdf(self, target_url, publish_date, title):
         """直接用 Playwright 打开详情页并保存为 PDF"""
+        if getattr(self, 'no_pdf', False):
+            return ""
         if not publish_date or publish_date == "Unknown_Date":
             from datetime import datetime
             publish_date = datetime.now().strftime("%Y-%m-%d")
@@ -503,7 +505,10 @@ class MadouCrawler(BaseCrawler):
         original_url = raw_item['url']
         is_existing = False
 
-        time.sleep(random.uniform(2.0, 5.0))
+        if getattr(self, 'no_pdf', False):
+            time.sleep(random.uniform(0.3, 0.8))
+        else:
+            time.sleep(random.uniform(2.0, 5.0))
         
         detail_html = None
         url = original_url
@@ -666,6 +671,7 @@ class MadouCrawler(BaseCrawler):
         self.quiet = kwargs.get('quiet', False)
         resume = kwargs.get('resume', False)
         self.resume = resume
+        self.no_pdf = kwargs.get('no_pdf', False)
         
         classes = ["guochan", "oumei"]
 
@@ -679,7 +685,10 @@ class MadouCrawler(BaseCrawler):
             self.max_consecutive_duplicate_pages = None
 
         if max_workers is None:
-            max_workers = 10
+            if getattr(self, 'no_pdf', False):
+                max_workers = 30
+            else:
+                max_workers = 10
 
         resume_class = None
         resume_page = start_page

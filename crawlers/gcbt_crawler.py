@@ -366,6 +366,8 @@ class GcbtCrawler(BaseCrawler):
 
     def _save_pdf(self, target_url, publish_date, title):
         """直接用 Playwright 打开详情页并保存为 PDF"""
+        if getattr(self, 'no_pdf', False):
+            return ""
         if not publish_date or publish_date == "Unknown_Date":
             from datetime import datetime
             publish_date = datetime.now().strftime("%Y-%m-%d")
