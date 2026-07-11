@@ -408,7 +408,12 @@ class BaseCrawler:
             self.max_consecutive_duplicate_pages = None
 
         if max_workers is None:
-            max_workers = 10 if self.source_name in ("seju", "datang") else 50
+            # Playwright 爬虫（datang, madou, gcbt, seju）每个线程启动一个浏览器，限制并发避免 OOM
+            # 纯 curl_cffi 爬虫（u3c3）可开更高并发
+            if self.source_name in ("seju", "datang", "madou", "gcbt"):
+                max_workers = 3
+            else:
+                max_workers = 50
 
         try:
             if is_test:

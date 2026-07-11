@@ -70,24 +70,11 @@ class DatangCrawler(BaseCrawler):
         self.thread_local = threading.local()
         self._active_resources = []
         self._resources_lock = threading.Lock()
-        # 全局限速器：确保所有线程的请求间隔不低于 1 秒
-        self._rate_lock = threading.Lock()
-        self._last_request_time = 0
         # 域名冷却机制：记录每个域名最后失败时间
         self._domain_cooldown = {}
         self._cooldown_seconds = 60  # 域名冷却 60 秒
         # 域名轮换线程安全锁
         self._domain_lock = threading.Lock()
-
-    def _rate_limit(self):
-        """线程安全的全局限速，确保请求间隔不低于 1 秒"""
-        with self._rate_lock:
-            now = time.time()
-            elapsed = now - self._last_request_time
-            if elapsed < 1.0:
-                wait = 1.0 - elapsed + random.uniform(0.1, 0.5)
-                time.sleep(wait)
-            self._last_request_time = time.time()
 
     def _build_headers(self, referer=None):
         """构造完整的浏览器请求头，模拟真实浏览器行为"""
@@ -159,9 +146,9 @@ class DatangCrawler(BaseCrawler):
                 print(f"[DEBUG] get_proxy_manager() 实例: {manager}", flush=True)
                 if manager:
                     print("[DEBUG] 开始 fetch_proxies...", flush=True)
-                    manager.fetch_proxies(force=True)
+                    manager.fetch_proxies(force=False)
                     print("[DEBUG] 开始 verify_proxies...", flush=True)
-                    manager.verify_proxies(force=True, max_workers=PROXY_VERIFY_WORKERS, test_url=self.base_domain)
+                    manager.verify_proxies(force=False, max_workers=PROXY_VERIFY_WORKERS, test_url=self.base_domain)
                     stats = manager.get_stats()
                     print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个", flush=True)
                 else:
@@ -290,6 +277,20 @@ class DatangCrawler(BaseCrawler):
             del self.thread_local.browser
         if hasattr(self.thread_local, "context"):
             del self.thread_local.context
+
+        # 清除当前线程的代理绑定，使下次创建时分配到新代理
+        try:
+            from utils.proxy_manager import get_proxy_manager
+            from config import is_proxy_manager_enabled
+            if is_proxy_manager_enabled():
+                mgr = get_proxy_manager()
+                if mgr:
+                    tid = threading.get_ident()
+                    with mgr._lock:
+                        if tid in mgr._thread_proxy_map:
+                            del mgr._thread_proxy_map[tid]
+        except Exception:
+            pass
 
     def _get_pdf_local_tmp_path(self, publish_date, title):
         """获取 PDF 本地路径 (带 source_name 尾缀)"""
@@ -434,10 +435,7 @@ class DatangCrawler(BaseCrawler):
         for _ in range(len(self.domains)):
             url = self.base_list_url.format(self.current_class, page_num)
             headers = self._build_headers()
-            
-            # 全局限速
-            self._rate_limit()
-            
+
             # Bug 10 修复：删除外层冗余死代码，代理配置统一在内层循环中按需获取
             # 1. 优先使用 requests
             for attempt in range(2):
@@ -579,10 +577,7 @@ class DatangCrawler(BaseCrawler):
             # 使用完整浏览器请求头
             list_url = self.base_list_url.format(self.current_class, 1)
             headers = self._build_headers(referer=list_url)
-            
-            # 全局限速
-            self._rate_limit()
-            
+
             # Bug 10 修复：删除外层冗余死代码，代理配置统一在内层循环中按需获取
             # 1. 优先使用 requests
             for attempt in range(2):

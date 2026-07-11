@@ -325,6 +325,20 @@ class SejuCrawler(BaseCrawler):
             del self.thread_local.context
         if hasattr(self.thread_local, "profile_dir"):
             del self.thread_local.profile_dir
+
+        # 清除当前线程的代理绑定，使下次创建时分配到新代理
+        try:
+            from utils.proxy_manager import get_proxy_manager
+            from config import is_proxy_manager_enabled
+            if is_proxy_manager_enabled():
+                mgr = get_proxy_manager()
+                if mgr:
+                    tid = threading.get_ident()
+                    with mgr._lock:
+                        if tid in mgr._thread_proxy_map:
+                            del mgr._thread_proxy_map[tid]
+        except Exception:
+            pass
         if hasattr(self.thread_local, "list_page"):
             del self.thread_local.list_page
 
@@ -426,8 +440,8 @@ class SejuCrawler(BaseCrawler):
             manager = get_proxy_manager()
             if manager:
                 from config import PROXY_VERIFY_WORKERS
-                manager.fetch_proxies(force=True)
-                manager.verify_proxies(force=True, max_workers=PROXY_VERIFY_WORKERS, test_url="https://seju.life/")
+                manager.fetch_proxies(force=False)
+                manager.verify_proxies(force=False, max_workers=PROXY_VERIFY_WORKERS, test_url="https://seju.life/")
                 stats = manager.get_stats()
                 print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个")
 

@@ -199,6 +199,20 @@ class GcbtCrawler(BaseCrawler):
         if hasattr(self.thread_local, "profile_dir"):
             del self.thread_local.profile_dir
 
+        # 清除当前线程的代理绑定，使下次创建时分配到新代理
+        try:
+            from utils.proxy_manager import get_proxy_manager
+            from config import is_proxy_manager_enabled
+            if is_proxy_manager_enabled():
+                mgr = get_proxy_manager()
+                if mgr:
+                    tid = threading.get_ident()
+                    with mgr._lock:
+                        if tid in mgr._thread_proxy_map:
+                            del mgr._thread_proxy_map[tid]
+        except Exception:
+            pass
+
     def _http_get(self, url, timeout=20):
         """使用 curl_cffi 模拟浏览器获取 URL，最多重试 3 次，都失败再跳过"""
         for attempt in range(1, 4):
@@ -257,9 +271,9 @@ class GcbtCrawler(BaseCrawler):
             manager = get_proxy_manager()
             if manager:
                 from config import PROXY_VERIFY_WORKERS
-                manager.fetch_proxies(force=True)
+                manager.fetch_proxies(force=False)
                 manager.verify_proxies(
-                    force=True, 
+                    force=False, 
                     max_workers=PROXY_VERIFY_WORKERS, 
                     test_url="https://gcbt.net/download/8067.html", 
                     expected_content="90231538e5368bb8422500604f01cb25edfeedb4"
