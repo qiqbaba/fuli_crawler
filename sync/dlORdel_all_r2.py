@@ -273,8 +273,9 @@ def delete_all_objects(client, objects, dry_run=False):
     return deleted, failed
 
 
-def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, show_details=True):
-    """独立执行删除流程：检查本地文件 → 自动删除有副本的 → 询问删除无副本的"""
+def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, show_details=True, extra_search_dirs=None):
+    """独立执行删除流程：检查本地文件 → 自动删除有副本的 → 询问删除无副本的
+    extra_search_dirs: 额外的本地搜索目录列表（如爬虫保存 PDF 的目录），用于检测本地副本"""
     total_size = sum(obj["size"] for obj in delete_candidates)
 
     print(f"\n{'='*50}")
@@ -292,15 +293,24 @@ def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, sho
     # ========== 检查本地文件：已有本地副本的自动删除 ==========
     local_have = []   # 本地已存在 → 直接删除
     local_missing = []  # 本地不存在 → 汇总后询问
+    search_dirs = [output_dir]
+    if extra_search_dirs:
+        search_dirs.extend(extra_search_dirs)
     for obj in delete_candidates:
         key = obj["key"]
-        # 构造本地路径：去掉 "pdfs/" 前缀后拼接到输出目录
+        # 构造本地路径：去掉 "pdfs/" 前缀后拼接到各搜索目录
         if key.startswith("pdfs/"):
             relative_path = key[len("pdfs/"):]
         else:
             relative_path = key
-        local_path = os.path.join(output_dir, relative_path)
-        if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+        # 在任意搜索目录中找到副本即视为本地存在
+        found_local = False
+        for sd in search_dirs:
+            local_path = os.path.join(sd, relative_path)
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+                found_local = True
+                break
+        if found_local:
             local_have.append(obj)
         else:
             local_missing.append(obj)
@@ -408,6 +418,11 @@ def main():
         script_dir = os.path.dirname(os.path.abspath(__file__))
         output_dir = os.path.join(script_dir, "r2_pdfs")
 
+    # 爬虫保存 PDF 的目录（项目根目录下的 pdf/），用于检测本地副本
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)  # sync/ 的上一级
+    pdf_dir = os.path.join(project_root, "pdf")
+
     # ========== 交互模式：没有指定任何操作时，询问用户 ==========
     if not args.delete_only and not args.delete:
         try:
@@ -445,7 +460,8 @@ def main():
         delete_candidates = list_all_objects(client, prefix=del_prefix)
         print(f"[*] 找到 {len(delete_candidates)} 个文件")
 
-        run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, show_details=show_details)
+        run_delete_flow(client, output_dir, delete_candidates, del_prefix, args,
+                        show_details=show_details, extra_search_dirs=[pdf_dir])
         return
 
     # ========== 下载模式 ==========
@@ -470,7 +486,8 @@ def main():
         else:
             delete_candidates = pdfs
 
-        run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, show_details=show_details)
+        run_delete_flow(client, output_dir, delete_candidates, del_prefix, args,
+                        show_details=show_details, extra_search_dirs=[pdf_dir])
 
 
 if __name__ == "__main__":

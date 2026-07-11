@@ -1,5 +1,9 @@
 import sqlite3
 import threading
+import os
+import time
+import boto3
+from botocore.exceptions import ClientError
 
 class DBManager:
     """本地 SQLite 数据库管理器（本地开发使用）"""
@@ -11,6 +15,14 @@ class DBManager:
         self.cursor = self.conn.cursor()
         self.lock = threading.Lock()
         self.init_db()
+        # 初始化 AWS DynamoDB Helper
+        try:
+            self.aws_helper = AWSDynamoDBHelper()
+            print("[*] 本地 DBManager 已成功集成 AWS DynamoDB 比对源")
+        except Exception as e:
+            print(f"[-] 初始化 AWS DynamoDB 失败: {e}")
+            print("[!] 请检查 AWS_ACCESS_KEY_ID 和 AWS_SECRET_ACCESS_KEY 环境变量配置！")
+            raise e
 
     def init_db(self):
         """初始化 SQLite 数据库与表结构，添加所需的所有扩展列"""
@@ -63,40 +75,16 @@ class DBManager:
         self.conn.commit()
 
     def check_url_exists(self, url):
-        """检查 URL 是否已存在于数据库"""
-        with self.lock:
-            self.cursor.execute("SELECT 1 FROM resources WHERE url = ?", (url,))
-            return self.cursor.fetchone() is not None
+        """检查 URL 是否已存在于数据库 (修改为比对 AWS DynamoDB)"""
+        return self.aws_helper.check_url_exists(url)
 
     def filter_existing_urls(self, urls):
-        """批量检查哪些 URL 已存在于数据库中，返回已存在的 URL 集合"""
-        if not urls:
-            return set()
-        with self.lock:
-            existing = set()
-            urls_list = list(urls)
-            for i in range(0, len(urls_list), 100):
-                chunk = urls_list[i:i+100]
-                placeholders = ",".join(["?"] * len(chunk))
-                self.cursor.execute(f"SELECT url FROM resources WHERE url IN ({placeholders})", chunk)
-                for row in self.cursor.fetchall():
-                    existing.add(row[0])
-            return existing
+        """批量检查哪些 URL 已存在于数据库中，返回已存在的 URL 集合 (修改为比对 AWS DynamoDB)"""
+        return self.aws_helper.filter_existing_urls(urls)
 
     def filter_existing_resource_links(self, resource_links):
-        """批量检查哪些 resource_link 已存在于数据库中，返回已存在的 resource_link 集合"""
-        if not resource_links:
-            return set()
-        with self.lock:
-            existing = set()
-            links_list = list(resource_links)
-            for i in range(0, len(links_list), 100):
-                chunk = links_list[i:i+100]
-                placeholders = ",".join(["?"] * len(chunk))
-                self.cursor.execute(f"SELECT resource_link FROM resources WHERE resource_link IN ({placeholders})", chunk)
-                for row in self.cursor.fetchall():
-                    existing.add(row[0])
-            return existing
+        """批量检查哪些 resource_link 已存在于数据库中，返回已存在的 resource_link 集合 (修改为比对 AWS DynamoDB)"""
+        return self.aws_helper.filter_existing_resource_links(resource_links)
 
     def insert_resource(self, data):
         """
@@ -128,6 +116,9 @@ class DBManager:
             if self.cursor.rowcount == 0:
                 return False
             self.conn.commit()  # 立即提交，防止崩溃丢数据
+            
+            # 本地数据库写入成功，同步写入到 AWS DynamoDB
+            self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'))
             return True
 
     def commit(self):
@@ -225,65 +216,27 @@ class SupabaseDBManager:
         self.client = create_client(clean_url, supabase_key)
         self.table = "resources"
         print(f"[*] 已连接 Supabase: {clean_url}")
+        
+        # 初始化 AWS DynamoDB Helper
+        try:
+            self.aws_helper = AWSDynamoDBHelper()
+            print("[*] 云端 SupabaseDBManager 已成功集成 AWS DynamoDB 比对源")
+        except Exception as e:
+            print(f"[-] 初始化 AWS DynamoDB 失败: {e}")
+            print("[!] 请检查 AWS_ACCESS_KEY_ID 和 AWS_SECRET_ACCESS_KEY 环境变量配置！")
+            raise e
 
     def check_url_exists(self, url):
-        """检查 URL 是否已存在于 Supabase 表中"""
-        try:
-            resp = (
-                self.client.table(self.table)
-                .select("id")
-                .eq("url", url)
-                .limit(1)
-                .execute()
-            )
-            return len(resp.data) > 0
-        except Exception as e:
-            print(f"[-] Supabase check_url_exists 失败: {e}")
-            return False
+        """检查 URL 是否已存在于 Supabase 表中 (修改为比对 AWS DynamoDB)"""
+        return self.aws_helper.check_url_exists(url)
 
     def filter_existing_urls(self, urls):
-        """批量检查哪些 URL 已存在于 Supabase 表中，返回已存在的 URL 集合"""
-        if not urls:
-            return set()
-        existing = set()
-        urls_list = list(urls)
-        try:
-            for i in range(0, len(urls_list), 100):
-                chunk = urls_list[i:i+100]
-                resp = (
-                    self.client.table(self.table)
-                    .select("url")
-                    .in_("url", chunk)
-                    .execute()
-                )
-                if resp.data:
-                    for row in resp.data:
-                        existing.add(row["url"])
-        except Exception as e:
-            print(f"[-] Supabase filter_existing_urls 失败: {e}")
-        return existing
+        """批量检查哪些 URL 已存在于 Supabase 表中，返回已存在的 URL 集合 (修改为比对 AWS DynamoDB)"""
+        return self.aws_helper.filter_existing_urls(urls)
 
     def filter_existing_resource_links(self, resource_links):
-        """批量检查哪些 resource_link 已存在于 Supabase 表中，返回已存在的 resource_link 集合"""
-        if not resource_links:
-            return set()
-        existing = set()
-        links_list = list(resource_links)
-        try:
-            for i in range(0, len(links_list), 100):
-                chunk = links_list[i:i+100]
-                resp = (
-                    self.client.table(self.table)
-                    .select("resource_link")
-                    .in_("resource_link", chunk)
-                    .execute()
-                )
-                if resp.data:
-                    for row in resp.data:
-                        existing.add(row["resource_link"])
-        except Exception as e:
-            print(f"[-] Supabase filter_existing_resource_links 失败: {e}")
-        return existing
+        """批量检查哪些 resource_link 已存在于 Supabase 表中，返回已存在的 resource_link 集合 (修改为比对 AWS DynamoDB)"""
+        return self.aws_helper.filter_existing_resource_links(resource_links)
 
     def insert_resource(self, data):
         """
@@ -315,6 +268,8 @@ class SupabaseDBManager:
             )
             # 若 data 为空列表，表示已存在被忽略
             if resp.data:
+                # 写入 Supabase 成功，同步写入到 AWS DynamoDB
+                self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'))
                 return True
             return False
         except Exception as e:
@@ -348,105 +303,52 @@ class SupabaseDBManager:
         """
         try:
             # 使用 Supabase 的 /rest/v1/sql 端点执行原始 SQL
-            # 注意: 使用 text/plain 发送原始 SQL 文本
-            headers = {
-                "apikey": self.supabase_key,
-                "Authorization": f"Bearer {self.supabase_key}",
-                "Content-Type": "text/plain"
-            }
             resp = requests.post(
                 f"{self.supabase_url}/rest/v1/sql",
-                data=create_sql.strip(),
-                headers=headers,
-                timeout=15
+                headers={
+                    "apikey": self.supabase_key,
+                    "Authorization": f"Bearer {self.supabase_key}",
+                    "Content-Type": "application/json"
+                },
+                json={"query": create_sql},
+                timeout=10
             )
-            if resp.status_code in (200, 201):
-                print("[+] crawl_state 表已自动创建")
-                # 通知 PostgREST 重新加载 schema cache
-                self._reload_schema_cache()
-                return
-            else:
-                # 如果 text/plain 失败，尝试以 JSON 格式重试
-                headers["Content-Type"] = "application/json"
-                resp2 = requests.post(
-                    f"{self.supabase_url}/rest/v1/sql",
-                    json={"query": create_sql.strip()},
-                    headers=headers,
-                    timeout=15
+            if resp.status_code == 200:
+                # 刷新 PostgREST 架构缓存以使新表立即可见
+                requests.post(
+                    f"{self.supabase_url}/rest/v1/rpc/pgrst_reload_schema",
+                    headers={
+                        "apikey": self.supabase_key,
+                        "Authorization": f"Bearer {self.supabase_key}"
+                    },
+                    timeout=5
                 )
-                if resp2.status_code in (200, 201):
-                    print("[+] crawl_state 表已自动创建")
-                    self._reload_schema_cache()
-                    return
-                else:
-                    print(f"[*] 建表请求返回状态码 {resp2.status_code}: {resp2.text}")
-        except Exception as exc:
-            print(f"[*] 建表请求异常: {exc}")
-
+                print("[+] 自动创建 crawl_state 表及重新加载架构成功")
+                return True
+        except Exception as e:
+            print(f"[-] 尝试自动创建 Supabase crawl_state 表失败: {e}")
+        
         print("[!] 无法自动创建 crawl_state 表，请在 Supabase Dashboard -> SQL Editor 中执行：")
         print(create_sql)
-
-    def _reload_schema_cache(self):
-        """通知 PostgREST 重新加载 schema cache，使新创建的表立即可见"""
-        import requests
-        # 方式1: 通过 /rest/v1/rpc/pgrst_reload_schema RPC
-        try:
-            headers = {
-                "apikey": self.supabase_key,
-                "Authorization": f"Bearer {self.supabase_key}",
-                "Content-Type": "application/json"
-            }
-            resp = requests.post(
-                f"{self.supabase_url}/rest/v1/rpc/pgrst_reload_schema",
-                headers=headers,
-                timeout=10
-            )
-            if resp.status_code in (200, 201, 204):
-                print("[+] PostgREST schema cache 已刷新 (via rpc)")
-                return
-        except Exception:
-            pass
-        # 方式2: 通过 SQL 通知 PostgREST 重新加载 schema
-        try:
-            headers = {
-                "apikey": self.supabase_key,
-                "Authorization": f"Bearer {self.supabase_key}",
-                "Content-Type": "text/plain"
-            }
-            resp = requests.post(
-                f"{self.supabase_url}/rest/v1/sql",
-                data="NOTIFY pgrst, 'reload schema'",
-                headers=headers,
-                timeout=10
-            )
-            if resp.status_code in (200, 201, 204):
-                print("[+] PostgREST schema cache 已刷新 (via NOTIFY)")
-                return
-        except Exception:
-            pass
-        # 方式3: 等待 3 秒让 schema cache 自动过期
-        import time
-        print("[*] 等待 3 秒让 PostgREST schema cache 自动刷新...")
-        time.sleep(3)
+        return False
 
     def save_crawl_state(self, source, class_name, page_num, completed=False):
         """保存爬虫断点状态到 Supabase（upsert），按 source + class_name 分别记录"""
         from datetime import datetime, timezone
 
+        record = {
+            "source": source,
+            "class_name": class_name,
+            "page_num": page_num,
+            "completed": completed,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
         try:
-            record = {
-                "source": source,
-                "class_name": class_name,
-                "page_num": page_num,
-                "completed": completed,
-                "updated_at": datetime.now(timezone.utc).isoformat()
-            }
             self.client.table("crawl_state").upsert(record, on_conflict="source,class_name").execute()
         except Exception as e:
-            # 如果报错是表不存在，则自动建表并重试一次
-            err_str = str(e)
-            if "crawl_state" in err_str and ("PGRST205" in err_str or "relation" in err_str.lower() or "does not exist" in err_str.lower()):
-                print("[*] 检测到 crawl_state 表不存在，尝试自动创建...")
+            # 可能是表不存在，尝试自动创建
+            if "relation \"crawl_state\" does not exist" in str(e):
+                print("[*] crawl_state 表不存在，正在尝试自动创建...")
                 self._ensure_crawl_state_table()
                 # 重试一次
                 try:
@@ -522,4 +424,243 @@ class SupabaseDBManager:
             return len(resp.data) > 0
         except Exception as e:
             print(f"[-] Supabase is_source_completed 失败: {e}")
+            return False
+
+
+class AWSDynamoDBHelper:
+    """AWS DynamoDB 数据库助手，用于比对重复项和保存资源"""
+    def __init__(self):
+        self.aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID")
+        self.aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
+        self.region_name = os.environ.get("AWS_REGION", "ap-northeast-1")
+        self.table_name = "fuli_resources"
+        self.use_gsi = True
+        self._scanned_resource_links = None  # 扫描结果本地缓存，防止每次调用 filter_existing_resource_links 均触发全扫描
+        self._cached_urls = set()            # 新插入的 URL 缓存
+        self._cached_resource_links = set()   # 新插入的磁力链接缓存
+
+        if not self.aws_access_key_id or not self.aws_secret_access_key:
+            raise ValueError(
+                "AWS 凭证未配置！请确保环境变量或 .env 文件中设置了 AWS_ACCESS_KEY_ID 和 AWS_SECRET_ACCESS_KEY。"
+            )
+
+        self.client = boto3.client(
+            "dynamodb",
+            region_name=self.region_name,
+            aws_access_key_id=self.aws_access_key_id,
+            aws_secret_access_key=self.aws_secret_access_key,
+        )
+        self.ensure_table_exists()
+
+    def ensure_table_exists(self):
+        """确保 DynamoDB 表已存在，若不存在则创建"""
+        try:
+            existing_tables = self.client.list_tables()["TableNames"]
+            if self.table_name in existing_tables:
+                return
+
+            print(f"[*] AWS DynamoDB 表 {self.table_name} 不存在，正在自动创建...")
+            self.client.create_table(
+                TableName=self.table_name,
+                AttributeDefinitions=[{"AttributeName": "url", "AttributeType": "S"}],
+                KeySchema=[{"AttributeName": "url", "KeyType": "HASH"}],
+                BillingMode="PAY_PER_REQUEST"
+            )
+            # 等待表激活
+            waiter = self.client.get_waiter("table_exists")
+            waiter.wait(TableName=self.table_name)
+            print(f"[+] AWS DynamoDB 表 {self.table_name} 创建成功！")
+        except Exception as e:
+            print(f"[-] 创建 AWS DynamoDB 表失败: {e}")
+            raise
+
+    def check_url_exists(self, url):
+        """检查单条 URL 是否已存在于 AWS DynamoDB"""
+        if not url:
+            return False
+        if url in self._cached_urls:
+            return True
+        try:
+            response = self.client.get_item(
+                TableName=self.table_name,
+                Key={"url": {"S": url}},
+                ProjectionExpression="#u",
+                ExpressionAttributeNames={"#u": "url"}
+            )
+            return "Item" in response
+        except Exception as e:
+            print(f"[-] AWS DynamoDB check_url_exists 失败: {e}")
+            return False
+
+    def filter_existing_urls(self, urls):
+        """批量检查哪些 URL 已存在于 AWS DynamoDB 中，返回已存在的 URL 集合"""
+        if not urls:
+            return set()
+        existing = set()
+        
+        # 优先使用内存中刚刚成功写入的缓存判定
+        urls_to_query = []
+        for url in urls:
+            if not url:
+                continue
+            if url in self._cached_urls:
+                existing.add(url)
+            else:
+                urls_to_query.append(url)
+                
+        if not urls_to_query:
+            return existing
+
+        urls_list = list(urls_to_query)
+        # batch_get_item 每次最多获取 100 个
+        for i in range(0, len(urls_list), 100):
+            chunk = urls_list[i:i+100]
+            try:
+                request_items = {
+                    self.table_name: {
+                        "Keys": [{"url": {"S": url}} for url in chunk],
+                        "ProjectionExpression": "#u",
+                        "ExpressionAttributeNames": {"#u": "url"}
+                    }
+                }
+                response = self.client.batch_get_item(RequestItems=request_items)
+                
+                # 处理已返回的 Items
+                responses = response.get("Responses", {}).get(self.table_name, [])
+                for item in responses:
+                    url_val = item.get("url", {}).get("S")
+                    if url_val:
+                        existing.add(url_val)
+                
+                # 处理未处理完的 Keys
+                unprocessed = response.get("UnprocessedKeys", {}).get(self.table_name, {})
+                while unprocessed and "Keys" in unprocessed and unprocessed["Keys"]:
+                    time.sleep(0.5)  # 退避重试
+                    response = self.client.batch_get_item(RequestItems=unprocessed)
+                    responses = response.get("Responses", {}).get(self.table_name, [])
+                    for item in responses:
+                        url_val = item.get("url", {}).get("S")
+                        if url_val:
+                            existing.add(url_val)
+                    unprocessed = response.get("UnprocessedKeys", {}).get(self.table_name, {})
+            except Exception as e:
+                print(f"[-] AWS DynamoDB filter_existing_urls 失败: {e}")
+        return existing
+
+    def filter_existing_resource_links(self, resource_links):
+        """批量检查哪些 resource_link 已存在于 AWS DynamoDB 中，返回已存在的 resource_link 集合"""
+        if not resource_links:
+            return set()
+        
+        valid_links = [l for l in resource_links if l]
+        if not valid_links:
+            return set()
+
+        existing = set()
+
+        # 优先比对本地内存中新写入的缓存磁力
+        links_to_query = []
+        for link in valid_links:
+            if link in self._cached_resource_links:
+                existing.add(link)
+            else:
+                links_to_query.append(link)
+
+        if not links_to_query:
+            return existing
+
+        if self.use_gsi:
+            try:
+                for link in links_to_query:
+                    response = self.client.query(
+                        TableName=self.table_name,
+                        IndexName="resource_link-index",
+                        KeyConditionExpression="resource_link = :rl",
+                        ExpressionAttributeValues={":rl": {"S": link}},
+                        ProjectionExpression="resource_link"
+                    )
+                    if response.get("Items"):
+                        existing.add(link)
+                return existing
+            except ClientError as e:
+                error_code = e.response.get("Error", {}).get("Code")
+                error_msg = e.response.get("Error", {}).get("Message", "")
+                if error_code == "ValidationException" and "index" in error_msg.lower():
+                    print("[!] 检测到 AWS DynamoDB 表中未创建 resource_link-index 索引。")
+                    print("[*] 正在回退到 Scan 缓存兼容模式。")
+                    print("[*] 为了更好的性能，建议您在 AWS DynamoDB 控制台中为表 fuli_resources 创建二级索引（分区键: resource_link, 索引名: resource_link-index）。")
+                    self.use_gsi = False
+                else:
+                    print(f"[-] AWS DynamoDB query GSI 失败: {e}")
+                    return existing
+            except Exception as e:
+                print(f"[-] AWS DynamoDB query GSI 失败: {e}")
+                return existing
+
+        # 回退到 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link，避免多次重复 Scan 数据库引发的网络连接超时与计费消耗）
+        if self._scanned_resource_links is None:
+            print("[*] 正在执行首次 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
+            self._scanned_resource_links = self.get_all_resource_links_by_scan()
+            print(f"[+] 首次扫描缓存同步完成，已加载 {len(self._scanned_resource_links)} 条磁力链接。")
+
+        for link in links_to_query:
+            if link in self._scanned_resource_links:
+                existing.add(link)
+        return existing
+
+    def get_all_resource_links_by_scan(self):
+        """全表扫描获取所有的 resource_link 集合（无索引时的兼容模式）"""
+        existing_links = set()
+        last_evaluated_key = None
+        page_count = 0
+        while True:
+            kwargs = {
+                "TableName": self.table_name,
+                "ProjectionExpression": "resource_link",
+            }
+            if last_evaluated_key:
+                kwargs["ExclusiveStartKey"] = last_evaluated_key
+            try:
+                response = self.client.scan(**kwargs)
+                page_count += 1
+                items = response.get("Items", [])
+                for item in items:
+                    link_val = item.get("resource_link", {})
+                    if "S" in link_val and link_val["S"]:
+                        existing_links.add(link_val["S"])
+                
+                if page_count % 5 == 0:
+                    print(f"[*] 扫描进度: 已处理 {page_count} 页数据，当前缓存 {len(existing_links)} 条磁力链接...")
+
+                last_evaluated_key = response.get("LastEvaluatedKey")
+                if not last_evaluated_key:
+                    break
+            except Exception as e:
+                print(f"[-] AWS DynamoDB Scan 失败: {e}")
+                break
+        return existing_links
+
+    def insert_resource(self, url, resource_link):
+        """向 AWS DynamoDB 写入一条数据"""
+        if not url:
+            return False
+        
+        item = {"url": {"S": url}}
+        if resource_link:
+            item["resource_link"] = {"S": resource_link}
+
+        try:
+            self.client.put_item(
+                TableName=self.table_name,
+                Item=item
+            )
+            # 写入成功后将 url 与 resource_link 同步填充至本地内存缓存，以便无需重复查询 AWS 就能知晓该数据已插入
+            self._cached_urls.add(url)
+            if resource_link:
+                self._cached_resource_links.add(resource_link)
+                if self._scanned_resource_links is not None:
+                    self._scanned_resource_links.add(resource_link)
+            return True
+        except Exception as e:
+            print(f"[-] AWS DynamoDB 写入记录失败 ({url}): {e}")
             return False

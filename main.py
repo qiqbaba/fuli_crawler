@@ -266,6 +266,18 @@ def main():
             resume=args.resume
         )
     finally:
+        # 输出三个平台的数据统计信息
+        print("\n" + "=" * 50)
+        print("📊 爬虫完成，正在输出平台数据统计...")
+        print("=" * 50)
+        try:
+            from sync.stats import query_supabase, query_r2, query_dynamodb
+            query_supabase()
+            query_r2()
+            query_dynamodb()
+        except Exception as e:
+            print(f"[-] 统计查询失败: {e}")
+        
         print("[*] 正在释放数据库资源...")
         db_manager.close()
         print("[+] 数据库已安全关闭！")

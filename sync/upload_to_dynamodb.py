@@ -16,8 +16,7 @@ load_dotenv()
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
 AWS_REGION = "ap-northeast-1"
-TABLE_NAME_URLS = "fuli_urls"
-TABLE_NAME_MAGNETS = "fuli_magnets"
+TABLE_NAME = "fuli_resources"
 
 if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
     raise ValueError(
@@ -74,8 +73,7 @@ def create_table(table_name, key_name, key_type="S"):
 def create_tables():
     """创建 DynamoDB 表（如果不存在）"""
     print("[*] 检查/创建 DynamoDB 表...")
-    create_table(TABLE_NAME_URLS, "url")
-    create_table(TABLE_NAME_MAGNETS, "resource_link")
+    create_table(TABLE_NAME, "url")
 
 
 def get_cloud_keys(dynamodb_client, table_name, key_name):
@@ -106,11 +104,13 @@ def get_cloud_keys(dynamodb_client, table_name, key_name):
     return cloud_keys
 
 
-def upload_items(table_name, key_name, local_keys, label):
+def upload_items(table_name, key_name, local_items, label):
     """
     对比本地 SQLite 和云端 DynamoDB 的 key 集合，
     以本地数据为基准，向云端上传缺失的数据
     """
+    local_keys = set(local_items.keys())
+
     dynamodb_client = boto3.client(
         "dynamodb",
         region_name=AWS_REGION,
@@ -139,7 +139,7 @@ def upload_items(table_name, key_name, local_keys, label):
         print(f"[✓] 本地与云端完全一致，无需上传！")
         return
 
-    # ====== 批量上传缺失的 key ======
+    # ====== 批量上传缺失的数据 ======
     BATCH_SIZE = 25
     inserted = 0
     skipped = 0
@@ -147,7 +147,12 @@ def upload_items(table_name, key_name, local_keys, label):
     batch_keys = []
 
     for i, key in enumerate(missing_list, 1):
-        batch.append({"PutRequest": {"Item": {key_name: {"S": key}}}})
+        item = {key_name: {"S": key}}
+        # 如果有磁力链接，一并上传
+        magnet = local_items.get(key, "")
+        if magnet:
+            item["resource_link"] = {"S": magnet}
+        batch.append({"PutRequest": {"Item": item}})
         batch_keys.append(key)
         if len(batch) == BATCH_SIZE or i == total:
             try:
@@ -193,38 +198,23 @@ def upload_items(table_name, key_name, local_keys, label):
         print(f"[!] 本次跳过/失败: {skipped} 条")
 
 
-def upload_urls():
+def upload_resources():
     """
-    从本地 SQLite 读取 url，上传到云端 DynamoDB（fuli_urls 表）
-    """
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    # 读取本地所有 url
-    cursor.execute("SELECT url FROM resources WHERE url IS NOT NULL AND url != ''")
-    local_rows = cursor.fetchall()
-    local_keys = {row[0] for row in local_rows}
-    conn.close()
-
-    upload_items(TABLE_NAME_URLS, "url", local_keys, "url")
-
-
-def upload_magnets():
-    """
-    从本地 SQLite 读取 resource_link（磁力链接），上传到云端 DynamoDB（fuli_magnets 表）
+    从本地 SQLite 读取 url 和磁力链接，上传到云端 DynamoDB
+    以 url 为主键，resource_link 作为额外属性
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # 读取本地所有磁力链接
+    # 读取本地所有 url 及对应的磁力链接
     cursor.execute(
-        "SELECT resource_link FROM resources WHERE resource_link IS NOT NULL AND resource_link != ''"
+        "SELECT url, resource_link FROM resources WHERE url IS NOT NULL AND url != ''"
     )
     local_rows = cursor.fetchall()
-    local_keys = {row[0] for row in local_rows}
+    local_items = {row[0]: row[1] if row[1] else "" for row in local_rows}
     conn.close()
 
-    upload_items(TABLE_NAME_MAGNETS, "resource_link", local_keys, "磁力链接")
+    upload_items(TABLE_NAME, "url", local_items, "资源")
 
 
 if __name__ == "__main__":
@@ -234,19 +224,15 @@ if __name__ == "__main__":
     print("=" * 50)
 
     # Step 1: 创建表
-    print("\n[Step 1/3] 创建 DynamoDB 表...")
+    print("\n[Step 1/2] 创建 DynamoDB 表...")
     if not os.path.exists(DB_PATH):
         print(f"[-] 数据库不存在: {DB_PATH}")
         print("[-] 请先运行 export_urls.py 导出数据")
         exit(1)
     create_tables()
 
-    # Step 2: 上传 url
-    print("\n[Step 2/3] 对比并上传缺失的 url...")
-    upload_urls()
-
-    # Step 3: 上传磁力链接
-    print("\n[Step 3/3] 对比并上传缺失的磁力链接...")
-    upload_magnets()
+    # Step 2: 上传资源（url + 磁力链接）
+    print("\n[Step 2/2] 对比并上传缺失的资源...")
+    upload_resources()
 
     print("\n[✓] 全部完成！")
