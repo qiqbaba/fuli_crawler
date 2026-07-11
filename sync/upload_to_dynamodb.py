@@ -25,8 +25,11 @@ if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
         "并已在运行前执行: set -a && source .env && set +a"
     )
 
-# ========== 本地数据库路径 ==========
-DB_PATH = r"D:\urls_only.db"
+# ========== 本地数据库路径（复用爬虫的数据库配置）==========
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import get_db_path
+DB_PATH = get_db_path()
 
 
 def create_table(table_name, key_name, key_type="S"):
@@ -81,7 +84,11 @@ def get_cloud_keys(dynamodb_client, table_name, key_name):
     last_evaluated_key = None
 
     while True:
-        kwargs = {"TableName": table_name, "ProjectionExpression": key_name}
+        kwargs = {
+            "TableName": table_name,
+            "ProjectionExpression": "#key",
+            "ExpressionAttributeNames": {"#key": key_name},
+        }
         if last_evaluated_key:
             kwargs["ExclusiveStartKey"] = last_evaluated_key
 
@@ -194,7 +201,7 @@ def upload_urls():
     cursor = conn.cursor()
 
     # 读取本地所有 url
-    cursor.execute("SELECT url FROM urls WHERE url IS NOT NULL AND url != ''")
+    cursor.execute("SELECT url FROM resources WHERE url IS NOT NULL AND url != ''")
     local_rows = cursor.fetchall()
     local_keys = {row[0] for row in local_rows}
     conn.close()
@@ -211,7 +218,7 @@ def upload_magnets():
 
     # 读取本地所有磁力链接
     cursor.execute(
-        "SELECT resource_link FROM magnets WHERE resource_link IS NOT NULL AND resource_link != ''"
+        "SELECT resource_link FROM resources WHERE resource_link IS NOT NULL AND resource_link != ''"
     )
     local_rows = cursor.fetchall()
     local_keys = {row[0] for row in local_rows}
