@@ -55,6 +55,8 @@ jobs:
       R2_SECRET_ACCESS_KEY:  ${{ secrets.R2_SECRET_ACCESS_KEY }}
       R2_BUCKET_NAME:        ${{ secrets.R2_BUCKET_NAME }}
       R2_ENDPOINT_URL:       ${{ secrets.R2_ENDPOINT_URL }}
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       # 云端临时 PDF 目录（上传 R2 后自动删除）
       PDF_BASE_DIR:          /tmp/seju_pdfs
       # 启用内置代理IP管理器（自动获取并轮换免费代理）

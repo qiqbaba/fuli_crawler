@@ -120,9 +120,8 @@ class DBManager:
             
             if self.cursor.rowcount == 0:
                 return False
-            self.conn.commit()  # 立即提交，防止崩溃丢数据
             
-            # 本地数据库写入成功，同步写入到 AWS DynamoDB
+            # 本地数据库写入成功，异步同步写入到 AWS DynamoDB
             self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'))
             return True
 
@@ -133,6 +132,8 @@ class DBManager:
 
     def close(self):
         """关闭数据库连接"""
+        if hasattr(self, 'aws_helper'):
+            self.aws_helper.shutdown()
         with self.lock:
             if self.conn:
                 try:
@@ -287,7 +288,8 @@ class SupabaseDBManager:
 
     def close(self):
         """兼容接口，Supabase HTTP 无需显式关闭"""
-        pass
+        if hasattr(self, 'aws_helper'):
+            self.aws_helper.shutdown()
 
     # ========== 爬虫断点续爬状态管理 ==========
 
@@ -456,6 +458,8 @@ class AWSDynamoDBHelper:
             aws_secret_access_key=self.aws_secret_access_key,
         )
         self.ensure_table_exists()
+        from concurrent.futures import ThreadPoolExecutor
+        self._executor = ThreadPoolExecutor(max_workers=5)
 
     def ensure_table_exists(self):
         """确保 DynamoDB 表已存在，若不存在则创建"""
@@ -646,10 +650,23 @@ class AWSDynamoDBHelper:
         return existing_links
 
     def insert_resource(self, url, resource_link):
-        """向 AWS DynamoDB 写入一条数据"""
+        """向 AWS DynamoDB 异步写入一条数据"""
         if not url:
             return False
         
+        # 立即更新本地内存缓存，防去重击穿
+        self._cached_urls.add(url)
+        if resource_link:
+            self._cached_resource_links.add(resource_link)
+            if self._scanned_resource_links is not None:
+                self._scanned_resource_links.add(resource_link)
+
+        # 异步提交写入任务
+        self._executor.submit(self._async_put_item, url, resource_link)
+        return True
+
+    def _async_put_item(self, url, resource_link):
+        """实际在线程池中运行的 DynamoDB 写入任务"""
         item = {"url": {"S": url}}
         if resource_link:
             item["resource_link"] = {"S": resource_link}
@@ -659,13 +676,12 @@ class AWSDynamoDBHelper:
                 TableName=self.table_name,
                 Item=item
             )
-            # 写入成功后将 url 与 resource_link 同步填充至本地内存缓存，以便无需重复查询 AWS 就能知晓该数据已插入
-            self._cached_urls.add(url)
-            if resource_link:
-                self._cached_resource_links.add(resource_link)
-                if self._scanned_resource_links is not None:
-                    self._scanned_resource_links.add(resource_link)
-            return True
         except Exception as e:
-            print(f"[-] AWS DynamoDB 写入记录失败 ({url}): {e}")
-            return False
+            print(f"[-] AWS DynamoDB 异步写入记录失败 ({url}): {e}")
+
+    def shutdown(self):
+        """在爬虫关闭时清理后台线程池"""
+        try:
+            self._executor.shutdown(wait=True)
+        except Exception as e:
+            print(f"[-] AWSDynamoDBHelper shutdown 异常: {e}")
