@@ -84,6 +84,11 @@ def _get_default_pdf_base_dir():
 
 PDF_BASE_DIR = _get_default_pdf_base_dir()
 
+# ========== AWS 配置（DynamoDB 等） ==========
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
+
 # ========== 反爬 User-Agent 列表 ==========
 USER_AGENTS = [
     # Chrome (Windows)

@@ -12,10 +12,14 @@ from dotenv import load_dotenv
 # 加载本地 .env 环境变量
 load_dotenv()
 
-# ========== AWS 配置（从环境变量读取）==========
-AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY")
-AWS_REGION = "ap-northeast-1"
+# ========== AWS 配置（统一通过 config.py 读取）==========
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import config
+
+AWS_ACCESS_KEY_ID = config.AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY = config.AWS_SECRET_ACCESS_KEY
+AWS_REGION = config.AWS_REGION
 TABLE_NAME = "fuli_resources"
 
 if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
@@ -25,10 +29,7 @@ if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
     )
 
 # ========== 本地数据库路径（复用爬虫的数据库配置）==========
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from config import get_db_path
-DB_PATH = get_db_path()
+DB_PATH = config.get_db_path()
 
 
 def create_table(table_name, key_name, key_type="S"):

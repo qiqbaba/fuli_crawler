@@ -237,9 +237,9 @@ def query_dynamodb():
     print("📊 AWS DynamoDB 统计")
     print("=" * 50)
 
-    aws_key = os.environ.get("AWS_ACCESS_KEY_ID")
-    aws_secret = os.environ.get("AWS_SECRET_ACCESS_KEY")
-    aws_region = os.environ.get("AWS_REGION", "ap-northeast-1")
+    aws_key = config.AWS_ACCESS_KEY_ID
+    aws_secret = config.AWS_SECRET_ACCESS_KEY
+    aws_region = config.AWS_REGION
 
     if not aws_key or not aws_secret:
         print("[-] AWS 凭证未配置，跳过")

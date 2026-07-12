@@ -458,9 +458,11 @@ class SupabaseDBManager:
 class AWSDynamoDBHelper:
     """AWS DynamoDB 数据库助手，用于比对重复项和保存资源"""
     def __init__(self):
-        self.aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID")
-        self.aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-        self.region_name = os.environ.get("AWS_REGION", "ap-northeast-1")
+        # 导入 config 以统一获取配置
+        import config as _cfg
+        self.aws_access_key_id = _cfg.AWS_ACCESS_KEY_ID
+        self.aws_secret_access_key = _cfg.AWS_SECRET_ACCESS_KEY
+        self.region_name = _cfg.AWS_REGION
         self.table_name = "fuli_resources"
         self.use_gsi = True
         self._lock = threading.Lock()          # 线程安全锁

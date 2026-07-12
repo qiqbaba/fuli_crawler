@@ -152,7 +152,9 @@ class BaseCrawler:
 
         consecutive_count = 0
         consecutive_duplicate_pages = 0
-        is_gha = os.environ.get('GITHUB_ACTIONS') == 'true'
+        # 通过 config 模块统一判断运行环境
+        from config import is_local_mode
+        is_gha = not is_local_mode()
         early_break = False  # 跟踪是否因早停而跳出循环
 
         for page_num in range(start_page, end_page + 1):

@@ -19,8 +19,8 @@ from utils.db_manager import DBManager
 
 def get_supabase_client():
     """获取清洗过 URL 的 Supabase 客户端"""
-    url = os.environ.get("SUPABASE_URL", "").strip()
-    key = os.environ.get("SUPABASE_KEY", "").strip()
+    url = config.SUPABASE_URL.strip()
+    key = config.SUPABASE_KEY.strip()
     if not url or not key:
         print("[-] 错误：未在环境变量中检测到 SUPABASE_URL 或 SUPABASE_KEY")
         sys.exit(1)

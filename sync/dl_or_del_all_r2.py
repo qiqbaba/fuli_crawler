@@ -32,21 +32,12 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
-# ========== 配置（优先读取环境变量，兼容 config.py） ==========
-from dotenv import load_dotenv
 load_dotenv()
 
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-try:
-    from config import R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_ENDPOINT_URL
-except ImportError:
-    # 兜底：直接从环境变量读取
-    R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
-    R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
-    R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "")
-    R2_ENDPOINT_URL = os.environ.get("R2_ENDPOINT_URL", "")
+from config import R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_ENDPOINT_URL
 
 
 def get_r2_client():
