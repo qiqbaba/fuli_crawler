@@ -8,6 +8,8 @@ from crawlers.u3c3_crawler import U3c3Crawler
 from crawlers.datang_crawler import DatangCrawler
 from crawlers.gcbt_crawler import GcbtCrawler
 from crawlers.madou_crawler import MadouCrawler
+from crawlers.jingpin_toupai_crawler import JingpinToupaiCrawler
+
 
 # Windows下控制台强制使用utf-8编码输出，防止中文乱码
 setup_console_utf8()
@@ -17,7 +19,7 @@ def main():
     parser.add_argument(
         "--crawler", "-c",
         required=False,
-        choices=["seju", "u3c3", "datang", "gcbt", "madou"],
+        choices=["seju", "u3c3", "datang", "gcbt", "madou", "jingpin_toupai"],
         help="指定运行哪一个网站的爬虫 (seju, u3c3, datang 或 gcbt)"
     )
     
@@ -114,8 +116,9 @@ def main():
         print("    3. datang")
         print("    4. gcbt")
         print("    5. madou")
+        print("    6. jingpin_toupai")
         try:
-            choice = input("请输入序号 [1/2/3/4/5] (直接回车默认 1): ").strip()
+            choice = input("请输入序号 [1/2/3/4/5/6] (直接回车默认 1): ").strip()
             if choice == "2":
                 args.crawler = "u3c3"
             elif choice == "3":
@@ -124,6 +127,8 @@ def main():
                 args.crawler = "gcbt"
             elif choice == "5":
                 args.crawler = "madou"
+            elif choice == "6":
+                args.crawler = "jingpin_toupai"
             else:
                 args.crawler = "seju"
         except (KeyboardInterrupt, EOFError):
@@ -195,6 +200,11 @@ def main():
     elif args.crawler == "madou":
         crawler = MadouCrawler(db_manager)
         default_end = 60
+        if args.workers is None:
+            args.workers = 10
+    elif args.crawler == "jingpin_toupai":
+        crawler = JingpinToupaiCrawler(db_manager)
+        default_end = 20
         if args.workers is None:
             args.workers = 10
         
