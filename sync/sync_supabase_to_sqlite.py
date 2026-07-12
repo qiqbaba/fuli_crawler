@@ -61,10 +61,10 @@ def sync_data():
     backup_local_db(db_path)
 
     # 3. 初始化并连接本地 SQLite
-    # 借助 DBManager 确保表结构和唯一键索引 idx_resource_url 正确初始化
+    # 借助 DBManager.ensure_tables 确保表结构和唯一键索引 idx_resource_url 正确初始化
     print("[*] 正在初始化本地数据库表结构与索引...")
-    db_manager = DBManager(db_path)
-    db_manager.close() # 初始化后关闭，稍后我们直接使用标准 sqlite3 以支持更高效的批量操作
+    DBManager.ensure_tables(db_path)
+    # 无需创建完整 DBManager 实例即可完成表结构初始化
 
     # 重新以事务模式连接本地数据库
     local_conn = sqlite3.connect(db_path)

@@ -12,7 +12,42 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import get_db_path
 from utils import setup_console_utf8
 from utils.date_parser import parse_date
-from utils.browser_manager import create_browser_context
+
+
+def _create_browser_context(p, user_agent=None, viewport=None):
+    """创建 Playwright 浏览器上下文（内联版，替代已废弃的 create_browser_context）"""
+    from config import USER_AGENTS, get_crawler_proxy, is_proxy_manager_enabled
+    launch_args = [
+        "--no-sandbox", "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage", "--disable-gpu", "--disable-features=UserAgentClientHint",
+    ]
+    playwright_proxy = None
+    crawler_proxy = get_crawler_proxy()
+    if crawler_proxy:
+        playwright_proxy = {"server": crawler_proxy}
+    elif is_proxy_manager_enabled():
+        try:
+            from utils.proxy_manager import get_proxy_string
+            proxy_url = get_proxy_string()
+            if proxy_url:
+                playwright_proxy = {"server": proxy_url}
+        except Exception as ex:
+            print(f"[!] 获取自动代理失败: {ex}")
+    if playwright_proxy:
+        print(f"[*] Playwright 启动代理: {playwright_proxy['server']}")
+    else:
+        print("[*] Playwright 未启用代理")
+    browser = p.chromium.launch(headless=True, args=launch_args, proxy=playwright_proxy)
+    ctx_args = {"locale": "zh-CN", "user_agent": user_agent or random.choice(USER_AGENTS)}
+    ctx_args["viewport"] = viewport or {"width": 1920, "height": 1080}
+    context = browser.new_context(**ctx_args)
+    context.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+    """)
+    return browser, context
 
 TARGET_DOMAIN = "seju.life"
 
@@ -39,7 +74,7 @@ def fix_dates():
 
     try:
         with sync_playwright() as p:
-            browser, context = create_browser_context(p)
+            browser, context = _create_browser_context(p)
             page = context.new_page()
             
             updated_count = 0

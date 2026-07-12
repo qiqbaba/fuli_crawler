@@ -7,13 +7,14 @@ import re
 import time
 import random
 import threading
+import sqlite3
 import requests
 import sys
 import asyncio
 import aiohttp
 from aiohttp_socks import ProxyConnector
 from typing import List, Optional, Dict
-from config import is_local_mode, PROXY_VERIFY_TIMEOUT, PROXY_CACHE_TTL, PROXY_VERIFY_WORKERS
+from config import is_local_mode, PROXY_VERIFY_TIMEOUT, PROXY_CACHE_TTL, PROXY_VERIFY_WORKERS, PROXY_VERIFY_SSL
 
 
 # ========== 代理源配置 ==========
@@ -90,7 +91,7 @@ PROXY_TEST_URLS = [
 
 # 代理缓存文件路径
 _PROXY_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "temp_profiles")
-_PROXY_CACHE_FILE = os.path.join(_PROXY_CACHE_DIR, "proxy_cache.json")
+_PROXY_CACHE_DB = os.path.join(_PROXY_CACHE_DIR, "proxy_cache.db")
 
 
 async def _check_tcp_port(ip: str, port: int, timeout: float = 1.0) -> bool:
@@ -135,49 +136,166 @@ class ProxyManager:
         # 确保缓存目录存在
         os.makedirs(_PROXY_CACHE_DIR, exist_ok=True)
         
+        # 初始化 SQLite 缓存数据库表结构
+        self._init_cache_db()
+        
+        # 尝试从旧 JSON 缓存迁移到 SQLite
+        self._migrate_from_json_cache()
+        
         # 加载缓存
         self._load_cache()
     
-    def _load_cache(self):
-        """从本地缓存加载代理列表"""
-        if os.path.exists(_PROXY_CACHE_FILE):
-            try:
-                import json
-                with open(_PROXY_CACHE_FILE, 'r') as f:
-                    data = json.load(f)
-                    self._proxies = data.get("proxies", [])
-                    self._last_fetch_time = data.get("timestamp", 0)
-                    self._working_proxies = data.get("working_proxies", [])
-                    self._last_verify_time = data.get("last_verify_time", 0)
-                    
-                    # 确保加载出的每个代理都包含统计和评分字段，提供向前兼容性
-                    for p in self._proxies:
-                        p["success_count"] = p.get("success_count", 0)
-                        p["fail_count"] = p.get("fail_count", 0)
-                        p["score"] = p.get("score", 0.0)
-                    for p in self._working_proxies:
-                        p["success_count"] = p.get("success_count", 0)
-                        p["fail_count"] = p.get("fail_count", 0)
-                        p["score"] = p.get("score", 0.0)
-                        
-                    print(f"[ProxyManager] 从缓存加载了 {len(self._proxies)} 个代理 (其中已验证可用 {len(self._working_proxies)} 个)")
-            except Exception as e:
-                print(f"[ProxyManager] 加载缓存失败: {e}")
-    
-    def _save_cache(self):
-        """保存代理列表及验证结果到本地缓存"""
+    def _init_cache_db(self):
+        """初始化 SQLite 缓存数据库表结构"""
+        try:
+            conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS proxy_cache (
+                    protocol TEXT NOT NULL,
+                    address TEXT NOT NULL,
+                    source TEXT,
+                    success_count INTEGER DEFAULT 0,
+                    fail_count INTEGER DEFAULT 0,
+                    score REAL DEFAULT 0.0,
+                    last_verified REAL DEFAULT 0,
+                    PRIMARY KEY (protocol, address)
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cache_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            ''')
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[ProxyManager] 初始化缓存数据库失败: {e}")
+
+    def _migrate_from_json_cache(self):
+        """从旧的 JSON 缓存文件迁移数据到 SQLite"""
+        old_json = os.path.join(_PROXY_CACHE_DIR, "proxy_cache.json")
+        if not os.path.exists(old_json):
+            return
         try:
             import json
-            data = {
-                "timestamp": self._last_fetch_time,
-                "proxies": self._proxies,
-                "working_proxies": self._working_proxies,
-                "last_verify_time": self._last_verify_time
-            }
-            with open(_PROXY_CACHE_FILE, 'w') as f:
-                json.dump(data, f, indent=2)
+            with open(old_json, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            proxies = data.get("proxies", [])
+            meta = data.get("meta", {})
+            if not proxies:
+                return
+            conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
+            conn.execute("BEGIN TRANSACTION")
+            try:
+                for p in proxies:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (p.get("protocol", "http"), p.get("address", ""), p.get("source", ""),
+                         p.get("success_count", 0), p.get("fail_count", 0), p.get("score", 0.0),
+                         p.get("last_verified", 0))
+                    )
+                for k, v in meta.items():
+                    conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)", (k, str(v)))
+                conn.commit()
+                print(f"[ProxyManager] 已将 {len(proxies)} 个代理从 JSON 缓存迁移到 SQLite")
+            except Exception:
+                conn.rollback()
+            finally:
+                conn.close()
+            # 重命名旧 JSON 文件以防重复迁移
+            os.rename(old_json, old_json + ".bak")
+        except Exception as e:
+            print(f"[ProxyManager] 迁移 JSON 缓存失败: {e}")
+
+    def _load_cache(self):
+        """从 SQLite 缓存加载代理列表"""
+        if not os.path.exists(_PROXY_CACHE_DB):
+            return
+        try:
+            conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # 读取元数据
+            cursor.execute("SELECT key, value FROM cache_meta")
+            meta = {row["key"]: row["value"] for row in cursor.fetchall()}
+            self._last_fetch_time = int(meta.get("last_fetch_time", 0))
+            self._last_verify_time = int(meta.get("last_verify_time", 0))
+
+            # 读取代理列表
+            cursor.execute("SELECT protocol, address, source, success_count, fail_count, score, last_verified FROM proxy_cache")
+            self._proxies = []
+            self._working_proxies = []
+            for row in cursor.fetchall():
+                p = {
+                    "protocol": row["protocol"],
+                    "address": row["address"],
+                    "source": row["source"],
+                    "success_count": row["success_count"],
+                    "fail_count": row["fail_count"],
+                    "score": row["score"],
+                }
+                self._proxies.append(p)
+                # 如果 last_verified 非零，说明已验证通过，加入 working 列表
+                if row["last_verified"] > 0:
+                    self._working_proxies.append(p.copy())
+
+            conn.close()
+            print(f"[ProxyManager] 从缓存加载了 {len(self._proxies)} 个代理 (其中已验证可用 {len(self._working_proxies)} 个)")
+        except Exception as e:
+            print(f"[ProxyManager] 加载缓存失败: {e}")
+            self._proxies = []
+            self._working_proxies = []
+
+    def _save_cache(self):
+        """保存代理列表及验证结果到 SQLite 缓存"""
+        try:
+            conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
+            cursor = conn.cursor()
+
+            # 使用事务批量写入
+            cursor.execute("BEGIN TRANSACTION")
+
+            # 清空旧数据
+            cursor.execute("DELETE FROM proxy_cache")
+            cursor.execute("DELETE FROM cache_meta")
+
+            # 写入代理列表
+            for p in self._proxies:
+                cursor.execute(
+                    "INSERT INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        p["protocol"],
+                        p["address"],
+                        p.get("source", ""),
+                        p.get("success_count", 0),
+                        p.get("fail_count", 0),
+                        p.get("score", 0.0),
+                        # 检查该代理是否在 working 列表中
+                        1.0 if any(w["address"] == p["address"] and w["protocol"] == p["protocol"] for w in self._working_proxies) else 0.0
+                    )
+                )
+
+            # 写入元数据
+            cursor.execute(
+                "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)",
+                ("last_fetch_time", str(int(self._last_fetch_time)))
+            )
+            cursor.execute(
+                "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)",
+                ("last_verify_time", str(int(self._last_verify_time)))
+            )
+
+            conn.commit()
+            conn.close()
         except Exception as e:
             print(f"[ProxyManager] 保存缓存失败: {e}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
     
     def fetch_proxies(self, force=False) -> int:
         """
@@ -412,7 +530,7 @@ class ProxyManager:
                                     proxy=client_proxy,
                                     timeout=aiohttp.ClientTimeout(total=verify_timeout),
                                     headers={"User-Agent": "Mozilla/5.0"},
-                                    ssl=False
+                                    ssl=PROXY_VERIFY_SSL
                                 ) as resp:
                                     if resp.status == 200:
                                         is_valid = True

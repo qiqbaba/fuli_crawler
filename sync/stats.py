@@ -71,14 +71,12 @@ def query_supabase():
         print(f"[-] 查询记录数失败: {e}")
         return
 
-    # 2. 按 source 分组统计
+    # 2. 按 source 分组统计（服务端聚合，避免全量传输）
     print("[*] 正在按来源分组统计...")
     try:
-        resp = client.table("resources").select("source").execute()
-        sources = {}
-        for row in resp.data:
-            src = row.get("source", "unknown")
-            sources[src] = sources.get(src, 0) + 1
+        # 使用 PostgREST 的 count() 聚合函数进行服务端分组
+        resp = client.table("resources").select("source, count()").not_.is_("source", "null").execute()
+        sources = {row["source"]: row["count"] for row in resp.data}
 
         print(f"\n  按来源分布:")
         for src, cnt in sorted(sources.items(), key=lambda x: -x[1]):
@@ -144,8 +142,6 @@ def query_supabase():
             pass
         return
 
-    except Exception as e:
-        print(f"[-] 查询表大小失败: {e}")
     except Exception as e:
         print(f"[-] 查询表大小失败: {e}")
 

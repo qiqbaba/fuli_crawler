@@ -7,12 +7,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils import setup_console_utf8
 from utils.metadata_parser import parse_title, parse_pikpak_link
-
-# 兼容的数据库路径列表
-DB_PATHS = [
-    r"d:\programme\seju\all_data.db",
-    r"d:\seju\all_data.db"
-]
+from config import DB_PATHS
 
 
 def upgrade_database(db_path):
@@ -87,7 +82,7 @@ def upgrade_database(db_path):
     except Exception as e:
         try:
             conn.rollback()
-        except:
+        except Exception:
             pass
         print(f"  -> 数据库迁移失败: {e}")
         conn.close()

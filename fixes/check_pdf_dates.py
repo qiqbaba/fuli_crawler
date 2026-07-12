@@ -1,3 +1,9 @@
+"""
+检查 PDF 文件与数据库日期的匹配情况并生成报告
+
+⚠️ 已废弃: 本功能已合并到 fixes/pdf_maintenance.py，请使用以下命令代替:
+    python fixes/pdf_maintenance.py check-dates
+"""
 import os
 import re
 import sys

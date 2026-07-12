@@ -139,7 +139,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
             final_title = page.title()
             if "Just a moment..." not in final_title and "cloudflare" not in page.url:
                 return True
-        except:
+        except Exception:
             pass
         try:
             current_title = page.title()
@@ -148,8 +148,8 @@ class SejuCrawler(PlaywrightBaseCrawler):
             print(f"[-] 智能等待 Cloudflare 结束，但无法获取页面标题（页面可能已关闭）")
         return False
  
-    def _recreate_thread_resources(self):
-        super()._recreate_thread_resources()
+    def _destroy_thread_resources(self):
+        super()._destroy_thread_resources()
         if hasattr(self.thread_local, "list_page"):
             del self.thread_local.list_page
 
@@ -269,9 +269,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
                     proxy_url = manager._thread_proxy_map.get(threading.get_ident())
                     if proxy_url:
                         manager.report_failure(proxy_url)
-            self._recreate_thread_resources()
-            return None
-
+            self._destroy_thread_resources()
     def parse_list_page(self, list_page_html, page_num):
         """解析列表页卡片，提取出所有子页面的完整 URL 列表"""
         if not list_page_html:
@@ -331,7 +329,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
             if page:
                 try:
                     page.close()
-                except:
+                except Exception:
                     pass
             return ""
 
@@ -388,7 +386,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
                         proxy_url = manager._thread_proxy_map.get(threading.get_ident())
                         if proxy_url:
                             manager.report_failure(proxy_url)
-                self._recreate_thread_resources()
+                self._destroy_thread_resources()
             finally:
                 if sub_page:
                     try:
@@ -557,7 +555,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
                             print(f"[-] [PDF-SAVE] 标题: {title} 生成 PDF 失败，进行第 {attempt}/3 次尝试")
                             if attempt < 3:
                                 try:
-                                    self._recreate_thread_resources()
+                                    self._destroy_thread_resources()
                                 except Exception as recreate_err:
                                     print(f"[!] 重构 Playwright 资源失败: {recreate_err}")
                                 time.sleep(random.uniform(1.5, 3.0))

@@ -21,7 +21,7 @@ class U3c3Crawler(BaseCrawler):
         self.max_consecutive_duplicate_pages = 3
 
     # 不使用 Playwright，覆写为空方法避免基类 ThreadPoolExecutor 清理路径产生 Playwright 相关开销
-    def cleanup_thread_resources(self):
+    def release_thread_resources(self):
         pass
 
     def on_start(self):

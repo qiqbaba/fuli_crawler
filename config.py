@@ -123,6 +123,8 @@ ENABLE_PROXY_MANAGER = os.environ.get("ENABLE_PROXY_MANAGER", "false").lower() =
 PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "43200"))
 # 代理验证超时时间（秒）
 PROXY_VERIFY_TIMEOUT = int(os.environ.get("PROXY_VERIFY_TIMEOUT", "10"))
+# 代理验证时是否校验 SSL 证书（默认 True，关闭存在 MITM 风险）
+PROXY_VERIFY_SSL = os.environ.get("PROXY_VERIFY_SSL", "true").lower() == "true"
 # 代理验证并发线程数
 def get_auto_workers(base_multiplier=30, max_limit=300, min_limit=50):
     """

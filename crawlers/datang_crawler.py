@@ -159,7 +159,7 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
             if page:
                 try:
                     page.close()
-                except:
+                except Exception:
                     pass
             return None
 
@@ -247,7 +247,7 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
                         proxy_url = manager._thread_proxy_map.get(threading.get_ident())
                         if proxy_url:
                             manager.report_failure(proxy_url)
-                self._recreate_thread_resources()
+                self._destroy_thread_resources()
                 
             # 尝试从跳转页面提取最新域名
             if redirect_content and self._update_domains_from_redirect(redirect_content):
@@ -492,7 +492,7 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
                     print(f"[-] [PDF-SAVE] 标题: {raw_item['title']} 生成 PDF 失败，进行第 {attempt}/3 次尝试")
                     if attempt < 3:
                         try:
-                            self._recreate_thread_resources()
+                            self._destroy_thread_resources()
                         except Exception as recreate_err:
                             print(f"[!] 重构 Playwright 资源失败: {recreate_err}")
                         time.sleep(random.uniform(1.5, 3.0))

@@ -24,7 +24,7 @@ class BaseCrawler:
         """生命周期钩子：爬网结束后（子类可选覆盖）"""
         pass
 
-    def cleanup_thread_resources(self):
+    def release_thread_resources(self):
         """生命周期钩子：释放线程局部资源（子类可选覆盖）"""
         pass
 
@@ -266,7 +266,7 @@ class BaseCrawler:
                         except Exception as e:
                             print(f"[-] 处理索引为 [{idx}] 的项目时发生异常: {e}")
                     # 单线程模式清理资源
-                    self.cleanup_thread_resources()
+                    self.release_thread_resources()
                 else:
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
                         future_to_idx = {
@@ -274,28 +274,35 @@ class BaseCrawler:
                                 for idx, raw_item in items_to_process
                         }
 
+                        # 先收集所有结果（as_completed 不保证顺序）
+                        collected_results = {}  # idx -> (is_existing, data)
                         for future in as_completed(future_to_idx):
                             idx = future_to_idx[future]
                             try:
                                 res = future.result()
                                 if res:
                                     is_existing, data = res
-                                    if is_existing:
-                                        skipped_count += 1
-                                        if self.max_consecutive_existing is not None:
-                                            consecutive_count += 1
-                                            if not self.quiet:
-                                                print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
-                                            if consecutive_count >= self.max_consecutive_existing:
-                                                early_stop_triggered = True
-                                    if data:
-                                        results_dict[idx] = data
+                                    collected_results[idx] = (is_existing, data)
                             except Exception as e:
                                 print(f"[-] 线程处理索引为 [{idx}] 的项目时发生异常: {e}")
 
+                        # Bug 3 fix: 按原始顺序重新处理，确保连续计数正确
+                        for idx in sorted(collected_results.keys()):
+                            is_existing, data = collected_results[idx]
+                            if is_existing:
+                                skipped_count += 1
+                                if self.max_consecutive_existing is not None:
+                                    consecutive_count += 1
+                                    if not self.quiet:
+                                        print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
+                                    if consecutive_count >= self.max_consecutive_existing:
+                                        early_stop_triggered = True
+                            if data:
+                                results_dict[idx] = data
+
                         print("[*] 正在向并发工作线程发送资源清理指令...")
                         cleanup_futures = [
-                            executor.submit(self.cleanup_thread_resources)
+                            executor.submit(self.release_thread_resources)
                             for _ in range(max_workers)
                         ]
                         for f in as_completed(cleanup_futures):
@@ -452,6 +459,8 @@ class PlaywrightBaseCrawler(BaseCrawler):
         self._resources_lock = threading.Lock()
         self.r2_uploader = None
         self.use_persistent_context = False
+        # Perf 1: 是否跨页面复用浏览器，避免每页销毁重建
+        self._reuse_browser = True
 
     def on_start(self):
         """初始化 R2 上传器和代理管理器"""
@@ -489,16 +498,32 @@ class PlaywrightBaseCrawler(BaseCrawler):
             except Exception as e:
                 print(f"[-] 初始化代理管理器时发生异常: {e}", flush=True)
 
-    def cleanup_thread_resources(self):
-        """生命周期钩子：释放当前工作线程持有的 Playwright 资源"""
-        if hasattr(self.thread_local, "playwright"):
-            self._recreate_thread_resources()
+    def release_thread_resources(self):
+        """
+        生命周期钩子：释放当前工作线程持有的 Playwright 资源
+        
+        当 _reuse_browser=True 时（默认），页面间只清理页面级资源，不销毁浏览器，
+        由 on_finish 统一清理，避免每页销毁重建的开销。
+        """
+        if not self._reuse_browser:
+            # 旧行为：每页销毁并重建浏览器
+            if hasattr(self.thread_local, "playwright"):
+                self._destroy_thread_resources()
+        else:
+            # Perf 1: 仅清理页面级资源，保留浏览器供下一页复用
+            try:
+                page = getattr(self.thread_local, "page", None)
+                if page:
+                    page.close()
+                    del self.thread_local.page
+            except Exception:
+                pass
 
     def on_finish(self):
         """释放 Playwright 渲染资源"""
         print(f"[*] 正在释放主线程 Playwright 资源 ({self.source_name})...")
         # 1. 优先清理主线程自身的资源
-        self.cleanup_thread_resources()
+        self.release_thread_resources()
         
         # 2. 残留资源兜底关闭
         with self._resources_lock:
@@ -509,23 +534,23 @@ class PlaywrightBaseCrawler(BaseCrawler):
                     try:
                         if context:
                             context.close()
-                    except:
+                    except Exception:
                         pass
                     try:
                         if browser:
                             browser.close()
-                    except:
+                    except Exception:
                         pass
                     try:
                         if p:
                             p.stop()
-                    except:
+                    except Exception:
                         pass
                     if profile_dir and os.path.exists(profile_dir):
                         try:
                             import shutil
                             shutil.rmtree(profile_dir)
-                        except:
+                        except Exception:
                             pass
                 self._active_resources.clear()
             
@@ -543,8 +568,6 @@ class PlaywrightBaseCrawler(BaseCrawler):
             launch_args = [
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-web-security",
-                "--ignore-certificate-errors",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
@@ -666,7 +689,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
                 
         return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
 
-    def _recreate_thread_resources(self):
+    def _destroy_thread_resources(self):
         """清理当前线程的 Playwright 资源，以便下一次重新创建"""
         p = getattr(self.thread_local, "playwright", None)
         browser = getattr(self.thread_local, "browser", None)
@@ -676,17 +699,17 @@ class PlaywrightBaseCrawler(BaseCrawler):
         try:
             if context:
                 context.close()
-        except:
+        except Exception:
             pass
         try:
             if browser:
                 browser.close()
-        except:
+        except Exception:
             pass
         try:
             if p:
                 p.stop()
-        except:
+        except Exception:
             pass
             
         with self._resources_lock:
@@ -699,7 +722,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
             try:
                 import shutil
                 shutil.rmtree(profile_dir)
-            except:
+            except Exception:
                 pass
                 
         if hasattr(self.thread_local, "playwright"):
@@ -760,7 +783,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
             if os.path.exists(local_path):
                 try:
                     os.remove(local_path)
-                except:
+                except Exception:
                     pass
             return result
         else:
@@ -953,40 +976,64 @@ class DomainRotationMixin:
             proxies = get_proxy_dict()
             
         html = None
-        # 2. 优先使用 requests (curl_cffi)
-        try:
-            from curl_cffi import requests as curl_requests
-            response = curl_requests.get(self.main_domain, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
-            if response.status_code == 200:
-                html = response.text
-        except Exception as e:
-            print(f"[-] requests 请求主站 {self.main_domain} 失败: {e}", flush=True)
-            if proxies and is_proxy_manager_enabled():
-                from utils.proxy_manager import get_proxy_manager
-                manager = get_proxy_manager()
-                if manager and "http" in proxies:
-                    manager.report_failure(proxies["http"])
-                    
-        # 3. Playwright 兜底
-        if not html and hasattr(self, "_get_thread_resources"):
-            print(f"[*] 使用 Playwright 兜底访问主站: {self.main_domain}", flush=True)
+        # Perf 4: curl_cffi 与 Playwright 并发请求，谁先完成用谁
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+        
+        html_lock = threading.Lock()
+        
+        def _curl_fetch():
+            try:
+                from curl_cffi import requests as curl_requests
+                resp = curl_requests.get(self.main_domain, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
+                if resp.status_code == 200:
+                    return resp.text
+            except Exception as e:
+                print(f"[-] curl_cffi 请求主站 {self.main_domain} 失败: {e}", flush=True)
+                if proxies and is_proxy_manager_enabled():
+                    from utils.proxy_manager import get_proxy_manager
+                    manager = get_proxy_manager()
+                    if manager and "http" in proxies:
+                        manager.report_failure(proxies["http"])
+            return None
+        
+        def _pw_fetch():
+            nonlocal html
+            if not hasattr(self, "_get_thread_resources"):
+                return None
+            print(f"[*] Playwright 并发访问主站: {self.main_domain}", flush=True)
             page = None
             try:
                 _, _, context = self._get_thread_resources()
                 page = context.new_page()
                 page.goto(self.main_domain, timeout=30000, wait_until="domcontentloaded")
+                import time
                 time.sleep(3.0)
-                html = page.content()
+                return page.content()
             except Exception as e:
                 print(f"[-] Playwright 访问主站 {self.main_domain} 异常: {e}", flush=True)
-                self._recreate_thread_resources()
+                self._destroy_thread_resources()
+                return None
             finally:
                 if page:
                     try:
                         page.close()
-                    except:
+                    except Exception:
                         pass
-                        
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_curl = executor.submit(_curl_fetch)
+            fut_pw = executor.submit(_pw_fetch)
+            for fut in as_completed([fut_curl, fut_pw]):
+                result = fut.result()
+                if result:
+                    with html_lock:
+                        if html is None:
+                            html = result
+                            # 取消另一个还在跑的请求（如果有必要）
+                            # 注意：as_completed 不会取消其它 future，我们只是优先使用先到的结果
+                            break
+        
         if not html:
             print(f"[!] 无法从主站 {self.main_domain} 获取到页面内容", flush=True)
             return False

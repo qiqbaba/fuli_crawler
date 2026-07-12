@@ -21,12 +21,31 @@ class DBManager:
             print("[*] 本地 DBManager 已成功集成 AWS DynamoDB 比对源")
         except Exception as e:
             print(f"[-] 初始化 AWS DynamoDB 失败: {e}")
-            print("[!] 请检查 AWS_ACCESS_KEY_ID 和 AWS_SECRET_ACCESS_KEY 环境变量配置！")
+            print("[!] 请检查 AWS 凭证环境变量配置！")
             raise e
 
     def init_db(self):
         """初始化 SQLite 数据库与表结构，添加所需的所有扩展列"""
-        self.cursor.execute('''
+        self.ensure_tables(self.db_path, self.cursor)
+        
+    @staticmethod
+    def ensure_tables(db_path, cursor=None):
+        """
+        确保数据库表结构完整（静态方法，无需创建完整 DBManager 实例即可调用）
+        
+        Args:
+            db_path: 仅用于日志显示
+            cursor: sqlite3 cursor 对象；若为 None 则内部创建临时连接
+        """
+        if cursor is None:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            close_after = True
+        else:
+            conn = cursor.connection
+            close_after = False
+        
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS resources (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
@@ -53,20 +72,20 @@ class DBManager:
         ]
         
         # 先检查已有哪些列，避免每次连接都运行 ALTER TABLE
-        self.cursor.execute("PRAGMA table_info(resources)")
-        existing_columns = {row[1] for row in self.cursor.fetchall()}
+        cursor.execute("PRAGMA table_info(resources)")
+        existing_columns = {row[1] for row in cursor.fetchall()}
         
         for col_name, col_type in columns_to_add:
             if col_name not in existing_columns:
                 try:
-                    self.cursor.execute(f"ALTER TABLE resources ADD COLUMN {col_name} {col_type}")
+                    cursor.execute(f"ALTER TABLE resources ADD COLUMN {col_name} {col_type}")
                 except sqlite3.OperationalError:
                     pass
                 
-        self.cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_url ON resources(url)")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_url ON resources(url)")
         
         # 爬虫断点续爬状态表（按 source + class_name 分别记录）
-        self.cursor.execute('''
+        cursor.execute('''
             CREATE TABLE IF NOT EXISTS crawl_state (
                 source TEXT NOT NULL,
                 class_name TEXT NOT NULL,
@@ -77,7 +96,9 @@ class DBManager:
             )
         ''')
         
-        self.conn.commit()
+        conn.commit()
+        if close_after:
+            conn.close()
 
     def check_url_exists(self, url):
         """检查 URL 是否已存在于数据库 (修改为比对 AWS DynamoDB)"""
@@ -229,7 +250,7 @@ class SupabaseDBManager:
             print("[*] 云端 SupabaseDBManager 已成功集成 AWS DynamoDB 比对源")
         except Exception as e:
             print(f"[-] 初始化 AWS DynamoDB 失败: {e}")
-            print("[!] 请检查 AWS_ACCESS_KEY_ID 和 AWS_SECRET_ACCESS_KEY 环境变量配置！")
+            print("[!] 请检查 AWS 凭证环境变量配置！")
             raise e
 
     def check_url_exists(self, url):
@@ -442,13 +463,14 @@ class AWSDynamoDBHelper:
         self.region_name = os.environ.get("AWS_REGION", "ap-northeast-1")
         self.table_name = "fuli_resources"
         self.use_gsi = True
-        self._scanned_resource_links = None  # 扫描结果本地缓存，防止每次调用 filter_existing_resource_links 均触发全扫描
-        self._cached_urls = set()            # 新插入的 URL 缓存
-        self._cached_resource_links = set()   # 新插入的磁力链接缓存
+        self._lock = threading.Lock()          # 线程安全锁
+        self._scanned_resource_links = None    # 扫描结果本地缓存
+        self._cached_urls = set()              # 新插入的 URL 缓存
+        self._cached_resource_links = set()    # 新插入的磁力链接缓存
 
         if not self.aws_access_key_id or not self.aws_secret_access_key:
             raise ValueError(
-                "AWS 凭证未配置！请确保环境变量或 .env 文件中设置了 AWS_ACCESS_KEY_ID 和 AWS_SECRET_ACCESS_KEY。"
+                "AWS 凭证未配置！请检查相关环境变量（AWS 标准凭证变量）是否设置正确。"
             )
 
         self.client = boto3.client(
@@ -487,8 +509,9 @@ class AWSDynamoDBHelper:
         """检查单条 URL 是否已存在于 AWS DynamoDB"""
         if not url:
             return False
-        if url in self._cached_urls:
-            return True
+        with self._lock:
+            if url in self._cached_urls:
+                return True
         try:
             response = self.client.get_item(
                 TableName=self.table_name,
@@ -507,15 +530,16 @@ class AWSDynamoDBHelper:
             return set()
         existing = set()
         
-        # 优先使用内存中刚刚成功写入的缓存判定
+        # 优先使用内存中刚刚成功写入的缓存判定（线程安全）
         urls_to_query = []
-        for url in urls:
-            if not url:
-                continue
-            if url in self._cached_urls:
-                existing.add(url)
-            else:
-                urls_to_query.append(url)
+        with self._lock:
+            for url in urls:
+                if not url:
+                    continue
+                if url in self._cached_urls:
+                    existing.add(url)
+                else:
+                    urls_to_query.append(url)
                 
         if not urls_to_query:
             return existing
@@ -567,13 +591,14 @@ class AWSDynamoDBHelper:
 
         existing = set()
 
-        # 优先比对本地内存中新写入的缓存磁力
+        # 优先比对本地内存中新写入的缓存磁力（线程安全）
         links_to_query = []
-        for link in valid_links:
-            if link in self._cached_resource_links:
-                existing.add(link)
-            else:
-                links_to_query.append(link)
+        with self._lock:
+            for link in valid_links:
+                if link in self._cached_resource_links:
+                    existing.add(link)
+                else:
+                    links_to_query.append(link)
 
         if not links_to_query:
             return existing
@@ -606,15 +631,18 @@ class AWSDynamoDBHelper:
                 print(f"[-] AWS DynamoDB query GSI 失败: {e}")
                 return existing
 
-        # 回退到 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link，避免多次重复 Scan 数据库引发的网络连接超时与计费消耗）
+        # 回退到 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link）
         if self._scanned_resource_links is None:
             print("[*] 正在执行首次 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
-            self._scanned_resource_links = self.get_all_resource_links_by_scan()
-            print(f"[+] 首次扫描缓存同步完成，已加载 {len(self._scanned_resource_links)} 条磁力链接。")
+            with self._lock:
+                if self._scanned_resource_links is None:  # 双重检查锁定
+                    self._scanned_resource_links = self.get_all_resource_links_by_scan()
+                    print(f"[+] 首次扫描缓存同步完成，已加载 {len(self._scanned_resource_links)} 条磁力链接。")
 
-        for link in links_to_query:
-            if link in self._scanned_resource_links:
-                existing.add(link)
+        with self._lock:
+            for link in links_to_query:
+                if link in self._scanned_resource_links:
+                    existing.add(link)
         return existing
 
     def get_all_resource_links_by_scan(self):
@@ -654,12 +682,13 @@ class AWSDynamoDBHelper:
         if not url:
             return False
         
-        # 立即更新本地内存缓存，防去重击穿
-        self._cached_urls.add(url)
-        if resource_link:
-            self._cached_resource_links.add(resource_link)
-            if self._scanned_resource_links is not None:
-                self._scanned_resource_links.add(resource_link)
+        # 立即更新本地内存缓存，防去重击穿（线程安全）
+        with self._lock:
+            self._cached_urls.add(url)
+            if resource_link:
+                self._cached_resource_links.add(resource_link)
+                if self._scanned_resource_links is not None:
+                    self._scanned_resource_links.add(resource_link)
 
         # 异步提交写入任务
         self._executor.submit(self._async_put_item, url, resource_link)
@@ -677,6 +706,8 @@ class AWSDynamoDBHelper:
                 Item=item
             )
         except Exception as e:
+            # 异步写入失败不应影响主流程，记录即可
+            pass
             print(f"[-] AWS DynamoDB 异步写入记录失败 ({url}): {e}")
 
     def shutdown(self):

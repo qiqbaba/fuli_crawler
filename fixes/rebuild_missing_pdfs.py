@@ -1,3 +1,9 @@
+"""
+修复本地缺失的 PDF 文件，并将所有 pdf_path 改为相对路径
+
+⚠️ 已废弃: 本功能已合并到 fixes/pdf_maintenance.py，请使用以下命令代替:
+    python fixes/pdf_maintenance.py rebuild
+"""
 import os
 import re
 import sys
@@ -15,7 +21,42 @@ from config import get_db_path, PDF_BASE_DIR
 from utils import setup_console_utf8
 from utils.metadata_parser import sanitize_filename
 from utils.pdf_utils import to_relative_path
-from utils.browser_manager import create_browser_context
+
+
+def _create_browser_context(p, user_agent=None, viewport=None):
+    """创建 Playwright 浏览器上下文（内联版，替代已废弃的 create_browser_context）"""
+    from config import USER_AGENTS, get_crawler_proxy, is_proxy_manager_enabled
+    launch_args = [
+        "--no-sandbox", "--disable-setuid-sandbox",
+        "--disable-blink-features=AutomationControlled",
+        "--disable-dev-shm-usage", "--disable-gpu", "--disable-features=UserAgentClientHint",
+    ]
+    playwright_proxy = None
+    crawler_proxy = get_crawler_proxy()
+    if crawler_proxy:
+        playwright_proxy = {"server": crawler_proxy}
+    elif is_proxy_manager_enabled():
+        try:
+            from utils.proxy_manager import get_proxy_string
+            proxy_url = get_proxy_string()
+            if proxy_url:
+                playwright_proxy = {"server": proxy_url}
+        except Exception as ex:
+            print(f"[!] 获取自动代理失败: {ex}")
+    if playwright_proxy:
+        print(f"[*] Playwright 启动代理: {playwright_proxy['server']}")
+    else:
+        print("[*] Playwright 未启用代理")
+    browser = p.chromium.launch(headless=True, args=launch_args, proxy=playwright_proxy)
+    ctx_args = {"locale": "zh-CN", "user_agent": user_agent or random.choice(USER_AGENTS)}
+    ctx_args["viewport"] = viewport or {"width": 1920, "height": 1080}
+    context = browser.new_context(**ctx_args)
+    context.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
+    """)
+    return browser, context
 
 def main():
     setup_console_utf8()
@@ -130,7 +171,7 @@ def main():
             
             try:
                 with sync_playwright() as p:
-                    browser, context = create_browser_context(p)
+                    browser, context = _create_browser_context(p)
                     
                     for idx, (r_id, title, url, publish_time) in enumerate(missing_records, 1):
                         year = publish_time.split('-')[0] if (publish_time and '-' in publish_time) else "Unknown_Year"

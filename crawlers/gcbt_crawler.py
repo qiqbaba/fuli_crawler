@@ -228,7 +228,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
             # 尽量等待网络静止以防有其它动态资源在加载
             try:
                 page.wait_for_load_state(state="networkidle", timeout=5000)
-            except:
+            except Exception:
                 pass
 
             # 3. 动态清除阻挡视线的“收藏发布页”弹窗及半透明黑色遮罩层
@@ -268,7 +268,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
             if page:
                 try:
                     page.close()
-                except:
+                except Exception:
                     pass
             return ""
 
@@ -363,13 +363,13 @@ class GcbtCrawler(PlaywrightBaseCrawler):
             for attempt in range(1, 4):
                 pdf_path = self._save_pdf(sub_url, pub_time, title)
                 if pdf_path:
-                    print(f"[PDF-SAVE] 网页地址: {sub_url} -> PDF 路径: {pdf_path}")
+                    # print(f"[PDF-SAVE] 网页地址: {sub_url} -> PDF 路径: {pdf_path}")
                     break
                 else:
                     print(f"[-] [PDF-SAVE] 网页地址: {sub_url} 生成 PDF 失败，进行第 {attempt}/3 次尝试")
                     if attempt < 3:
                         try:
-                            self._recreate_thread_resources()
+                            self._destroy_thread_resources()
                         except Exception as recreate_err:
                             print(f"[!] 重构 Playwright 资源失败: {recreate_err}")
                         time.sleep(random.uniform(1.5, 3.0))

@@ -104,7 +104,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             # 模拟 screen 排版，以保证 PDF 完全展现网页原本样貌
             try:
                 page.emulate_media(media="screen")
-            except:
+            except Exception:
                 pass
 
             page.pdf(
@@ -119,7 +119,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             if page:
                 try:
                     page.close()
-                except:
+                except Exception:
                     pass
             return None
 
@@ -269,7 +269,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                         print(f"[-] [PDF-SAVE] 详情页: {sub_url} 生成 PDF 失败，第 {attempt}/3 次重试...")
                         if attempt < 3:
                             try:
-                                self._recreate_thread_resources()
+                                self._destroy_thread_resources()
                             except Exception as rec_err:
                                 print(f"[!] 重构 Playwright 资源失败: {rec_err}")
                             time.sleep(random.uniform(1.5, 3.0))

@@ -1,17 +1,24 @@
 import random
+import warnings
 from config import USER_AGENTS, get_crawler_proxy, is_proxy_manager_enabled
 
 def create_browser_context(playwright, user_agent=None, viewport=None):
     """
+    已废弃：请使用 crawlers/base_crawler.py 中的 PlaywrightBaseCrawler._get_thread_resources() 替代。
+
     启动 Chromium 浏览器并创建配置好的 context。
     自动检测和配置代理、设置 user_agent 以及注入 webdriver 屏蔽脚本。
     返回: (browser, context)
     """
+    warnings.warn(
+        "utils.browser_manager.create_browser_context 已废弃，"
+        "请使用 PlaywrightBaseCrawler._get_thread_resources() 替代",
+        DeprecationWarning,
+        stacklevel=2
+    )
     launch_args = [
         "--no-sandbox",
         "--disable-setuid-sandbox",
-        "--disable-web-security",
-        "--ignore-certificate-errors",
         "--disable-blink-features=AutomationControlled",
         "--disable-dev-shm-usage",
         "--disable-gpu",

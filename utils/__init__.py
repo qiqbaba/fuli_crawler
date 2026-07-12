@@ -17,7 +17,27 @@ def setup_console_utf8():
                 pass
 
 
+def ensure_project_root():
+    """
+    将项目根目录加入 sys.path，使 `from config import ...` 等导入在任何子目录脚本中均可工作。
+    返回项目根目录的绝对路径。
+    
+    用法:
+        import sys; sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    可替换为:
+        from utils import ensure_project_root; ensure_project_root()
+    """
+    import os
+    import sys
+    caller_file = sys._getframe(1).f_globals.get('__file__', __file__)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(caller_file)))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    return project_root
+
+
 __all__ = [
     'ProxyManager', 'get_proxy_manager', 'init_proxy_manager',
     'get_proxy_string', 'get_proxy_dict', 'setup_console_utf8',
+    'ensure_project_root',
 ]

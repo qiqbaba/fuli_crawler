@@ -3,8 +3,11 @@
 """
 import sqlite3
 import re
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import get_db_path
 
-DB_PATH = r"d:\programme\fuli_crawler\all_data.db"
+DB_PATH = get_db_path()
 
 def main():
     conn = sqlite3.connect(DB_PATH)

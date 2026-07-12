@@ -5,8 +5,12 @@ import sqlite3
 import os
 from datetime import datetime
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import get_db_path
+
 # 源数据库路径
-SRC_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "all_data.db")
+SRC_DB = get_db_path()
 # 目标数据库路径（D 盘根目录）
 DST_DB = r"D:\urls_only.db"
 
