@@ -9,53 +9,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 引入项目配置
 from config import get_db_path, PDF_BASE_DIR
-
-# Windows下控制台强制使用utf-8编码输出，防止中文乱码
-if sys.platform.startswith('win'):
-    if sys.stdout.encoding != 'utf-8':
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-            sys.stderr.reconfigure(encoding='utf-8')
-        except AttributeError:
-            pass
-
-def parse_filename(filename):
-    """
-    解析 PDF 文件名，提取日期前缀和标题。
-    支持格式:
-      1. YYYY-MM-DD_Title.pdf
-      2. Unknown_Date_Title.pdf
-      3. Other_Title.pdf (无日期前缀)
-    """
-    # 移除 .pdf 后缀
-    if filename.lower().endswith('.pdf'):
-        name_part = filename[:-4]
-    else:
-        name_part = filename
-
-    # 匹配 YYYY-MM-DD
-    date_pattern = re.compile(r"^(\d{4}-\d{2}-\d{2})_(.*)$")
-    match = date_pattern.match(name_part)
-    if match:
-        return match.group(1), match.group(2)
-
-    # 匹配 Unknown_Date
-    if name_part.startswith("Unknown_Date_"):
-        return "Unknown_Date", name_part[len("Unknown_Date_"):]
-
-    return None, name_part
-
-def clean_title_suffix(title_part):
-    """
-    剥离标题中可能含有的数字后缀，如 _1, _2 等
-    """
-    match = re.search(r"_(?P<num>\d+)$", title_part)
-    if match:
-        suffix = match.group(0)
-        return title_part[:-len(suffix)]
-    return title_part
+from utils import setup_console_utf8
+from utils.pdf_utils import parse_filename, clean_title_suffix
 
 def main():
+    setup_console_utf8()
     db_path = get_db_path()
     pdf_base = PDF_BASE_DIR
 

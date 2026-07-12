@@ -86,29 +86,66 @@ def query_supabase():
     except Exception as e:
         print(f"[-] 按来源分组失败: {e}")
 
-    # 3. 查询表大小（通过 SQL 端点）
+    # 3. 查询表大小（通过 RPC 函数 / 估算 fallback）
     print("[*] 正在查询表大小...")
-    try:
+
+    # 辅助函数：通过 RPC 调用 pg_total_relation_size
+    def _try_rpc_table_size(clean_url, key):
+        """尝试通过 RPC 方式获取表大小（需要先在 Supabase 中创建 get_table_size 函数）"""
         import requests
-        sql = "SELECT pg_size_pretty(pg_total_relation_size('resources')) AS size;"
-        resp = requests.post(
-            f"{clean_url}/rest/v1/sql",
+        rpc_resp = requests.post(
+            f"{clean_url}/rest/v1/rpc/get_table_size",
             headers={
                 "apikey": key,
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json"
             },
-            json={"query": sql},
             timeout=10
         )
-        if resp.status_code == 200:
-            data = resp.json()
-            if data and len(data) > 0:
-                table_size = data[0].get('size', 'N/A')
-                print(f"[+] 表大小: {table_size}")
-                print(f"    💡 免费额度: 500 MB 数据库存储 (Supabase Free Tier)")
-        else:
-            print(f"[-] 查询表大小失败 (HTTP {resp.status_code})")
+        if rpc_resp.status_code == 200:
+            return rpc_resp.json()
+        return None
+
+    try:
+        import requests
+
+        # 方式 A: 尝试通过 RPC 函数获取表大小
+        # 这是 Supabase 推荐的方式（/rest/v1/sql 端点在新项目中已被移除）
+        rpc_result = _try_rpc_table_size(clean_url, key)
+        if rpc_result:
+            print(f"[+] 表大小 (RPC): {rpc_result}")
+            print(f"    💡 免费额度: 500 MB 数据库存储 (Supabase Free Tier)")
+            return
+
+        # 方式 B: RPC 也不可用，用记录数和平均行大小估算
+        print("[*] RPC 函数不存在，尝试基于记录数估算表大小...")
+        print("")
+        print("  ⚠️  无法直接获取表大小，请在 Supabase SQL Editor 中执行以下语句创建函数：")
+        print("     ```sql")
+        print("     CREATE OR REPLACE FUNCTION get_table_size()")
+        print("     RETURNS TABLE(size TEXT) LANGUAGE plpgsql AS $$")
+        print("     BEGIN")
+        print("         RETURN QUERY SELECT pg_size_pretty(pg_total_relation_size('resources'));")
+        print("     END;")
+        print("     $$;")
+        print("     ```")
+        print("")
+        # 使用记录数做粗略估算
+        print(f"  📊 基于总记录数的粗略估算:")
+        try:
+            resp2 = client.table("resources").select("*", count="exact").execute()
+            rec_count = resp2.count
+            # PostgreSQL 每行平均约 500-800 字节（含索引），这里保守估计 600 字节
+            est_size = rec_count * 600
+            print(f"     记录数: {rec_count:,}")
+            print(f"     估算表大小: ~{format_size(est_size)} ({est_size:,} 字节)")
+            print(f"     ⚠️  此为粗略估算，仅供参考（不含索引和 TOAST 数据）")
+        except Exception:
+            pass
+        return
+
+    except Exception as e:
+        print(f"[-] 查询表大小失败: {e}")
     except Exception as e:
         print(f"[-] 查询表大小失败: {e}")
 

@@ -9,7 +9,9 @@ from playwright.sync_api import sync_playwright
 # 将项目根目录加入 sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import get_db_path, USER_AGENTS
+from config import get_db_path
+from utils import setup_console_utf8
+from utils.browser_manager import create_browser_context
 
 resource_patterns = [
     r'^magnet:\?',
@@ -65,11 +67,7 @@ def main():
     
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                user_agent=random.choice(USER_AGENTS),
-                viewport={'width': 1920, 'height': 1080}
-            )
+            browser, context = create_browser_context(p)
             page = context.new_page()
             
             for idx, (db_id, url, title) in enumerate(records, 1):
@@ -110,11 +108,5 @@ def main():
         print(f"修复完成！共成功回填了 {success_count} 条记录。")
 
 if __name__ == "__main__":
-    if sys.platform.startswith('win'):
-        if sys.stdout.encoding != 'utf-8':
-            try:
-                sys.stdout.reconfigure(encoding='utf-8')
-                sys.stderr.reconfigure(encoding='utf-8')
-            except AttributeError:
-                pass
+    setup_console_utf8()
     main()

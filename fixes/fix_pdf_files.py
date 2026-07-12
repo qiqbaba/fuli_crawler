@@ -9,33 +9,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 引入项目中的配置
 from config import get_db_path, PDF_BASE_DIR
+from utils import setup_console_utf8
+from utils.metadata_parser import sanitize_filename
+from utils.pdf_utils import to_relative_path
+from utils.browser_manager import create_browser_context
 
-# Windows下控制台强制使用utf-8编码输出，防止中文乱码
-if sys.platform.startswith('win'):
-    if sys.stdout.encoding != 'utf-8':
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-            sys.stderr.reconfigure(encoding='utf-8')
-        except AttributeError:
-            pass
-
-def main():
-    parser = argparse.ArgumentParser(description="修正 PDF 文件名称并移到正确的年份文件夹，并更新本地 SQLite 数据库中的路径。")
-    parser.add_argument(
-        "--run",
-        action="store_true",
-        default=False,
-        help="正式运行修复，不加此参数时仅进行预览 (Dry Run)。"
-    )
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        default=False,
-        help="详细输出每个文件的分析计划。"
-    )
-    args = parser.parse_args()
-
+def run_fix_names_and_paths(args):
     db_path = get_db_path()
     pdf_base = PDF_BASE_DIR
     unknown_year_dir = os.path.join(pdf_base, "Unknown_Year")
@@ -74,7 +53,6 @@ def main():
     }
 
     # 用于保存计划要移动的文件信息
-    # 格式: (src_path, dst_path, list_of_ids, new_filename, matched_time)
     move_plans = []
     
     # 匹配 YYYY-MM-DD 格式的日期
@@ -191,7 +169,19 @@ def main():
     print("\n" + "=" * 60)
     print(f"[*] 分析完成！准备处理 {len(move_plans)} 个文件...")
     
-    if args.run:
+    do_run = args.run
+    if not do_run:
+        print("[*] 当前为预览模式，未执行任何物理文件移动或数据库修改。")
+        try:
+            confirm = input("[*] 检测完毕，是否直接开始移动文件并更新数据库？[y/N]: ").strip().lower()
+            if confirm in ('y', 'yes'):
+                do_run = True
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] 运行已取消")
+            conn.close()
+            return
+
+    if do_run:
         print("[*] 开始执行物理移动和数据库更新...")
         success_moved = 0
         for src_path, dst_path, matched_ids, new_filename, matched_date in move_plans:
@@ -219,8 +209,7 @@ def main():
         conn.commit()
         print(f"[+] 物理修复完成！成功移动并更新了 {success_moved} 个文件。")
     else:
-        print("[*] 当前为预览模式，未执行任何物理文件移动或数据库修改。")
-        print("[*] 如果确认计划无误，请运行命令: python fix_pdf_files.py --run")
+        print("[*] 未执行任何物理文件移动或数据库修改。")
 
     conn.close()
 
@@ -236,6 +225,266 @@ def main():
     print(f" 无效日期格式:                      {stats['invalid_date_format']}")
     print(f" 其他处理错误 (Error):               {stats['error']}")
     print("=" * 60)
+
+def run_redownload_small_pdfs(args):
+    db_path = get_db_path()
+    pdf_base = os.path.abspath(PDF_BASE_DIR)
+
+    print("=" * 60)
+    print(f"[*] 运行模式: {'【正式修复模式 (重下/覆盖)】' if args.run else '【预览模式 (Dry Run)】'}")
+    print(f"[*] 数据库路径: {db_path}")
+    print(f"[*] PDF 根目录: {pdf_base}")
+    print("=" * 60)
+
+    if not os.path.exists(db_path):
+        print(f"[-] 错误: 数据库文件不存在: {db_path}")
+        sys.exit(1)
+
+    if not os.path.exists(pdf_base):
+        print(f"[-] 错误: PDF 根目录不存在: {pdf_base}")
+        sys.exit(1)
+
+    # 1. 扫描体积小于 20KB 的 PDF 文件
+    print("[*] 正在扫描 PDF 物理文件以寻找体积小于 20KB 的文件...")
+    small_files = []
+    for root, dirs, files in os.walk(pdf_base):
+        for f in files:
+            if f.lower().endswith(".pdf"):
+                full_path = os.path.join(root, f)
+                try:
+                    size_bytes = os.path.getsize(full_path)
+                    size_kb = size_bytes / 1024.0
+                    if size_kb < 20.0:
+                        small_files.append((full_path, size_kb))
+                except OSError as e:
+                    print(f"[-] 无法读取文件大小 {f}: {e}")
+
+    total_small = len(small_files)
+    print(f"[+] 扫描完成，共找到 {total_small} 个体积小于 20KB 的 PDF 文件。")
+    if total_small == 0:
+        print("[*] 未发现需要重新保存的 PDF 文件。")
+        return
+
+    # 2. 连接数据库，一次性查出所有有 pdf_path 的记录
+    print("[*] 正在加载数据库中的 PDF 路径进行比对匹配...")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, url, pdf_path, publish_time FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
+    db_rows = cursor.fetchall()
+    
+    # 建立文件名映射以优化查询速度
+    db_map = {}
+    for row in db_rows:
+        db_pdf_path = row[3]
+        if db_pdf_path:
+            # 统一路径分隔符并取文件名（小写）
+            base_f = os.path.basename(db_pdf_path.replace('\\', '/')).lower()
+            db_map.setdefault(base_f, []).append(row)
+
+    to_download = []
+    not_found_in_db = []
+
+    for file_path, size_kb in small_files:
+        filename = os.path.basename(file_path).lower()
+        rows = db_map.get(filename, [])
+
+        target_rel = to_relative_path(file_path).lower()
+        matched_row = None
+        for row in rows:
+            db_rel = to_relative_path(row[3]).lower()
+            if db_rel == target_rel:
+                matched_row = row
+                break
+        
+        if not matched_row and rows:
+            for row in rows:
+                if os.path.basename(row[3]).lower() == filename:
+                    matched_row = row
+                    break
+
+        if matched_row:
+            r_id, title, url, pdf_path_db, publish_time = matched_row
+            to_download.append((file_path, size_kb, r_id, title, url, publish_time))
+        else:
+            not_found_in_db.append((file_path, size_kb))
+
+    print(f"[*] 成功匹配数据库记录: {len(to_download)} 个")
+    if not_found_in_db:
+        print(f"[!] 未能匹配数据库记录: {len(not_found_in_db)} 个 (无法获取 URL 重新下载)")
+        if args.verbose:
+            for fp, sz in not_found_in_db:
+                print(f"  - {fp} ({sz:.2f} KB)")
+
+    if not to_download:
+        print("[*] 无匹配的数据库记录可用于重新下载。")
+        conn.close()
+        return
+
+    # 3. 预览或询问是否正式下载
+    do_run = args.run
+    if not do_run:
+        print("\n" + "=" * 60)
+        print("                  需要重新下载的 PDF 预览")
+        print("=" * 60)
+        # 预览限制前 20 条，防止控制台刷屏
+        preview_limit = 20
+        for idx, (fp, sz, r_id, title, url, pub_time) in enumerate(to_download[:preview_limit], 1):
+            print(f"[{idx}] 路径: {fp}")
+            print(f"    大小: {sz:.2f} KB | ID: {r_id} | 标题: {title} | 日期: {pub_time}")
+            print(f"    URL:  {url}")
+            print("-" * 60)
+        if len(to_download) > preview_limit:
+            print(f"... 还有 {len(to_download) - preview_limit} 个文件未列出")
+        print(f"\n[*] 预览结束。当前为预览模式，未重新下载。")
+        
+        try:
+            confirm = input("[*] 检测完毕，是否直接开始重新下载并覆盖修复？[y/N]: ").strip().lower()
+            if confirm in ('y', 'yes'):
+                do_run = True
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] 运行已取消")
+            conn.close()
+            return
+
+    if not do_run:
+        print("[*] 未重新下载任何文件。")
+        conn.close()
+        return
+
+    # 正式下载流程
+    print(f"\n[*] 准备拉起 Playwright 重新下载 {len(to_download)} 个 PDF 文件...")
+    from playwright.sync_api import sync_playwright
+    import random
+    import time
+
+    success_count = 0
+    fail_count = 0
+
+    try:
+        with sync_playwright() as p:
+            browser, context = create_browser_context(p, viewport={'width': 1280, 'height': 900})
+
+            for idx, (file_path, size_kb, r_id, title, url, publish_time) in enumerate(to_download, 1):
+                print(f"\n[*] [{idx}/{len(to_download)}] 正在请求: {url} (当前大小: {size_kb:.2f} KB)")
+                page = context.new_page()
+                try:
+                    # 访问页面
+                    response = page.goto(url, timeout=45000, wait_until="domcontentloaded")
+                    time.sleep(3.0)
+                    
+                    if response and response.status == 404:
+                        print(f"  [-] 页面返回 404，不重新下载。")
+                        fail_count += 1
+                        continue
+                    
+                    # 屏蔽广告
+                    try:
+                        page.evaluate("""
+                            () => {
+                                const breadcrumbs = document.querySelector('.breadcrumbs');
+                                if (breadcrumbs) {
+                                    let prev = breadcrumbs.previousElementSibling;
+                                    while (prev) {
+                                        if (prev.classList.contains('gs-isgood') && 
+                                            !prev.textContent.includes('永久地址') && 
+                                            !prev.textContent.includes('永久')) {
+                                            prev.remove();
+                                        }
+                                        prev = prev.previousElementSibling;
+                                    }
+                                }
+                                const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
+                                adDivs.forEach(div => div.remove());
+                                const bottomFloat = document.getElementById('bottom_float');
+                                if (bottomFloat) {
+                                    bottomFloat.remove();
+                                }
+                            }
+                        """)
+                    except Exception as eval_e:
+                        if args.verbose:
+                            print(f"  [!] 广告过滤脚本执行失败: {eval_e}")
+
+                    # 生成并保存PDF，覆盖原路径
+                    page.pdf(
+                        path=file_path,
+                        format="A4",
+                        print_background=True,
+                        margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"}
+                    )
+
+                    if os.path.exists(file_path):
+                        new_size_kb = os.path.getsize(file_path) / 1024.0
+                        if new_size_kb >= 20.0:
+                            success_count += 1
+                            print(f"  [+] 成功重新保存并覆盖! 新文件大小: {new_size_kb:.2f} KB")
+                        else:
+                            fail_count += 1
+                            print(f"  [-] 警告: 重新保存后体积依然小于 20KB ({new_size_kb:.2f} KB)")
+                    else:
+                        fail_count += 1
+                        print("  [-] 错误: PDF 生成文件未在本地检测到")
+                except Exception as download_err:
+                    print(f"  [-] 下载失败: {download_err}")
+                    fail_count += 1
+                finally:
+                    page.close()
+
+                time.sleep(random.uniform(2.0, 4.0))
+
+            browser.close()
+    except Exception as run_e:
+        print(f"[-] Playwright 运行异常: {run_e}")
+
+    conn.close()
+
+    print("\n" + "=" * 60)
+    print("                      下载统计报告")
+    print("=" * 60)
+    print(f" 计划重新下载数:             {len(to_download)}")
+    print(f" 成功重新下载/覆盖数:         {success_count}")
+    print(f" 失败或依然不合格数:         {fail_count}")
+    print("=" * 60)
+
+def main():
+    setup_console_utf8()
+    parser = argparse.ArgumentParser(description="修正 PDF 文件名称并移到正确的年份文件夹，并更新本地 SQLite 数据库中的路径。")
+    parser.add_argument(
+        "--run",
+        action="store_true",
+        default=False,
+        help="正式运行修复，不加此参数时仅进行预览 (Dry Run)。"
+    )
+    parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        default=False,
+        help="详细输出每个文件的分析计划。"
+    )
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("[*] 请选择要运行的功能：")
+    print("    1. 修正 PDF 文件名称并移到正确的年份文件夹 (原功能)")
+    print("    2. 检测 PDF 保存目录中文件体积小于 20KB 的 PDF 并重新保存 (新功能)")
+    print("=" * 60)
+    
+    try:
+        choice = input("请输入序号 [1/2] (直接回车默认 1): ").strip()
+        if not choice:
+            choice = "1"
+    except (KeyboardInterrupt, EOFError):
+        print("\n[-] 运行已取消")
+        sys.exit(0)
+
+    if choice == "1":
+        run_fix_names_and_paths(args)
+    elif choice == "2":
+        run_redownload_small_pdfs(args)
+    else:
+        print("[-] 错误: 输入的序号无效。")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

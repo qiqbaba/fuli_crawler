@@ -7,6 +7,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 导入公共配置和公共元数据解析函数
 from config import DB_PATHS
+from utils import setup_console_utf8
 from utils.metadata_parser import parse_link_metadata
 
 def fix_database(db_path):
@@ -93,12 +94,5 @@ def main():
         print("\n未在任何有效路径中找到数据库文件。")
 
 if __name__ == "__main__":
-    # 强制控制台输出使用 utf-8 编码，防止中文乱码
-    if sys.platform.startswith('win'):
-        if sys.stdout.encoding != 'utf-8':
-            try:
-                sys.stdout.reconfigure(encoding='utf-8')
-                sys.stderr.reconfigure(encoding='utf-8')
-            except AttributeError:
-                pass
+    setup_console_utf8()
     main()

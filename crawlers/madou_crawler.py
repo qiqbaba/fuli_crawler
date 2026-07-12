@@ -7,40 +7,14 @@ import threading
 from curl_cffi import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-from playwright.sync_api import sync_playwright
 
 from config import USER_AGENTS, is_local_mode
-from crawlers.base_crawler import BaseCrawler
-from utils.r2_uploader import get_r2_uploader
+from crawlers.base_crawler import PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin
 from utils.proxy_manager import get_proxy_string, get_proxy_dict
+from utils.metadata_parser import sanitize_filename
 
 
-def sanitize_filename(filename):
-    """清理文件名中的非法字符，移除表情符号及特殊变体字符防止编码问题"""
-    filename = re.sub(r'[\\/:*?"<>|]', '_', filename)
-    filename = re.sub(r'[^\u0000-\uFFFF]', '', filename)
-    filename = re.sub(r'[\u200b-\u200d\ufe00-\ufe0f\ufeff]', '', filename)
-    return filename.strip()
-
-
-# Playwright 反 webdriver 检测脚本
-_STEALTH_JS = """
-() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-    Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5]
-    });
-    Object.defineProperty(navigator, 'languages', {
-        get: () => ['zh-CN', 'zh', 'en']
-    });
-    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-}
-"""
-
-
-class MadouCrawler(BaseCrawler):
+class MadouCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
     def __init__(self, db_manager):
         super().__init__(db_manager, "madou")
         self.check_resource_link = True  # 启用磁力链接二次去重
@@ -52,14 +26,13 @@ class MadouCrawler(BaseCrawler):
         self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
         self.current_class = "guochan"
         self.max_consecutive_existing = 15  # 连续抓到历史数据时早停
-        self.r2_uploader = None
-        self.thread_local = threading.local()
-        self._active_resources = []
-        self._resources_lock = threading.Lock()
         # 域名冷却机制
         self._domain_cooldown = {}
         self._cooldown_seconds = 60
         self._domain_lock = threading.Lock()
+
+        # 尝试从本地缓存加载之前发现的最新域名
+        self._load_domains_from_cache()
 
     def _build_headers(self, referer=None):
         """构造完整的浏览器请求头，模拟真实浏览器行为"""
@@ -83,28 +56,6 @@ class MadouCrawler(BaseCrawler):
             headers["Referer"] = self.base_domain + "/"
         return headers
 
-    def decrypt_html(self, raw_html):
-        """解密目标网站动态混淆的 HTML"""
-        candidates = re.findall(r'''['""]([A-Za-z0-9+/=]{1000,})['"]''', raw_html)
-        if not candidates:
-            return None
-        
-        longest_b64 = max(candidates, key=len)
-        normal_b64 = longest_b64[::-1]
-        
-        try:
-            return base64.b64decode(normal_b64).decode('utf-8')
-        except Exception as e:
-            print(f"[-] HTML 解密失败: {e}")
-            return None
-
-    def decrypt_title(self, encrypted_title_b64):
-        """解密标题"""
-        try:
-            return base64.b64decode(encrypted_title_b64).decode('utf-8')
-        except Exception as e:
-            print(f"[-] 标题解密失败: {e}")
-            return ""
 
     def on_start(self):
         """初始化 R2 上传器和代理管理器"""
@@ -134,157 +85,7 @@ class MadouCrawler(BaseCrawler):
             except Exception as e:
                 print(f"[DEBUG] 初始化代理管理器时发生异常: {e}", flush=True)
 
-    def cleanup_thread_resources(self):
-        """释放当前工作线程持有的 Playwright 资源"""
-        if hasattr(self.thread_local, "playwright"):
-            self._recreate_thread_resources()
 
-    def on_finish(self):
-        """释放 Playwright 渲染资源"""
-        print("[*] 正在释放主线程 Playwright 资源...")
-        self.cleanup_thread_resources()
-        
-        with self._resources_lock:
-            if self._active_resources:
-                print(f"[!] 发现 {len(self._active_resources)} 个未被工作线程自主清理的残留资源，执行主线程兜底关闭...")
-                for item in self._active_resources:
-                    p, browser, context, _ = item
-                    try:
-                        if context:
-                            context.close()
-                    except:
-                        pass
-                    try:
-                        if browser:
-                            browser.close()
-                    except:
-                        pass
-                    try:
-                        p.stop()
-                    except:
-                        pass
-                self._active_resources.clear()
-            
-        self.db_manager.commit()
-
-    def _get_thread_resources(self):
-        """获取当前线程特有的 Playwright 实例"""
-        if not hasattr(self.thread_local, "playwright"):
-            p = sync_playwright().start()
-            
-            from config import get_crawler_proxy, is_proxy_manager_enabled
-            launch_args = [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-web-security",
-                "--ignore-certificate-errors",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-features=UserAgentClientHint",
-            ]
-            
-            playwright_proxy = None
-            crawler_proxy = get_crawler_proxy()
-            if crawler_proxy:
-                playwright_proxy = {"server": crawler_proxy}
-            elif is_proxy_manager_enabled():
-                proxy_url = get_proxy_string()
-                if proxy_url:
-                    playwright_proxy = {"server": proxy_url}
-                
-            browser = p.chromium.launch(headless=True, args=launch_args, proxy=playwright_proxy)
-            
-            ua = random.choice(USER_AGENTS)
-            context = browser.new_context(
-                viewport={'width': 1280, 'height': 900},
-                locale="zh-CN",
-                timezone_id="Asia/Shanghai",
-                user_agent=ua,
-            )
-            
-            context.add_init_script(_STEALTH_JS)
-            
-            self.thread_local.playwright = p
-            self.thread_local.browser = browser
-            self.thread_local.context = context
-            
-            with self._resources_lock:
-                self._active_resources.append((p, browser, context, None))
-                
-        return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
-
-    def _recreate_thread_resources(self):
-        """清理当前线程的 Playwright 资源，以便下一次重新创建"""
-        p = getattr(self.thread_local, "playwright", None)
-        browser = getattr(self.thread_local, "browser", None)
-        context = getattr(self.thread_local, "context", None)
-        
-        try:
-            if context:
-                context.close()
-        except:
-            pass
-        try:
-            if browser:
-                browser.close()
-        except:
-            pass
-        try:
-            if p:
-                p.stop()
-        except:
-            pass
-            
-        with self._resources_lock:
-            self._active_resources = [
-                item for item in self._active_resources
-                if item[0] != p
-            ]
-                
-        if hasattr(self.thread_local, "playwright"):
-            del self.thread_local.playwright
-        if hasattr(self.thread_local, "browser"):
-            del self.thread_local.browser
-        if hasattr(self.thread_local, "context"):
-            del self.thread_local.context
-
-        # 清除当前线程的代理绑定，使下次创建时分配到新代理
-        try:
-            from utils.proxy_manager import get_proxy_manager
-            from config import is_proxy_manager_enabled
-            if is_proxy_manager_enabled():
-                mgr = get_proxy_manager()
-                if mgr:
-                    tid = threading.get_ident()
-                    with mgr._lock:
-                        if tid in mgr._thread_proxy_map:
-                            del mgr._thread_proxy_map[tid]
-        except Exception:
-            pass
-
-    def _get_pdf_local_tmp_path(self, publish_date, title):
-        """获取 PDF 本地路径 (带 source_name 尾缀)"""
-        if self.r2_uploader:
-            base = "/tmp/madou_pdfs"
-        else:
-            from config import PDF_BASE_DIR
-            base = PDF_BASE_DIR
-
-        year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
-        save_dir = os.path.join(base, year)
-        os.makedirs(save_dir, exist_ok=True)
-
-        safe_title = sanitize_filename(title)
-        base_filename = f"{publish_date}_{safe_title}_{self.source_name}"
-        pdf_path = os.path.join(save_dir, f"{base_filename}.pdf")
-
-        counter = 1
-        while os.path.exists(pdf_path):
-            pdf_path = os.path.join(save_dir, f"{base_filename}_{counter}.pdf")
-            counter += 1
-
-        return pdf_path
 
     def _save_pdf(self, target_url, publish_date, title):
         """直接用 Playwright 打开详情页并保存为 PDF"""
@@ -333,60 +134,16 @@ class MadouCrawler(BaseCrawler):
                     pass
             return None
 
-        if self.r2_uploader:
-            year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
-            remote_key = f"pdfs/{year}/{os.path.basename(local_path)}"
-            result = self.r2_uploader.upload_pdf(local_path, remote_key)
-            if os.path.exists(local_path):
-                try:
-                    os.remove(local_path)
-                except:
-                    pass
-            return result
-        else:
-            year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
-            rel_path = f"pdf/{year}/{os.path.basename(local_path)}"
-            return rel_path.replace('\\', '/')
+        return self._upload_or_return_pdf_path(local_path, publish_date)
 
-    def _rotate_domain(self):
-        """轮换至下一个可用域名（带冷却机制），线程安全"""
-        with self._domain_lock:
-            failed_domain = self.domains[self.current_domain_idx]
-            self._domain_cooldown[failed_domain] = time.time()
-            
-            now = time.time()
-            for i in range(1, len(self.domains) + 1):
-                candidate_idx = (self.current_domain_idx + i) % len(self.domains)
-                candidate = self.domains[candidate_idx]
-                last_fail = self._domain_cooldown.get(candidate, 0)
-                if now - last_fail >= self._cooldown_seconds:
-                    self.current_domain_idx = candidate_idx
-                    self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
-                    self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
-                    print(f"[!] 麻豆域名切换至: {self.base_domain}")
-                    return
-            
-            # 所有域名都在冷却中
-            if len(self.domains) > 1:
-                min_wait = min(
-                    self._cooldown_seconds - (now - self._domain_cooldown.get(d, 0))
-                    for d in self.domains
-                )
-                wait_time = max(min_wait, 10) + random.uniform(2, 5)
-                print(f"[!] 所有域名均在冷却中，等待 {wait_time:.1f} 秒...")
-                time.sleep(wait_time)
-            
-            self.current_domain_idx = (self.current_domain_idx + 1) % len(self.domains)
-            self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
-            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
-            self._domain_cooldown.pop(self.domains[self.current_domain_idx], None)
-            print(f"[!] 冷却结束或直接重试，麻豆域名切换至: {self.base_domain}")
+
 
     def fetch_list_page(self, page_num):
-        """请求列表页并解密 HTML，支持域名轮换重试"""
+        """请求列表页并解密 HTML，支持域名轮换重试和自动域名发现"""
         for _ in range(len(self.domains)):
             url = self.base_list_url.format(self.current_class, page_num)
             headers = self._build_headers()
+            redirect_content = None  # 追踪跳转页面内容，用于提取最新域名
 
             for attempt in range(2):
                 proxies = None
@@ -403,6 +160,11 @@ class MadouCrawler(BaseCrawler):
                         decrypted = self.decrypt_html(response.text)
                         if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
                             return decrypted
+                        # 记录跳转页面内容，后续用于提取新域名
+                        if decrypted and "正在检测最新可用线路" in decrypted:
+                            redirect_content = decrypted
+                        elif "正在检测最新可用线路" in response.text:
+                            redirect_content = response.text
                     elif response.status_code == 403:
                         print(f"[!] 列表页返回 403，疑似触发反爬: {url}")
                         if proxies and is_proxy_manager_enabled():
@@ -432,6 +194,11 @@ class MadouCrawler(BaseCrawler):
                 decrypted = self.decrypt_html(html)
                 if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
                     return decrypted
+                # 记录跳转页面内容
+                if decrypted and "正在检测最新可用线路" in decrypted:
+                    redirect_content = decrypted
+                elif "正在检测最新可用线路" in html:
+                    redirect_content = html
             except Exception as e:
                 print(f"[-] Playwright 兜底抓取列表页异常: {e}")
                 if is_proxy_manager_enabled():
@@ -442,6 +209,11 @@ class MadouCrawler(BaseCrawler):
                         if proxy_url:
                             manager.report_failure(proxy_url)
                 self._recreate_thread_resources()
+            
+            # 尝试从跳转页面提取最新域名
+            if redirect_content and self._update_domains_from_redirect(redirect_content):
+                print(f"[+] 域名列表已更新，使用新域名重试...")
+                continue  # 直接用新域名重试，跳过冷却等待
                 
             print(f"[!] 当前域名疑似被封，冷却等待后切换...")
             time.sleep(random.uniform(5.0, 10.0))
@@ -528,6 +300,7 @@ class MadouCrawler(BaseCrawler):
 
             list_url = self.base_list_url.format(self.current_class, 1)
             headers = self._build_headers(referer=list_url)
+            redirect_content = None  # 追踪跳转页面内容
 
             for attempt in range(2):
                 proxies = None
@@ -545,6 +318,11 @@ class MadouCrawler(BaseCrawler):
                         if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
                             detail_html = decrypted
                             break
+                        # 记录跳转页面内容
+                        if decrypted and "正在检测最新可用线路" in decrypted:
+                            redirect_content = decrypted
+                        elif "正在检测最新可用线路" in response.text:
+                            redirect_content = response.text
                     elif response.status_code == 403:
                         print(f"[!] 详情页返回 403，疑似触发反爬: {url}")
                         break
@@ -571,11 +349,20 @@ class MadouCrawler(BaseCrawler):
                         if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
                             detail_html = decrypted
                             break
+                        # 记录跳转页面内容
+                        if decrypted and "正在检测最新可用线路" in decrypted:
+                            redirect_content = decrypted
+                        elif "正在检测最新可用线路" in html:
+                            redirect_content = html
                 except Exception as e:
                     print(f"[-] Playwright 兜底抓取详情页异常 ({url}): {e}")
 
             if detail_html:
                 break
+            
+            # 尝试从跳转页面提取最新域名
+            if redirect_content and self._update_domains_from_redirect(redirect_content):
+                continue  # 直接用新域名重试，跳过冷却等待
                 
             time.sleep(random.uniform(5.0, 10.0))
             self._rotate_domain()

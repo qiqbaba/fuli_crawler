@@ -11,32 +11,14 @@ from playwright.sync_api import sync_playwright
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 引入项目中的配置
-from config import get_db_path, PDF_BASE_DIR, USER_AGENTS
-
-# Windows下控制台强制使用utf-8编码输出，防止中文乱码
-if sys.platform.startswith('win'):
-    if sys.stdout.encoding != 'utf-8':
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-            sys.stderr.reconfigure(encoding='utf-8')
-        except AttributeError:
-            pass
-
-def sanitize_filename(filename):
-    """清理文件名中的非法字符"""
-    return re.sub(r'[\\/:*?"<>|]', '_', filename).strip()
-
-def to_relative_path(pdf_path):
-    """将绝对路径转换为相对路径格式：pdf/year/filename.pdf"""
-    if not pdf_path:
-        return ""
-    p = pdf_path.replace('\\', '/')
-    parts = [x for x in p.split('/') if x]
-    if len(parts) >= 2:
-        return f"pdf/{parts[-2]}/{parts[-1]}"
-    return p
+from config import get_db_path, PDF_BASE_DIR
+from utils import setup_console_utf8
+from utils.metadata_parser import sanitize_filename
+from utils.pdf_utils import to_relative_path
+from utils.browser_manager import create_browser_context
 
 def main():
+    setup_console_utf8()
     parser = argparse.ArgumentParser(description="修复本地缺失的 PDF 文件，并将所有 pdf_path 改为相对路径。")
     parser.add_argument(
         "--run",
@@ -148,12 +130,7 @@ def main():
             
             try:
                 with sync_playwright() as p:
-                    browser = p.chromium.launch(headless=True)
-                    context = browser.new_context(
-                        user_agent=random.choice(USER_AGENTS),
-                        viewport={'width': 1920, 'height': 1080}
-                    )
-                    context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+                    browser, context = create_browser_context(p)
                     
                     for idx, (r_id, title, url, publish_time) in enumerate(missing_records, 1):
                         year = publish_time.split('-')[0] if (publish_time and '-' in publish_time) else "Unknown_Year"

@@ -8,17 +8,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 引入项目中的配置
 from config import get_db_path, PDF_BASE_DIR
-
-# Windows下控制台强制使用utf-8编码输出，防止中文乱码
-if sys.platform.startswith('win'):
-    if sys.stdout.encoding != 'utf-8':
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-            sys.stderr.reconfigure(encoding='utf-8')
-        except AttributeError:
-            pass
+from utils import setup_console_utf8
 
 def main():
+    setup_console_utf8()
     parser = argparse.ArgumentParser(description="清理数据库中已物理删除的 Unknown_Year PDF 文件对应的记录。")
     parser.add_argument(
         "--run",

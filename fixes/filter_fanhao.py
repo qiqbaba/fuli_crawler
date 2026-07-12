@@ -25,15 +25,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_db_path, PDF_BASE_DIR
-
-# Windows 控制台 UTF-8 输出
-if sys.platform.startswith('win'):
-    if sys.stdout.encoding != 'utf-8':
-        try:
-            sys.stdout.reconfigure(encoding='utf-8')
-            sys.stderr.reconfigure(encoding='utf-8')
-        except AttributeError:
-            pass
+from utils import setup_console_utf8
 
 
 # ============================================================
@@ -361,6 +353,7 @@ def interactive_mode():
 # ============================================================
 
 def main():
+    setup_console_utf8()
     parser = argparse.ArgumentParser(
         description="日语标题过滤工具 - 识别并导出/删除数据库中标题为日语的记录"
     )

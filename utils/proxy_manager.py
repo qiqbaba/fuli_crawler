@@ -467,16 +467,39 @@ class ProxyManager:
 
             await asyncio.gather(*workers, return_exceptions=True)
 
-        # 为当前线程配置独立的事件循环并同步执行，确保外部同步接口兼容性
-        loop = asyncio.new_event_loop()
+        # 检测是否已在异步上下文中（有事件循环正在运行）
         try:
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(main_verify())
-        except Exception as e:
-            print(f"[ProxyManager] 异步事件循环发生异常: {e}")
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
+            asyncio.get_running_loop()
+            in_async_context = True
+        except RuntimeError:
+            in_async_context = False
+
+        if in_async_context:
+            # 已在异步上下文中，在独立线程中运行验证，避免事件循环冲突
+            import concurrent.futures
+            def _run_verify():
+                _loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(_loop)
+                try:
+                    _loop.run_until_complete(main_verify())
+                except Exception as e:
+                    print(f"[ProxyManager] 异步事件循环发生异常: {e}")
+                finally:
+                    _loop.close()
+                    asyncio.set_event_loop(None)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(_run_verify).result()
+        else:
+            # 没有运行中的事件循环，直接使用当前线程
+            loop = asyncio.new_event_loop()
+            try:
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(main_verify())
+            except Exception as e:
+                print(f"[ProxyManager] 异步事件循环发生异常: {e}")
+            finally:
+                loop.close()
+                asyncio.set_event_loop(None)
 
         with self._lock:
             self._working_proxies = working
@@ -539,27 +562,38 @@ class ProxyManager:
 
     def check_and_replenish(self, threshold=200, target_count=300):
         """
-        如果当前可用代理数少于 threshold，启动异步后台守护线程进行补充，直至 target_count
+        如果当前可用代理数少于 threshold，同步补充代理（阻塞直到完成）。
+        确保调用方总能拿到完整的代理列表，避免"同时获取代理和保存PDF"的问题。
         """
         with self._lock:
-            if len(self._working_proxies) >= threshold or self._is_replenishing:
+            if len(self._working_proxies) >= threshold:
                 return
-            self._is_replenishing = True
-            
-        def _run():
-            try:
-                print(f"[ProxyManager] 可用代理数仅剩 {len(self._working_proxies)}，低于阈值 {threshold}，启动后台线程自动补充...")
-                # 强制重新拉取
-                self.fetch_proxies(force=True)
-                # 重新验证并补足
-                self.verify_proxies(force=True, target_count=target_count)
-            except Exception as e:
-                print(f"[ProxyManager] 后台补充代理出现异常: {e}")
-            finally:
-                with self._lock:
-                    self._is_replenishing = False
+            if self._is_replenishing:
+                # 已有其他线程在补充中，等待其完成后返回
+                need_wait = True
+            else:
+                self._is_replenishing = True
+                need_wait = False
 
-        threading.Thread(target=_run, daemon=True).start()
+        if need_wait:
+            for _ in range(60):  # 最多等 30 秒
+                with self._lock:
+                    if not self._is_replenishing:
+                        return
+                time.sleep(0.5)
+            return
+
+        # 同步执行代理补充（阻塞），确保调用方拿到代理后再继续
+        try:
+            print(f"[ProxyManager] 可用代理数仅剩 {len(self._working_proxies)}，低于阈值 {threshold}，正在同步补充...")
+            self.fetch_proxies(force=True)
+            self.verify_proxies(force=True, target_count=target_count)
+            print(f"[ProxyManager] 代理补充完成: 可用 {len(self._working_proxies)} 个")
+        except Exception as e:
+            print(f"[ProxyManager] 补充代理出现异常: {e}")
+        finally:
+            with self._lock:
+                self._is_replenishing = False
 
     def get_thread_exclusive_proxy(self) -> Optional[str]:
         """

@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import random
 import threading
@@ -441,3 +442,505 @@ class BaseCrawler:
             print(f"\n[致命错误] 运行中发生未捕获的异常: {e}")
         finally:
             self.on_finish()
+
+
+class PlaywrightBaseCrawler(BaseCrawler):
+    def __init__(self, db_manager, source_name):
+        super().__init__(db_manager, source_name)
+        self.thread_local = threading.local()
+        self._active_resources = []
+        self._resources_lock = threading.Lock()
+        self.r2_uploader = None
+        self.use_persistent_context = False
+
+    def on_start(self):
+        """初始化 R2 上传器和代理管理器"""
+        from utils.r2_uploader import get_r2_uploader
+        from config import is_local_mode
+        self.r2_uploader = get_r2_uploader()
+        if self.r2_uploader:
+            print(f"[*] Cloudflare R2 上传器已启用 ({self.source_name})", flush=True)
+        else:
+            if is_local_mode():
+                print(f"[*] 本地模式已激活，PDF 将保存到本地目录 ({self.source_name})", flush=True)
+            else:
+                print(f"[*] 未配置 R2 环境变量，PDF 将保存到本地目录 ({self.source_name})", flush=True)
+        
+        # 初始化代理管理器
+        from config import is_proxy_manager_enabled
+        if is_proxy_manager_enabled():
+            print(f"[*] 代理管理器已启用，正在获取和验证代理IP...", flush=True)
+            from utils.proxy_manager import get_proxy_manager
+            from config import PROXY_VERIFY_WORKERS
+            try:
+                manager = get_proxy_manager()
+                if manager:
+                    manager.fetch_proxies(force=False)
+                    test_url = getattr(self, 'proxy_test_url', None) or getattr(self, 'base_domain', None) or getattr(self, 'base_url', None)
+                    expected_content = getattr(self, 'proxy_expected_content', None)
+                    manager.verify_proxies(
+                        force=False, 
+                        max_workers=PROXY_VERIFY_WORKERS, 
+                        test_url=test_url, 
+                        expected_content=expected_content
+                    )
+                    stats = manager.get_stats()
+                    print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个", flush=True)
+            except Exception as e:
+                print(f"[-] 初始化代理管理器时发生异常: {e}", flush=True)
+
+    def cleanup_thread_resources(self):
+        """生命周期钩子：释放当前工作线程持有的 Playwright 资源"""
+        if hasattr(self.thread_local, "playwright"):
+            self._recreate_thread_resources()
+
+    def on_finish(self):
+        """释放 Playwright 渲染资源"""
+        print(f"[*] 正在释放主线程 Playwright 资源 ({self.source_name})...")
+        # 1. 优先清理主线程自身的资源
+        self.cleanup_thread_resources()
+        
+        # 2. 残留资源兜底关闭
+        with self._resources_lock:
+            if self._active_resources:
+                print(f"[!] 发现 {len(self._active_resources)} 个未被工作线程自主清理的残留资源，执行主线程兜底关闭...")
+                for item in self._active_resources:
+                    p, browser, context, profile_dir = item
+                    try:
+                        if context:
+                            context.close()
+                    except:
+                        pass
+                    try:
+                        if browser:
+                            browser.close()
+                    except:
+                        pass
+                    try:
+                        if p:
+                            p.stop()
+                    except:
+                        pass
+                    if profile_dir and os.path.exists(profile_dir):
+                        try:
+                            import shutil
+                            shutil.rmtree(profile_dir)
+                        except:
+                            pass
+                self._active_resources.clear()
+            
+        self.db_manager.commit()
+
+    def _get_thread_resources(self):
+        """获取当前线程特有的 Playwright 实例"""
+        if not hasattr(self.thread_local, "playwright"):
+            from playwright.sync_api import sync_playwright
+            p = sync_playwright().start()
+            
+            from config import USER_AGENTS, is_local_mode, get_crawler_proxy, is_proxy_manager_enabled
+            from utils.proxy_manager import get_proxy_string
+            
+            launch_args = [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-web-security",
+                "--ignore-certificate-errors",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-features=UserAgentClientHint",
+            ]
+            
+            playwright_proxy = None
+            crawler_proxy = get_crawler_proxy()
+            if crawler_proxy:
+                playwright_proxy = {"server": crawler_proxy}
+            elif is_proxy_manager_enabled():
+                proxy_url = get_proxy_string()
+                if proxy_url:
+                    playwright_proxy = {"server": proxy_url}
+                
+            ua = random.choice(USER_AGENTS)
+            local_mode = is_local_mode()
+            headless = not local_mode if self.source_name == "seju" else True
+            
+            if headless and self.source_name != "seju":
+                # Ensure headless-specific args are set
+                launch_args.extend(["--disable-dev-shm-usage", "--disable-gpu"])
+                
+            if getattr(self, "use_persistent_context", False):
+                profile_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "temp_profiles",
+                    f"profile_{self.source_name}_{threading.get_ident()}_{random.randint(1000, 9999)}_{int(time.time())}"
+                )
+                os.makedirs(profile_dir, exist_ok=True)
+                
+                context = None
+                browser = None
+                try:
+                    context = p.chromium.launch_persistent_context(
+                        user_data_dir=profile_dir,
+                        headless=headless,
+                        channel="chrome",
+                        args=launch_args,
+                        user_agent=ua,
+                        viewport={'width': 1280, 'height': 900},
+                        bypass_csp=True,
+                        proxy=playwright_proxy,
+                        locale="zh-CN",
+                        timezone_id="Asia/Shanghai"
+                    )
+                except Exception as e:
+                    print(f"[*] 启动真实 Chrome 失败，回退到内置 Chromium: {e}")
+                    try:
+                        context = p.chromium.launch_persistent_context(
+                            user_data_dir=profile_dir,
+                            headless=headless,
+                            args=launch_args,
+                            user_agent=ua,
+                            viewport={'width': 1280, 'height': 900},
+                            bypass_csp=True,
+                            proxy=playwright_proxy,
+                            locale="zh-CN",
+                            timezone_id="Asia/Shanghai"
+                        )
+                        print(f"[+] 线程 {threading.get_ident()} 成功启动内置 Chromium 持久化上下文")
+                    except Exception as e2:
+                        print(f"[-] 启动持久化上下文均失败: {e2}。尝试普通方式启动。")
+                
+                if context:
+                    browser = context.browser
+                else:
+                    browser = p.chromium.launch(headless=headless, args=launch_args)
+                    context = browser.new_context(
+                        user_agent=ua,
+                        viewport={'width': 1280, 'height': 900},
+                        proxy=playwright_proxy,
+                        locale="zh-CN",
+                        timezone_id="Asia/Shanghai"
+                    )
+                
+                try:
+                    from playwright_stealth import Stealth
+                    stealth_config = Stealth()
+                    stealth_config.apply_stealth_sync(context)
+                except Exception as stealth_err:
+                    print(f"[-] 应用 stealth 失败: {stealth_err}")
+                    
+                self.thread_local.profile_dir = profile_dir
+            else:
+                browser = p.chromium.launch(headless=headless, args=launch_args, proxy=playwright_proxy)
+                context = browser.new_context(
+                    viewport={'width': 1280, 'height': 900},
+                    locale="zh-CN",
+                    timezone_id="Asia/Shanghai",
+                    user_agent=ua,
+                )
+                profile_dir = None
+            
+            try:
+                context.add_init_script("""
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    });
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3, 4, 5]
+                    });
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['zh-CN', 'zh', 'en']
+                    });
+                    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+                    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+                    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+                """)
+            except Exception as script_err:
+                print(f"[-] 注入伪装脚本失败: {script_err}")
+                
+            self.thread_local.playwright = p
+            self.thread_local.browser = browser
+            self.thread_local.context = context
+            
+            with self._resources_lock:
+                self._active_resources.append((p, browser, context, profile_dir))
+                
+        return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
+
+    def _recreate_thread_resources(self):
+        """清理当前线程的 Playwright 资源，以便下一次重新创建"""
+        p = getattr(self.thread_local, "playwright", None)
+        browser = getattr(self.thread_local, "browser", None)
+        context = getattr(self.thread_local, "context", None)
+        profile_dir = getattr(self.thread_local, "profile_dir", None)
+        
+        try:
+            if context:
+                context.close()
+        except:
+            pass
+        try:
+            if browser:
+                browser.close()
+        except:
+            pass
+        try:
+            if p:
+                p.stop()
+        except:
+            pass
+            
+        with self._resources_lock:
+            self._active_resources = [
+                item for item in self._active_resources
+                if item[0] != p
+            ]
+            
+        if profile_dir and os.path.exists(profile_dir):
+            try:
+                import shutil
+                shutil.rmtree(profile_dir)
+            except:
+                pass
+                
+        if hasattr(self.thread_local, "playwright"):
+            del self.thread_local.playwright
+        if hasattr(self.thread_local, "browser"):
+            del self.thread_local.browser
+        if hasattr(self.thread_local, "context"):
+            del self.thread_local.context
+        if hasattr(self.thread_local, "profile_dir"):
+            del self.thread_local.profile_dir
+
+        # 清除当前线程的代理绑定，使下次创建时分配到新代理
+        try:
+            from utils.proxy_manager import get_proxy_manager
+            from config import is_proxy_manager_enabled
+            if is_proxy_manager_enabled():
+                mgr = get_proxy_manager()
+                if mgr:
+                    tid = threading.get_ident()
+                    with mgr._lock:
+                        if tid in mgr._thread_proxy_map:
+                            del mgr._thread_proxy_map[tid]
+        except Exception:
+            pass
+
+    def _get_pdf_local_tmp_path(self, publish_date, title):
+        """获取 PDF 本地临时/持久化保存路径"""
+        if self.r2_uploader:
+            base = f"/tmp/{self.source_name}_pdfs"
+        else:
+            from config import PDF_BASE_DIR
+            base = PDF_BASE_DIR
+
+        year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
+        save_dir = os.path.join(base, year)
+        os.makedirs(save_dir, exist_ok=True)
+
+        from utils.metadata_parser import sanitize_filename
+        safe_title = sanitize_filename(title)
+        base_filename = f"{publish_date}_{safe_title}_{self.source_name}"
+        pdf_path = os.path.join(save_dir, f"{base_filename}.pdf")
+
+        counter = 1
+        while os.path.exists(pdf_path):
+            pdf_path = os.path.join(save_dir, f"{base_filename}_{counter}.pdf")
+            counter += 1
+
+        return pdf_path
+
+    def _upload_or_return_pdf_path(self, local_path, publish_date):
+        """统一的 PDF R2 上传与相对路径返回逻辑"""
+        if not local_path or not os.path.exists(local_path):
+            return None
+        if self.r2_uploader:
+            year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
+            remote_key = f"pdfs/{year}/{os.path.basename(local_path)}"
+            result = self.r2_uploader.upload_pdf(local_path, remote_key)
+            if os.path.exists(local_path):
+                try:
+                    os.remove(local_path)
+                except:
+                    pass
+            return result
+        else:
+            year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
+            rel_path = f"pdf/{year}/{os.path.basename(local_path)}"
+            return rel_path.replace('\\', '/')
+
+
+class DomainRotationMixin:
+    def _get_domain_cache_path(self):
+        """获取域名缓存文件路径（按 source_name 区分）"""
+        cache_dir = os.path.join(os.path.dirname(__file__), "..", "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        return os.path.join(cache_dir, f"{self.source_name}_domains.json")
+
+    def _load_domains_from_cache(self):
+        """从本地缓存加载之前发现的最新域名，如果有则替换 self.domains"""
+        cache_path = self._get_domain_cache_path()
+        try:
+            if os.path.exists(cache_path):
+                with open(cache_path, "r", encoding="utf-8") as f:
+                    cached = json.load(f)
+                if isinstance(cached, list) and len(cached) > 0:
+                    # 验证缓存中的域名格式
+                    import re
+                    valid = [d for d in cached if re.match(r'^[a-z]{2,5}\.\d{5,7}\.xyz$', d)]
+                    if valid:
+                        with self._domain_lock:
+                            # 去重并保留顺序
+                            seen = set()
+                            unique_domains = []
+                            for d in valid:
+                                if d not in seen:
+                                    seen.add(d)
+                                    unique_domains.append(d)
+                            self.domains = unique_domains
+                            self.current_domain_idx = 0
+                            self.base_domain = f"https://{self.domains[0]}"
+                            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+                            self._domain_cooldown.clear()
+                        print(f"[+] {self.source_name.upper()} 从缓存加载 {len(unique_domains)} 个域名:")
+                        for d in unique_domains:
+                            print(f"    - {d}")
+                        return True
+        except Exception as e:
+            print(f"[!] {self.source_name.upper()} 读取域名缓存失败: {e}")
+        return False
+
+    def _save_domains_to_cache(self):
+        """将当前域名列表保存到本地缓存"""
+        cache_path = self._get_domain_cache_path()
+        try:
+            with self._domain_lock:
+                to_save = list(dict.fromkeys(self.domains))  # 去重保序
+            with open(cache_path, "w", encoding="utf-8") as f:
+                json.dump(to_save, f, ensure_ascii=False, indent=2)
+            print(f"[+] {self.source_name.upper()} 域名已缓存至: {cache_path}")
+        except Exception as e:
+            print(f"[!] {self.source_name.upper()} 保存域名缓存失败: {e}")
+
+    def _rotate_domain(self):
+        """轮换至下一个可用域名（带冷却机制），线程安全"""
+        with self._domain_lock:
+            failed_domain = self.domains[self.current_domain_idx]
+            self._domain_cooldown[failed_domain] = time.time()
+            
+            now = time.time()
+            for i in range(1, len(self.domains) + 1):
+                candidate_idx = (self.current_domain_idx + i) % len(self.domains)
+                candidate = self.domains[candidate_idx]
+                last_fail = self._domain_cooldown.get(candidate, 0)
+                if now - last_fail >= self._cooldown_seconds:
+                    self.current_domain_idx = candidate_idx
+                    self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
+                    self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+                    print(f"[!] {self.source_name.upper()} 域名切换至: {self.base_domain}")
+                    return
+            
+            # 所有域名都在冷却中
+            if len(self.domains) > 1:
+                min_wait = min(
+                    self._cooldown_seconds - (now - self._domain_cooldown.get(d, 0))
+                    for d in self.domains
+                )
+                wait_time = max(min_wait, 10) + random.uniform(2, 5)
+                print(f"[!] 所有域名均在冷却中，等待 {wait_time:.1f} 秒...")
+                time.sleep(wait_time)
+            else:
+                wait_time = random.uniform(2, 5)
+                time.sleep(wait_time)
+                
+            self.current_domain_idx = (self.current_domain_idx + 1) % len(self.domains)
+            self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
+            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            self._domain_cooldown.pop(self.domains[self.current_domain_idx], None)
+            print(f"[!] 冷却结束，{self.source_name.upper()} 域名切换至: {self.base_domain}")
+
+    def _update_domains_from_redirect(self, content):
+        """从'正在检测最新可用线路'跳转页面中提取最新域名并更新域名列表
+        
+        当旧域名失效时，服务器会返回一个包含新域名列表的跳转页面。
+        此方法解析该页面，提取新域名并动态更新 self.domains。
+        
+        Args:
+            content: 跳转页面的 HTML 内容（可以是原始或解密后的）
+            
+        Returns:
+            True 如果域名列表已更新，False 如果无变化或未检测到跳转页
+        """
+        if not content or "正在检测最新可用线路" not in content:
+            return False
+        
+        import re
+        # 匹配域名格式: 2-5个小写字母.5-7位数字.xyz（如 ehu.923596.xyz）
+        new_domains = re.findall(r'([a-z]{2,5}\.\d{5,7}\.xyz)', content)
+        if not new_domains:
+            print(f"[!] 检测到跳转页面但未能提取到域名")
+            return False
+        
+        # 去重并保留顺序
+        seen = set()
+        unique_domains = []
+        for d in new_domains:
+            if d not in seen:
+                seen.add(d)
+                unique_domains.append(d)
+        
+        with self._domain_lock:
+            old_set = set(self.domains)
+            new_set = set(unique_domains)
+            
+            if new_set == old_set:
+                return False  # 域名没有变化，无需更新
+            
+            old_domains = self.domains[:]
+            self.domains = unique_domains
+            self.current_domain_idx = 0
+            self.base_domain = f"https://{self.domains[0]}"
+            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            self._domain_cooldown.clear()
+            
+            added = new_set - old_set
+            removed = old_set - new_set
+            print(f"[+] {self.source_name.upper()} 检测到域名变更！提取到 {len(unique_domains)} 个最新域名:")
+            for i, d in enumerate(unique_domains, 1):
+                tag = " [新]" if d in added else ""
+                print(f"    域名{i}: {d}{tag}")
+            if removed:
+                print(f"    已失效: {', '.join(removed)}")
+        
+        # 自动持久化到本地缓存
+        self._save_domains_to_cache()
+        
+        return True
+
+
+class DecryptMixin:
+    def decrypt_html(self, raw_html):
+        """解密目标网站动态混淆的 HTML"""
+        import base64
+        import re
+        candidates = re.findall(r'''['""]([A-Za-z0-9+/=]{1000,})['"]''', raw_html)
+        if not candidates:
+            return None
+        
+        longest_b64 = max(candidates, key=len)
+        normal_b64 = longest_b64[::-1]
+        
+        try:
+            return base64.b64decode(normal_b64).decode('utf-8')
+        except Exception as e:
+            print(f"[-] HTML 解密失败: {e}")
+            return None
+
+    def decrypt_title(self, encrypted_title_b64):
+        """解密详情页或列表页的加密标题"""
+        import base64
+        try:
+            return base64.b64decode(encrypted_title_b64).decode('utf-8')
+        except Exception as e:
+            print(f"[-] 标题解密失败: {e}")
+            return ""
+

@@ -164,3 +164,15 @@ def parse_pikpak_link(resource_link):
     if match:
         return match.group(1).strip()
     return None
+
+
+def sanitize_filename(filename):
+    """清理文件名中的非法字符，移除表情符号及特殊变体字符防止编码问题"""
+    # 替换 Windows 文件名非法字符
+    filename = re.sub(r'[\\/:*?"<>|]', '_', filename)
+    # 移除非 BMP 字符（如 Emoji 等 Unicode 码点大于 0xFFFF 的字符）
+    filename = re.sub(r'[^\u0000-\uFFFF]', '', filename)
+    # 移除特殊的不可见控制字符和变体选择器
+    filename = re.sub(r'[\u200b-\u200d\ufe00-\ufe0f\ufeff]', '', filename)
+    return filename.strip()
+
