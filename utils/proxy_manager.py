@@ -483,7 +483,10 @@ class ProxyManager:
         async def main_verify():
             stop_event = asyncio.Event()
             queue = asyncio.Queue()
-            for p in self._proxies:
+            # 方案3: 随机化探测顺序，避免同网段IP集中出现
+            shuffled = self._proxies[:]
+            random.shuffle(shuffled)
+            for p in shuffled:
                 queue.put_nowait(p)
 
             workers = []
@@ -495,6 +498,9 @@ class ProxyManager:
                     address = proxy["address"]
 
                     try:
+                        # 方案1: 每次探测前加入随机延迟（50-300ms），打破扫描特征
+                        await asyncio.sleep(random.uniform(0.05, 0.3))
+
                         # 1. 快速 TCP 端口预检测
                         try:
                             ip, port_str = address.split(":", 1)
