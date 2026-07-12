@@ -786,7 +786,8 @@ class DomainRotationMixin:
                 if isinstance(cached, list) and len(cached) > 0:
                     # 验证缓存中的域名格式
                     import re
-                    valid = [d for d in cached if re.match(r'^[a-z]{2,5}\.\d{5,7}\.xyz$', d)]
+                    pattern = getattr(self, "domain_pattern", r'([a-z]{2,5}\.\d{5,7}\.xyz)')
+                    valid = [d for d in cached if re.search(pattern, d)]
                     if valid:
                         with self._domain_lock:
                             # 去重并保留顺序
@@ -798,8 +799,12 @@ class DomainRotationMixin:
                                     unique_domains.append(d)
                             self.domains = unique_domains
                             self.current_domain_idx = 0
+                            old_base = self.base_domain
                             self.base_domain = f"https://{self.domains[0]}"
-                            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+                            if old_base and getattr(self, "base_list_url", None):
+                                self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
+                            else:
+                                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
                             self._domain_cooldown.clear()
                         print(f"[+] {self.source_name.upper()} 从缓存加载 {len(unique_domains)} 个域名:")
                         for d in unique_domains:
@@ -834,8 +839,12 @@ class DomainRotationMixin:
                 last_fail = self._domain_cooldown.get(candidate, 0)
                 if now - last_fail >= self._cooldown_seconds:
                     self.current_domain_idx = candidate_idx
+                    old_base = self.base_domain
                     self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
-                    self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+                    if old_base and getattr(self, "base_list_url", None):
+                        self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
+                    else:
+                        self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
                     print(f"[!] {self.source_name.upper()} 域名切换至: {self.base_domain}")
                     return
             
@@ -852,9 +861,13 @@ class DomainRotationMixin:
                 wait_time = random.uniform(2, 5)
                 time.sleep(wait_time)
                 
+            old_base = self.base_domain
             self.current_domain_idx = (self.current_domain_idx + 1) % len(self.domains)
             self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
-            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            if old_base and getattr(self, "base_list_url", None):
+                self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
+            else:
+                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
             self._domain_cooldown.pop(self.domains[self.current_domain_idx], None)
             print(f"[!] 冷却结束，{self.source_name.upper()} 域名切换至: {self.base_domain}")
 
@@ -874,8 +887,9 @@ class DomainRotationMixin:
             return False
         
         import re
-        # 匹配域名格式: 2-5个小写字母.5-7位数字.xyz（如 ehu.923596.xyz）
-        new_domains = re.findall(r'([a-z]{2,5}\.\d{5,7}\.xyz)', content)
+        # 匹配域名格式
+        pattern = getattr(self, "domain_pattern", r'([a-z]{2,5}\.\d{5,7}\.xyz)')
+        new_domains = re.findall(pattern, content)
         if not new_domains:
             print(f"[!] 检测到跳转页面但未能提取到域名")
             return False
@@ -898,8 +912,12 @@ class DomainRotationMixin:
             old_domains = self.domains[:]
             self.domains = unique_domains
             self.current_domain_idx = 0
+            old_base = self.base_domain
             self.base_domain = f"https://{self.domains[0]}"
-            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            if old_base and getattr(self, "base_list_url", None):
+                self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
+            else:
+                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
             self._domain_cooldown.clear()
             
             added = new_set - old_set
@@ -914,6 +932,111 @@ class DomainRotationMixin:
         # 自动持久化到本地缓存
         self._save_domains_to_cache()
         
+        return True
+
+    def _fetch_domains_from_main_station(self):
+        """从主站域名动态获取最新可用镜像域名列表"""
+        if not getattr(self, "main_domain", None):
+            return False
+        
+        print(f"[*] {self.source_name.upper()} 开始从主站 {self.main_domain} 动态获取最新域名列表...", flush=True)
+        headers = self._build_headers(referer=self.main_domain)
+        
+        # 1. 优先获取代理
+        proxies = None
+        from config import get_crawler_proxy, is_proxy_manager_enabled
+        crawler_proxy = get_crawler_proxy()
+        if crawler_proxy:
+            proxies = {"http": crawler_proxy, "https": crawler_proxy}
+        elif is_proxy_manager_enabled():
+            from utils.proxy_manager import get_proxy_dict
+            proxies = get_proxy_dict()
+            
+        html = None
+        # 2. 优先使用 requests (curl_cffi)
+        try:
+            from curl_cffi import requests as curl_requests
+            response = curl_requests.get(self.main_domain, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
+            if response.status_code == 200:
+                html = response.text
+        except Exception as e:
+            print(f"[-] requests 请求主站 {self.main_domain} 失败: {e}", flush=True)
+            if proxies and is_proxy_manager_enabled():
+                from utils.proxy_manager import get_proxy_manager
+                manager = get_proxy_manager()
+                if manager and "http" in proxies:
+                    manager.report_failure(proxies["http"])
+                    
+        # 3. Playwright 兜底
+        if not html and hasattr(self, "_get_thread_resources"):
+            print(f"[*] 使用 Playwright 兜底访问主站: {self.main_domain}", flush=True)
+            page = None
+            try:
+                _, _, context = self._get_thread_resources()
+                page = context.new_page()
+                page.goto(self.main_domain, timeout=30000, wait_until="domcontentloaded")
+                time.sleep(3.0)
+                html = page.content()
+            except Exception as e:
+                print(f"[-] Playwright 访问主站 {self.main_domain} 异常: {e}", flush=True)
+                self._recreate_thread_resources()
+            finally:
+                if page:
+                    try:
+                        page.close()
+                    except:
+                        pass
+                        
+        if not html:
+            print(f"[!] 无法从主站 {self.main_domain} 获取到页面内容", flush=True)
+            return False
+            
+        # 4. 尝试解密 HTML
+        decrypted = None
+        if hasattr(self, "decrypt_html"):
+            decrypted = self.decrypt_html(html)
+            
+        content_to_parse = decrypted if decrypted else html
+        
+        # 5. 提取域名
+        import re
+        pattern = getattr(self, "domain_pattern", r'([a-z]{2,5}\.\d{5,7}\.xyz)')
+        new_domains = re.findall(pattern, content_to_parse)
+        if not new_domains:
+            print(f"[!] 未能在主站内容中匹配提取到镜像域名 (正则: {pattern})", flush=True)
+            return False
+            
+        # 去重并保留顺序，排除主站本身
+        seen = set()
+        unique_domains = []
+        for d in new_domains:
+            if d in self.main_domain:
+                continue
+            if d not in seen:
+                seen.add(d)
+                unique_domains.append(d)
+                
+        if not unique_domains:
+            print(f"[!] 解析出的镜像域名列表为空", flush=True)
+            return False
+            
+        with self._domain_lock:
+            self.domains = unique_domains
+            self.current_domain_idx = 0
+            old_base = self.base_domain
+            self.base_domain = f"https://{self.domains[0]}"
+            if old_base and getattr(self, "base_list_url", None):
+                self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
+            else:
+                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            self._domain_cooldown.clear()
+            
+        print(f"[+] 成功从主站拉取并更新了 {len(unique_domains)} 个最新域名:")
+        for i, d in enumerate(unique_domains, 1):
+            print(f"    域名{i}: {d}")
+            
+        # 持久化到缓存
+        self._save_domains_to_cache()
         return True
 
 

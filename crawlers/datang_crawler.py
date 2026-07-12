@@ -19,16 +19,11 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
         # source_name 设为 datang
         super().__init__(db_manager, "datang")
         self.check_resource_link = True  # 启用磁力链接二次去重
-        self.domains = [
-            "ipk.383296.xyz",
-            "yec.532862.xyz",
-            "fhh.565358.xyz",
-            "rse.885829.xyz",
-            "jnx.322265.xyz",
-            "frp.232668.xyz"
-        ]
+        self.main_domain = "https://dtbt7.com"
+        self.domain_pattern = r'([a-z]{2,5}\.\d{5,7}\.xyz)'
+        self.domains = []
         self.current_domain_idx = 0
-        self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
+        self.base_domain = self.main_domain
         self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
         self.current_class = "guochan"
         self.max_consecutive_existing = 15  # 连续抓到历史数据时早停
@@ -67,6 +62,7 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
 
     def on_start(self):
         """初始化 R2 上传器和代理管理器"""
+        from utils.r2_uploader import get_r2_uploader
         self.r2_uploader = get_r2_uploader()
         if self.r2_uploader:
             print("[*] Cloudflare R2 上传器已启用", flush=True)
@@ -172,8 +168,13 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
 
 
 
-    def fetch_list_page(self, page_num):
+    def fetch_list_page(self, page_num, retry_with_main=True):
         """请求列表页并解密 HTML，支持域名轮换重试和自动域名发现"""
+        if not self.domains:
+            if not self._fetch_domains_from_main_station():
+                print("[!] 域名列表为空且从主站获取失败，无法继续抓取", flush=True)
+                return None
+
         for _ in range(len(self.domains)):
             url = self.base_list_url.format(self.current_class, page_num)
             headers = self._build_headers()
@@ -258,7 +259,12 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
             time.sleep(random.uniform(8.0, 15.0))
             self._rotate_domain()
             
-        return None
+        # 如果走到这说明现有的所有镜像都尝试失败了
+        if retry_with_main:
+            print(f"[!] {self.source_name.upper()} 所有现有镜像域名均尝试失败，尝试从主站更新域名列表...")
+            if self._fetch_domains_from_main_station():
+                print(f"[+] 成功从主站拉取到新域名，开始重新尝试请求列表页...")
+                return self.fetch_list_page(page_num, retry_with_main=False)
 
     def parse_list_page(self, list_page_content, page_num):
         """解析解密后的列表页，提取条目信息"""

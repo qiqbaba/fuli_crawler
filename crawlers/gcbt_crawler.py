@@ -32,13 +32,6 @@ class GcbtCrawler(PlaywrightBaseCrawler):
             return self.base_url
         return urljoin(self.base_url, f"page/{page_num}")
 
-    def _get_thread_resources(self):
-        """获取当前线程特有的 Playwright, Browser 和 Context，用以渲染 PDF"""
-        if not hasattr(self.thread_local, "playwright"):
-            p = sync_playwright().start()
-            
-
-
     def _http_get(self, url, timeout=20):
         """使用 curl_cffi 模拟浏览器获取 URL，最多重试 3 次，都失败再跳过"""
         for attempt in range(1, 4):
