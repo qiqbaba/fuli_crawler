@@ -10,7 +10,7 @@ def get_pikpak_link(keepshare_url, timeout=30, poll_interval=2, quiet=False):
     参数:
         keepshare_url: 原始 keepshare 链接，例如 https://keepshare.org/7f70llj0/magnet%3A%3F...
         timeout: 针对未转存完成资源的轮询超时时间(秒)
-        poll_interval: 轮询间隔(秒)
+        poll_interval: 轮询间隔(秒)，用作指数退避的基数(base)
         quiet: 是否静音模式，不输出明细日志
         
     返回:
@@ -72,8 +72,11 @@ def get_pikpak_link(keepshare_url, timeout=30, poll_interval=2, quiet=False):
             log(f"[+] API 查询接口: {api_url}")
             
             start_time = time.time()
+            attempt = 0
+            max_interval = 30  # 退避上限 30 秒
             while time.time() - start_time < timeout:
                 try:
+                    attempt += 1
                     api_res = requests.get(api_url, headers=headers, timeout=10, proxies=proxies)
                     if api_res.status_code == 200:
                         data = api_res.json()
@@ -94,8 +97,14 @@ def get_pikpak_link(keepshare_url, timeout=30, poll_interval=2, quiet=False):
                         log(f"    [警告] API 请求失败，状态码: {api_res.status_code}")
                 except Exception as api_err:
                     log(f"    [警告] 轮询请求发生异常: {api_err}")
-                    
-                time.sleep(poll_interval)
+                
+                # 指数退避：间隔 = min(base * 2^attempt, max_interval)
+                sleep_time = min(poll_interval * (2 ** (attempt - 1)), max_interval)
+                # 同时确保不超过剩余超时时间
+                remaining = timeout - (time.time() - start_time)
+                sleep_time = min(sleep_time, max(remaining, 0))
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
                 
             log(f"[-] 轮询超时 ({timeout}秒)，资源可能在排队离线中，您可以稍后直接请求该 KeepShare 链接。")
             return None
