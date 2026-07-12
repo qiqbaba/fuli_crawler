@@ -106,6 +106,27 @@ def main():
         help="启用自动代理管理器 (从免费代理源获取并轮换代理，覆盖环境变量 ENABLE_PROXY_MANAGER)"
     )
     
+    # 反检测 / Stealth 相关参数
+    parser.add_argument(
+        "--browser-type",
+        type=str,
+        default=None,
+        choices=["chromium", "firefox", "webkit"],
+        help="浏览器类型: chromium(默认), firefox, webkit (Firefox/WebKit 自动化特征更少，更难被检测)"
+    )
+    parser.add_argument(
+        "--no-stealth",
+        action="store_true",
+        default=False,
+        help="禁用 stealth 反检测注入 (不推荐)"
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        default=False,
+        help="强制使用 headless 无头模式 (默认本地自动 headful，便于调试且降低检测风险)"
+    )
+    
     args = parser.parse_args()
     
     # 如果没有指定 --crawler，进行交互式交互询问
@@ -146,6 +167,14 @@ def main():
         proxy_url=args.proxy,
         disable_proxy=args.no_proxy,
         enable_proxy_manager=args.proxy_manager if args.proxy_manager else None
+    )
+    
+    # 设定反检测参数
+    from config import set_runtime_stealth
+    set_runtime_stealth(
+        browser_type=args.browser_type,
+        disable_stealth=args.no_stealth,
+        force_headless=args.headless
     )
     
     # 打印代理配置信息

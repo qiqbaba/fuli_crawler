@@ -23,11 +23,8 @@ from utils.pdf_utils import to_relative_path
 def _create_browser_context(p, user_agent=None, viewport=None):
     """创建 Playwright 浏览器上下文（内联版，替代已废弃的 create_browser_context）"""
     from config import USER_AGENTS, get_crawler_proxy, is_proxy_manager_enabled
-    launch_args = [
-        "--no-sandbox", "--disable-setuid-sandbox",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-dev-shm-usage", "--disable-gpu", "--disable-features=UserAgentClientHint",
-    ]
+    from utils.stealth import get_browser_launch_args, apply_stealth
+    launch_args = get_browser_launch_args(browser_type='chromium', headless=True)
     playwright_proxy = None
     crawler_proxy = get_crawler_proxy()
     if crawler_proxy:
@@ -48,11 +45,10 @@ def _create_browser_context(p, user_agent=None, viewport=None):
     ctx_args = {"locale": "zh-CN", "user_agent": user_agent or random.choice(USER_AGENTS)}
     ctx_args["viewport"] = viewport or {"width": 1920, "height": 1080}
     context = browser.new_context(**ctx_args)
-    context.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
-    """)
+    
+    # 使用统一 stealth 模块注入伪装脚本
+    apply_stealth(context)
+    
     return browser, context
 
 def run_fix_names_and_paths(args):

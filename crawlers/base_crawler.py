@@ -461,6 +461,18 @@ class PlaywrightBaseCrawler(BaseCrawler):
         self.use_persistent_context = False
         # Perf 1: 是否跨页面复用浏览器，避免每页销毁重建
         self._reuse_browser = True
+        # ========== Anti-detection 配置 ==========
+        from config import get_effective_browser_type, is_headless_forced, HEADFUL_LOCAL, HEADFUL_CLOUD, is_stealth_enabled, is_local_mode
+        # 浏览器类型: 'chromium' | 'firefox' | 'webkit'
+        self.browser_type = get_effective_browser_type()
+        # 本地模式是否使用 headful（有头）模式，默认 True 便于调试且更难被检测
+        self.headful_local = HEADFUL_LOCAL
+        # 云端模式是否使用 headful（默认 false 因为无图形界面）
+        self.headful_cloud = HEADFUL_CLOUD
+        # 是否启用 stealth 高级注入（默认启用）
+        self.enable_stealth = is_stealth_enabled()
+        # 是否强制 headless（通过 CLI --headless 覆盖）
+        self._force_headless = is_headless_forced()
 
     def on_start(self):
         """初始化 R2 上传器和代理管理器"""
@@ -564,15 +576,26 @@ class PlaywrightBaseCrawler(BaseCrawler):
             
             from config import USER_AGENTS, is_local_mode, get_crawler_proxy, is_proxy_manager_enabled
             from utils.proxy_manager import get_proxy_string
+            from utils.stealth import get_browser_launch_args, apply_stealth
             
-            launch_args = [
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-features=UserAgentClientHint",
-            ]
+            ua = random.choice(USER_AGENTS)
+            local_mode = is_local_mode()
+            
+            # 根据配置决定 headful/headless
+            if self._force_headless:
+                headless = True
+            elif local_mode and self.headful_local:
+                headless = False
+            elif not local_mode and self.headful_cloud:
+                # 云端模式启用 headful（需要图形界面支持如 xvfb）
+                headless = False
+            else:
+                headless = True
+                
+            launch_args = get_browser_launch_args(
+                browser_type=self.browser_type,
+                headless=headless,
+            )
             
             playwright_proxy = None
             crawler_proxy = get_crawler_proxy()
@@ -582,14 +605,6 @@ class PlaywrightBaseCrawler(BaseCrawler):
                 proxy_url = get_proxy_string()
                 if proxy_url:
                     playwright_proxy = {"server": proxy_url}
-                
-            ua = random.choice(USER_AGENTS)
-            local_mode = is_local_mode()
-            headless = not local_mode if self.source_name == "seju" else True
-            
-            if headless and self.source_name != "seju":
-                # Ensure headless-specific args are set
-                launch_args.extend(["--disable-dev-shm-usage", "--disable-gpu"])
                 
             if getattr(self, "use_persistent_context", False):
                 profile_dir = os.path.join(
@@ -644,12 +659,9 @@ class PlaywrightBaseCrawler(BaseCrawler):
                         timezone_id="Asia/Shanghai"
                     )
                 
-                try:
-                    from playwright_stealth import Stealth
-                    stealth_config = Stealth()
-                    stealth_config.apply_stealth_sync(context)
-                except Exception as stealth_err:
-                    print(f"[-] 应用 stealth 失败: {stealth_err}")
+                # 注入高级 stealth 脚本（替换旧 playwright_stealth + 内联 JS）
+                if self.enable_stealth:
+                    apply_stealth(context, browser_type=self.browser_type)
                     
                 self.thread_local.profile_dir = profile_dir
             else:
@@ -662,23 +674,9 @@ class PlaywrightBaseCrawler(BaseCrawler):
                 )
                 profile_dir = None
             
-            try:
-                context.add_init_script("""
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined
-                    });
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5]
-                    });
-                    Object.defineProperty(navigator, 'languages', {
-                        get: () => ['zh-CN', 'zh', 'en']
-                    });
-                    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-                    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-                    delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-                """)
-            except Exception as script_err:
-                print(f"[-] 注入伪装脚本失败: {script_err}")
+            # 注入高级 stealth 脚本（无论是否 persistent context 都执行）
+            if self.enable_stealth:
+                apply_stealth(context, browser_type=self.browser_type)
                 
             self.thread_local.playwright = p
             self.thread_local.browser = browser

@@ -206,3 +206,52 @@ def is_proxy_manager_enabled():
     if _runtime_enable_proxy_manager is not None:
         return _runtime_enable_proxy_manager
     return ENABLE_PROXY_MANAGER
+
+
+# ========== 反检测 / Stealth 配置 ==========
+# 是否启用高级 stealth 注入（推荐 True）
+ENABLE_STEALTH = os.environ.get("ENABLE_STEALTH", "true").lower() == "true"
+
+# 浏览器类型: 'chromium' | 'firefox' | 'webkit'
+# Firefox 和 WebKit 的自动化特征更少，反爬 SDK 覆盖较少
+BROWSER_TYPE = os.environ.get("BROWSER_TYPE", "chromium").lower()
+
+# 本地开发时是否使用 headful（有头）模式
+# headful 模式不会被大多数反爬系统标记为自动化浏览器
+HEADFUL_LOCAL = os.environ.get("HEADFUL_LOCAL", "true").lower() == "true"
+
+# 云端运行时是否也使用 headful 模式（默认 false，因为无图形界面）
+HEADFUL_CLOUD = os.environ.get("HEADFUL_CLOUD", "false").lower() == "true"
+
+# ========== 运行时 Stealth 覆盖（由 main.py 命令行参数指定） ==========
+_runtime_browser_type = None
+_runtime_disable_stealth = False
+_runtime_force_headless = False
+
+
+def set_runtime_stealth(browser_type=None, disable_stealth=False, force_headless=False):
+    """设置运行时反检测参数（通常由 main.py 命令行参数指定）"""
+    global _runtime_browser_type, _runtime_disable_stealth, _runtime_force_headless
+    if browser_type is not None:
+        _runtime_browser_type = browser_type
+    _runtime_disable_stealth = disable_stealth
+    _runtime_force_headless = force_headless
+
+
+def get_effective_browser_type():
+    """获取当前生效的 browser_type（支持运行时覆盖）"""
+    if _runtime_browser_type is not None:
+        return _runtime_browser_type
+    return BROWSER_TYPE
+
+
+def is_stealth_enabled():
+    """判断 stealth 是否启用（支持运行时覆盖）"""
+    if _runtime_disable_stealth:
+        return False
+    return ENABLE_STEALTH
+
+
+def is_headless_forced():
+    """判断是否强制 headless 模式（支持运行时覆盖）"""
+    return _runtime_force_headless

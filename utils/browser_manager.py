@@ -56,13 +56,11 @@ def create_browser_context(playwright, user_agent=None, viewport=None):
         
     context = browser.new_context(**ctx_args)
     
-    _STEALTH_JS = """
-    () => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['zh-CN', 'zh', 'en'] });
-    }
-    """
-    context.add_init_script(_STEALTH_JS)
+    # 使用统一 stealth 模块注入伪装脚本
+    try:
+        from utils.stealth import apply_stealth
+        apply_stealth(context)
+    except Exception as stealth_err:
+        print(f"[-] 应用 stealth 失败: {stealth_err}")
     
     return browser, context
