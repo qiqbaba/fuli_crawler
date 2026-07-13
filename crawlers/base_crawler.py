@@ -573,8 +573,12 @@ class PlaywrightBaseCrawler(BaseCrawler):
             
         self.db_manager.commit()
 
-    def _get_thread_resources(self):
-        """获取当前线程特有的 Playwright 实例"""
+    def _get_thread_resources(self, no_proxy=False):
+        """获取当前线程特有的 Playwright 实例
+        
+        Args:
+            no_proxy: 若为 True，则 Playwright 启动时跳过代理配置（直连）
+        """
         if not hasattr(self.thread_local, "playwright"):
             from playwright.sync_api import sync_playwright
             p = sync_playwright().start()
@@ -603,13 +607,14 @@ class PlaywrightBaseCrawler(BaseCrawler):
             )
             
             playwright_proxy = None
-            crawler_proxy = get_crawler_proxy()
-            if crawler_proxy:
-                playwright_proxy = {"server": crawler_proxy}
-            elif is_proxy_manager_enabled():
-                proxy_url = get_proxy_string()
-                if proxy_url:
-                    playwright_proxy = {"server": proxy_url}
+            if not no_proxy:
+                crawler_proxy = get_crawler_proxy()
+                if crawler_proxy:
+                    playwright_proxy = {"server": crawler_proxy}
+                elif is_proxy_manager_enabled():
+                    proxy_url = get_proxy_string()
+                    if proxy_url:
+                        playwright_proxy = {"server": proxy_url}
                 
             if getattr(self, "use_persistent_context", False):
                 profile_dir = os.path.join(
@@ -763,8 +768,12 @@ class PlaywrightBaseCrawler(BaseCrawler):
             self.pdf_generator = PDFGenerator(self.r2_uploader)
         return self.pdf_generator._upload_or_return_pdf_path(local_path, publish_date, self.source_name)
 
-    def _save_pdf(self, page_or_url, publish_date, title):
-        """Playwright 统一保存 PDF 的向后兼容包装方法"""
+    def _save_pdf(self, page_or_url, publish_date, title, no_proxy=False):
+        """Playwright 统一保存 PDF 的向后兼容包装方法
+        
+        Args:
+            no_proxy: 若为 True，则 Playwright 启动时跳过代理配置（直连）
+        """
         if getattr(self, 'no_pdf', False):
             return ""
         if not self.pdf_generator:
@@ -774,7 +783,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
         if not config:
             config = PDFRenderConfig()
             
-        _, _, context = self._get_thread_resources()
+        _, _, context = self._get_thread_resources(no_proxy=no_proxy)
         return self.pdf_generator.generate_pdf(
             page_or_context=context,
             target_url_or_page=page_or_url,

@@ -59,7 +59,7 @@ def main():
         "--workers", "-w",
         type=int,
         default=None,
-        help="并发线程数 (默认: Playwright爬虫seju/datang为10, 其他爬虫u3c3为50)"
+        help="并发线程数 (默认: Playwright爬虫seju/datang等为8, u3c3为50)"
     )
     parser.add_argument(
         "--no-early-stop",
@@ -210,7 +210,7 @@ def main():
         crawler = SejuCrawler(db_manager)
         default_end = 4
         if args.workers is None:
-            args.workers = 10
+            args.workers = 8
     elif args.crawler == "u3c3":
         crawler = U3c3Crawler(db_manager)
         default_end = 20
@@ -220,22 +220,22 @@ def main():
         crawler = DatangCrawler(db_manager)
         default_end = 60
         if args.workers is None:
-            args.workers = 10
+            args.workers = 8
     elif args.crawler == "gcbt":
         crawler = GcbtCrawler(db_manager)
         default_end = 20
         if args.workers is None:
-            args.workers = 10
+            args.workers = 8
     elif args.crawler == "madou":
         crawler = MadouCrawler(db_manager)
         default_end = 60
         if args.workers is None:
-            args.workers = 10
+            args.workers = 8
     elif args.crawler == "jingpin_toupai":
         crawler = JingpinToupaiCrawler(db_manager)
         default_end = 20
         if args.workers is None:
-            args.workers = 10
+            args.workers = 8
         
     if crawler is None:
         print(f"[-] 找不到指定的爬虫: {args.crawler}")
@@ -285,6 +285,16 @@ def main():
     if end_page < start_page:
         print(f"[!] 结束页码不能小于起始页码 ({start_page})，已自动设为 {start_page}")
         end_page = start_page
+    
+    # 交互式询问是否启用断点续爬（仅当未通过命令行指定时）
+    if not args.resume and sys.stdin.isatty():
+        try:
+            val = input("[*] 是否启用断点续爬模式？(y/N, 直接回车默认 N): ").strip().lower()
+            if val in ('y', 'yes'):
+                args.resume = True
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] 运行已取消")
+            sys.exit(0)
     
     is_test = args.test
     if args.crawl:

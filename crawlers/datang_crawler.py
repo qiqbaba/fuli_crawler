@@ -133,15 +133,16 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
 
             # Bug 10 修复：删除外层冗余死代码，代理配置统一在内层循环中按需获取
             # 1. 优先使用 requests
-            for attempt in range(2):
-                # 每次重试重新获取代理配置（确保拿到最新可用代理）
+            for attempt in range(3):
+                # 前两次尝试用代理，第三次降级为直连（避免代理异常导致误判网站不可达）
                 proxies = None
-                from config import get_crawler_proxy, is_proxy_manager_enabled
-                crawler_proxy = get_crawler_proxy()
-                if crawler_proxy:
-                    proxies = {"http": crawler_proxy, "https": crawler_proxy}
-                elif is_proxy_manager_enabled():
-                    proxies = get_proxy_dict()
+                if attempt < 2:
+                    from config import get_crawler_proxy, is_proxy_manager_enabled
+                    crawler_proxy = get_crawler_proxy()
+                    if crawler_proxy:
+                        proxies = {"http": crawler_proxy, "https": crawler_proxy}
+                    elif is_proxy_manager_enabled():
+                        proxies = get_proxy_dict()
                 
                 try:
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
@@ -299,16 +300,17 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
 
             # Bug 10 修复：删除外层冗余死代码，代理配置统一在内层循环中按需获取
             # 1. 优先使用 requests
-            for attempt in range(2):
-                # 每次重试重新获取代理配置（确保拿到最新可用代理）
+            for attempt in range(3):
+                # 前两次尝试用代理，第三次降级为直连（避免代理异常导致误判网站不可达）
                 proxies = None
-                from config import get_crawler_proxy, is_proxy_manager_enabled
-                crawler_proxy = get_crawler_proxy()
-                if crawler_proxy:
-                    proxies = {"http": crawler_proxy, "https": crawler_proxy}
-                elif is_proxy_manager_enabled():
-                    proxies = get_proxy_dict()
-                
+                if attempt < 2:
+                    from config import get_crawler_proxy, is_proxy_manager_enabled
+                    crawler_proxy = get_crawler_proxy()
+                    if crawler_proxy:
+                        proxies = {"http": crawler_proxy, "https": crawler_proxy}
+                    elif is_proxy_manager_enabled():
+                        proxies = get_proxy_dict()
+
                 try:
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
                     if response.status_code == 200:
@@ -428,20 +430,36 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
         if res_format:
             data['resource_format'] = res_format
 
+        # === 提前去重：在 PDF 生成前检查磁力链接是否已存在 ===
+        if self.check_resource_link and magnet_link:
+            existing_links = self.db_manager.filter_existing_resource_links([magnet_link])
+            if magnet_link in existing_links:
+                print(f"[{idx}] 磁力链接已存在，跳过 PDF 生成: {magnet_link[:60]}...")
+                data['source'] = self.source_name
+                return True, data
+
         # 处理 PDF 文件生成
         if self.is_test:
             print("-> 测试模式下跳过保存 PDF 以节省时间")
         else:
-            # 最多重试 3 次，失败时重建 Playwright 资源
+            # 最多重试 4 次（前3次代理，第4次直连），失败时重建 Playwright 资源
             saved_pdf = ""
-            for attempt in range(1, 4):
-                saved_pdf = self._save_pdf(url, date_str, raw_item['title'])
+            for attempt in range(1, 5):
+                no_proxy = (attempt == 4)
+                if no_proxy:
+                    print(f"[-] [PDF-SAVE] 标题: {raw_item['title']} 前3次代理均失败，第4次尝试直连...")
+                    try:
+                        self._destroy_thread_resources()
+                    except Exception:
+                        pass
+                    time.sleep(random.uniform(1.0, 2.0))
+                saved_pdf = self._save_pdf(url, date_str, raw_item['title'], no_proxy=no_proxy)
                 if saved_pdf:
                     print(f"[PDF-SAVE] 标题: {raw_item['title']} -> PDF 路径: {saved_pdf}")
                     break
                 else:
-                    print(f"[-] [PDF-SAVE] 标题: {raw_item['title']} 生成 PDF 失败，进行第 {attempt}/3 次尝试")
-                    if attempt < 3:
+                    print(f"[-] [PDF-SAVE] 标题: {raw_item['title']} 生成 PDF 失败，进行第 {attempt}/4 次尝试")
+                    if attempt < 4:
                         try:
                             self._destroy_thread_resources()
                         except Exception as recreate_err:
@@ -468,6 +486,10 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
         no_early_stop = kwargs.get('no_early_stop', False)
         if no_early_stop:
             print("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
+            self.max_consecutive_existing = None
+            self.max_consecutive_duplicate_pages = None
+        elif not resume:
+            # 非断点续爬模式时，禁用早停（避免数据库已有历史数据时误触发提前退出）
             self.max_consecutive_existing = None
             self.max_consecutive_duplicate_pages = None
 
@@ -560,7 +582,7 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
                     resume_class = None
             
             # 所有板块全部爬取完毕，标记为完全完成
-            if not is_test:
+            if not is_test and resume:
                 self.db_manager.mark_source_completed(self.source_name)
                 print(f"[+] {self.source_name} 所有板块爬取完成，已标记完成状态")
 
