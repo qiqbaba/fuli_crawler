@@ -150,6 +150,7 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
             page.pdf(
                 path=local_path,
                 format="A4",
+                scale=0.75,              # PDF 压缩：缩小至 75%，显著减小文件体积
                 print_background=True,
                 margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"}
             )

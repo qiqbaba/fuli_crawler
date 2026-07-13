@@ -320,6 +320,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
             page.pdf(
                 path=local_path,
                 format="A4",
+                scale=0.75,              # PDF 压缩：缩小至 75%，显著减小文件体积
                 print_background=True,
                 margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
             )
@@ -529,6 +530,8 @@ class SejuCrawler(PlaywrightBaseCrawler):
             if not is_external:
                 if self.is_test:
                     print("-> 测试模式下跳过保存 PDF 以节省时间")
+                elif getattr(self, 'no_pdf', False):
+                    print("-> 启用了 no_pdf 模式，跳过 PDF 渲染和保存")
                 else:
                     import html as html_escape
                     safe_title = html_escape.escape(title)
