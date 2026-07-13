@@ -13,6 +13,7 @@ class PDFRenderConfig:
     def __init__(self, 
                  ad_selectors=None, 
                  ad_block_js=None, 
+                 ad_url_patterns=None,
                  emulate_media=None, 
                  scale=0.75, 
                  margin=None, 
@@ -22,6 +23,8 @@ class PDFRenderConfig:
                  pre_access_url=None):
         self.ad_selectors = ad_selectors or []
         self.ad_block_js = ad_block_js
+        # 广告 URL 正则模式列表——在 goto 前注册路由拦截，从网络层阻止广告资源下载
+        self.ad_url_patterns = ad_url_patterns or []
         self.emulate_media = emulate_media
         self.scale = scale
         # 默认使用 15mm 边距
@@ -111,6 +114,29 @@ class PDFGenerator:
             page.route("**/*", img_router)
         except Exception as route_setup_err:
             print(f"[!] 配置网络拦截路由异常: {route_setup_err}")
+
+    def _setup_ad_blocking_route(self, page, config: PDFRenderConfig):
+        """
+        在网络层拦截广告 URL，在 goto 之前注册路由，阻止广告资源下载。
+        这比事后移除 DOM 更高效——广告资源根本不会下载到浏览器。
+        """
+        if not config.ad_url_patterns:
+            return
+        import re
+        patterns = [re.compile(p, re.I) for p in config.ad_url_patterns]
+        try:
+            def ad_blocker(route):
+                url = route.request.url
+                for pat in patterns:
+                    if pat.search(url):
+                        route.abort()
+                        return
+                route.continue_()
+
+            # 注册在已有路由之后——非广告请求会 continue_ 到后面的处理器
+            page.route("**/*", ad_blocker)
+        except Exception as e:
+            print(f"[!] 注册广告拦截路由异常: {e}")
 
     def _trigger_lazy_load(self, page):
         """滚动触发页面图片懒加载"""
@@ -237,6 +263,9 @@ class PDFGenerator:
                 # 挂载代理拦截
                 if config.need_img_proxy:
                     self._setup_image_proxy(page)
+
+                # 在 goto 前注册广告网络层拦截，阻止广告资源下载到浏览器
+                self._setup_ad_blocking_route(page, config)
 
                 # 前置访问
                 if config.pre_access_url:
