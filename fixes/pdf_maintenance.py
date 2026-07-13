@@ -15,7 +15,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import get_db_path, PDF_BASE_DIR
 from utils import setup_console_utf8
 from utils.metadata_parser import sanitize_filename
-from utils.pdf_utils import parse_filename, clean_title_suffix, to_relative_path
+from utils.pdf_utils import parse_filename, clean_title_suffix, to_relative_path, generate_unique_path
 
 
 def _create_browser_context(p, user_agent=None, viewport=None):
@@ -236,6 +236,7 @@ def run_check_dates(args):
 
 # ===================================================================
 # 功能 2: fix-paths - 将 Unknown_Year 中的 PDF 按数据库日期移到正确年份文件夹
+#          (Phase 1) + 全量扫描修复文件名日期不匹配 (Phase 2)
 # ===================================================================
 def run_fix_names_and_paths(args):
     db_path = get_db_path()
@@ -391,6 +392,136 @@ def run_fix_names_and_paths(args):
         print(f"[+] 物理修复完成！成功移动并更新了 {success_moved} 个文件。")
     else:
         print("[*] 未执行任何操作。")
+
+    # ===================================================================
+    # Phase 2: 全量扫描所有年份文件夹，修复文件名日期与数据库不一致
+    # (从 fix_date_mismatches.py 合并而来)
+    # ===================================================================
+    print("\n" + "=" * 60)
+    print("  Phase 2: 全量检查 - 修复文件名日期与数据库不匹配")
+    print("=" * 60)
+
+    print("[*] 正在全量扫描 PDF 目录 (递归所有年份文件夹)...")
+    all_pdf_files = []
+    for root, dirs, files in os.walk(pdf_base):
+        # 跳过 Unknown_Year (已在 Phase 1 处理)
+        norm_root = os.path.normpath(root)
+        if "Unknown_Year" in norm_root:
+            continue
+        for f in files:
+            if f.lower().endswith(".pdf"):
+                all_pdf_files.append((f, os.path.join(root, f)))
+    total_phase2 = len(all_pdf_files)
+    print(f"[+] 扫描到 {total_phase2} 个 PDF 文件 (不含 Unknown_Year)。")
+
+    # 建立数据库索引
+    print("[*] 正在构建数据库索引...")
+    cursor.execute("SELECT id, title, publish_time, pdf_path, url FROM resources")
+    db_rows = cursor.fetchall()
+
+    db_by_pdf_filename = defaultdict(list)
+    db_by_title = defaultdict(list)
+    for row in db_rows:
+        r_id, r_title, r_publish_time, r_pdf_path, r_url = row
+        pub_time = r_publish_time.strip() if r_publish_time else "Unknown_Date"
+        if not pub_time:
+            pub_time = "Unknown_Date"
+        record = {"id": r_id, "title": r_title, "publish_time": pub_time,
+                  "pdf_path": r_pdf_path, "url": r_url}
+        if r_pdf_path:
+            filename_part = os.path.basename(r_pdf_path.replace('\\', '/')).lower()
+            db_by_pdf_filename[filename_part].append(record)
+        if r_title:
+            db_by_title[r_title.strip()].append(record)
+
+    # 分析不匹配
+    print("[*] 正在比对文件名日期与数据库日期...")
+    mismatches = []
+    for filename, full_path in all_pdf_files:
+        fn_date, fn_title_part = parse_filename(filename)
+        fn_clean_title = clean_title_suffix(fn_title_part)
+
+        matched_records = []
+        if filename.lower() in db_by_pdf_filename:
+            matched_records = db_by_pdf_filename[filename.lower()]
+        if not matched_records:
+            if fn_title_part in db_by_title:
+                matched_records = db_by_title[fn_title_part]
+            elif fn_clean_title in db_by_title:
+                matched_records = db_by_title[fn_clean_title]
+        if not matched_records:
+            continue
+
+        unique_dates = list(set(r["publish_time"] for r in matched_records))
+        if len(unique_dates) > 1:
+            exact_by_path = []
+            for r in matched_records:
+                if r["pdf_path"]:
+                    basename = os.path.basename(r["pdf_path"].replace('\\', '/')).lower()
+                    if basename == filename.lower():
+                        exact_by_path.append(r)
+            if len(exact_by_path) == 1:
+                record = exact_by_path[0]
+                if fn_date != record["publish_time"]:
+                    mismatches.append((filename, full_path, record["publish_time"], [record]))
+        else:
+            db_date = unique_dates[0]
+            cmp_fn_date = fn_date if fn_date else "Unknown_Date"
+            cmp_db_date = db_date if db_date else "Unknown_Date"
+            if cmp_fn_date != cmp_db_date:
+                mismatches.append((filename, full_path, db_date, matched_records))
+
+    print(f"[+] 发现 {len(mismatches)} 个文件名日期与数据库不符的文件。")
+
+    phase2_success = 0
+    if mismatches:
+        print(f"\n{'='*60}")
+        print(f"  Phase 2: 准备处理 {len(mismatches)} 个文件...")
+        for filename, src_path, db_date, matched_records in mismatches:
+            if db_date and date_regex.match(db_date):
+                target_year = db_date.split('-')[0]
+            else:
+                target_year = "Unknown_Year"
+                db_date = "Unknown_Date"
+            _, fn_title_part = parse_filename(filename)
+            new_filename = f"{db_date}_{fn_title_part}.pdf"
+            target_dir = os.path.join(pdf_base, target_year)
+
+            if do_run:
+                if not os.path.exists(target_dir):
+                    os.makedirs(target_dir, exist_ok=True)
+                dst_path = generate_unique_path(target_dir, new_filename)
+            else:
+                dst_path = os.path.join(target_dir, new_filename)
+                if os.path.exists(dst_path):
+                    name, ext = os.path.splitext(new_filename)
+                    dst_path = os.path.join(target_dir, f"{name}_1{ext}")
+
+            matched_ids = [r["id"] for r in matched_records]
+            rel_src = os.path.relpath(src_path, pdf_base)
+            rel_dst = os.path.relpath(dst_path, pdf_base)
+            print(f"  [PLAN] ID: {matched_ids} | pdf/{rel_src} -> pdf/{rel_dst}")
+
+            if do_run:
+                try:
+                    os.rename(src_path, dst_path)
+                    abs_dst_path = os.path.abspath(dst_path)
+                    id_placeholders = ",".join("?" for _ in matched_ids)
+                    cursor.execute(
+                        f"UPDATE resources SET pdf_path = ? WHERE id IN ({id_placeholders})",
+                        [abs_dst_path] + matched_ids
+                    )
+                    phase2_success += 1
+                except Exception as e:
+                    print(f"    [-] 修复失败: {e}")
+
+        if do_run:
+            conn.commit()
+            print(f"\n[+] Phase 2 完成！成功修复 {phase2_success}/{len(mismatches)} 个文件。")
+        else:
+            print(f"\n[*] Phase 2 预览完成，未执行实际操作。")
+    else:
+        print("[+] 所有文件名日期与数据库一致，无需修复。")
 
     conn.close()
     print("\n" + "=" * 60)
@@ -825,12 +956,416 @@ def run_rebuild(args):
 
 
 # ===================================================================
-# 主入口 - 支持子命令: check-dates, fix-paths, redownload, rebuild
+# 功能 5: orphan - 检查多余PDF或恢复多余PDF
+# ===================================================================
+def _move_orphans_to_root(db_path, pdf_base, args):
+    """扫描所有年份子文件夹，将数据库中无对应记录的PDF移到/pdf根目录"""
+    print("=" * 60)
+    print("[*] 检查多余PDF - 将年份文件夹中数据库中无记录的PDF移到/pdf根目录")
+    print(f"[*] 数据库路径: {db_path}")
+    print(f"[*] PDF 根目录: {pdf_base}")
+    print("=" * 60)
+
+    if not os.path.exists(db_path):
+        print(f"[-] 错误: 数据库文件不存在: {db_path}")
+        return
+    if not os.path.exists(pdf_base):
+        print(f"[-] 错误: PDF 根目录不存在: {pdf_base}")
+        return
+
+    # 1. 扫描所有PDF物理文件（排除根目录本身和Unknown_Year）
+    print("[*] 正在扫描PDF目录...")
+    all_pdf_files = {}  # rel_path -> (full_path, filename, year_folder)
+    year_folders = []
+    for item in os.listdir(pdf_base):
+        item_path = os.path.join(pdf_base, item)
+        if os.path.isdir(item_path) and item != "Unknown_Year":
+            year_folders.append(item)
+            for root, dirs, files in os.walk(item_path):
+                for f in files:
+                    if f.lower().endswith(".pdf"):
+                        full_path = os.path.join(root, f)
+                        rel = os.path.relpath(full_path, pdf_base)
+                        all_pdf_files[rel] = (full_path, f, item)
+
+    print(f"[+] 扫描到 {len(year_folders)} 个年份文件夹, 共 {len(all_pdf_files)} 个PDF文件。")
+
+    # 2. 加载数据库记录
+    print("[*] 正在加载数据库中的资源记录...")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, publish_time, pdf_path, url FROM resources")
+    db_rows = cursor.fetchall()
+    print(f"[+] 成功加载 {len(db_rows)} 条数据库记录。")
+
+    # 建立索引: 按pdf_path（相对路径和绝对路径）和文件名
+    db_by_relpath = {}
+    db_by_abspath = {}
+    db_by_filename = defaultdict(list)
+    db_by_title = defaultdict(list)
+    for row in db_rows:
+        r_id, r_title, r_publish_time, r_pdf_path, r_url = row
+        if r_pdf_path:
+            rel = r_pdf_path.replace('\\', '/')
+            db_by_relpath[rel.lower()] = row
+            abs_p = os.path.abspath(os.path.join(pdf_base, '..', rel)).lower()
+            db_by_abspath[abs_p] = row
+            fn = os.path.basename(rel).lower()
+            db_by_filename[fn].append(row)
+        if r_title:
+            db_by_title[r_title.strip()].append(row)
+
+    # 3. 比对，找出孤儿文件
+    print("[*] 正在比对文件与数据库...")
+    matched = []
+    associated = []      # (filename, full_path, year_folder, record_id, title, pub_time)
+    warn_conflict = []   # (filename, full_path, year_folder, record)
+    truly_orphan = []    # (filename, full_path, year_folder)
+    for rel_path, (full_path, filename, year_folder) in all_pdf_files.items():
+        norm_rel = rel_path.replace('\\', '/').lower()
+        norm_abs = full_path.lower()
+        found = False
+
+        # 按相对路径匹配
+        if norm_rel in db_by_relpath:
+            found = True
+        # 按绝对路径匹配
+        if not found and norm_abs in db_by_abspath:
+            found = True
+        # 按文件名匹配
+        if not found:
+            fn_lower = filename.lower()
+            if fn_lower in db_by_filename:
+                # 检查是否有多个匹配，且其中某个的路径与当前文件一致
+                for r in db_by_filename[fn_lower]:
+                    db_p = r[3].replace('\\', '/').lower() if r[3] else ""
+                    if db_p and os.path.basename(db_p) == fn_lower:
+                        found = True
+                        break
+                if not found:
+                    found = True  # 只要有文件名匹配就算
+
+        if found:
+            matched.append((filename, full_path, year_folder))
+            continue
+
+        # 未通过路径/文件名匹配，尝试通过文件名中的资源名在数据库中搜索标题
+        fn_date, fn_title = parse_filename(filename)
+        clean_title = clean_title_suffix(fn_title) if fn_title else ""
+
+        matched_records = []
+        if clean_title and clean_title in db_by_title:
+            matched_records = db_by_title[clean_title]
+        if not matched_records and fn_title and fn_title in db_by_title:
+            matched_records = db_by_title[fn_title]
+
+        if matched_records:
+            # 取第一个匹配的记录
+            record = matched_records[0]
+            r_id, r_title, r_publish_time, r_pdf_path, r_url = record
+
+            if not r_pdf_path:  # pdf_path 为空，可以关联
+                associated.append((filename, full_path, year_folder, r_id, r_title, r_publish_time))
+            else:  # 已有 pdf_path，给出警告
+                warn_conflict.append((filename, full_path, year_folder, record))
+                print(f"[!] 警告: PDF '{filename}' 对应数据库记录(ID={r_id}, 标题='{r_title}') "
+                      f"已存在 pdf_path='{r_pdf_path}'，可能为重复PDF")
+        else:
+            truly_orphan.append((filename, full_path, year_folder))
+
+    # 4. 执行自动关联（将关联到的 pdf_path 写入数据库）
+    if associated:
+        print(f"\n[*] 发现 {len(associated)} 个PDF文件可通过标题匹配到数据库记录（pdf_path 为空），正在自动关联...")
+        for fn, full_path, yf, r_id, r_title, r_publish_time in associated:
+            try:
+                rel_pdf_path = to_relative_path(full_path)
+                cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (rel_pdf_path, r_id))
+                print(f"  [+] 已关联: {yf}/{fn} -> 记录ID={r_id}, 标题='{r_title}', pdf_path='{rel_pdf_path}'")
+            except Exception as e:
+                print(f"  [-] 关联失败 {fn}: {e}")
+        conn.commit()
+        print(f"[+] 自动关联完成。\n")
+
+    # 5. 报告
+    print("\n" + "=" * 60)
+    print(f"  扫描文件总数: {len(all_pdf_files)}")
+    print(f"  数据库有记录(保留): {len(matched)}")
+    print(f"  通过标题自动关联: {len(associated)}")
+    print(f"  标题匹配但已有pdf_path(需人工确认): {len(warn_conflict)}")
+    print(f"  完全无匹配(多余): {len(truly_orphan)}")
+    print("=" * 60)
+
+    all_orphans = []
+    for item in warn_conflict:
+        all_orphans.append({"type": "warn", "filename": item[0], "path": item[1], "folder": item[2], "record": item[3]})
+    for item in truly_orphan:
+        all_orphans.append({"type": "orphan", "filename": item[0], "path": item[1], "folder": item[2]})
+
+    if not all_orphans:
+        print("[*] 未发现多余PDF文件。")
+        conn.close()
+        return
+
+    # 列出标题匹配但已有 pdf_path 的警告文件
+    if warn_conflict:
+        print("\n[!] 以下PDF文件通过标题匹配到数据库记录，但记录已有pdf_path，需人工确认:")
+        for fn, fp, yf, record in warn_conflict:
+            r_id, r_title, r_publish_time, r_pdf_path, r_url = record
+            print(f"  [ID={r_id}] {yf}/{fn}")
+            print(f"       数据库已有 pdf_path: {r_pdf_path}")
+        print()
+
+    # 列出完全无匹配的多余文件
+    if truly_orphan:
+        print("[*] 以下为数据库中完全无对应记录的PDF文件（多余PDF）:")
+        for i, (fn, fp, yf) in enumerate(truly_orphan, 1):
+            print(f"  [{i}] {yf}/{fn}")
+        print()
+
+    # 6. 询问是否移动多余PDF
+    try:
+        confirm = input(f"\n[*] 是否将这 {len(all_orphans)} 个多余/冲突PDF文件移动到 {pdf_base} 根目录？[y/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print("\n[-] 操作已取消")
+        conn.close()
+        return
+
+    if confirm not in ('y', 'yes'):
+        print("[*] 未执行移动操作。")
+        conn.close()
+        return
+
+    # 7. 执行移动
+    print("[*] 正在移动多余PDF文件...")
+    moved_count = 0
+    for item in all_orphans:
+        fn = item["filename"]
+        full_path = item["path"]
+        yf = item["folder"]
+        try:
+            dst_path = os.path.join(pdf_base, fn)
+            # 避免重名
+            if os.path.exists(dst_path):
+                name, ext = os.path.splitext(fn)
+                counter = 1
+                while os.path.exists(dst_path):
+                    dst_path = os.path.join(pdf_base, f"{name}_{counter}{ext}")
+                    counter += 1
+            os.rename(full_path, dst_path)
+            print(f"  [+] 已移动: {yf}/{fn} -> {os.path.basename(dst_path)}")
+            moved_count += 1
+        except Exception as e:
+            print(f"  [-] 移动失败 {fn}: {e}")
+
+    print(f"\n[+] 成功移动 {moved_count}/{len(all_orphans)} 个文件到 {pdf_base} 根目录。")
+    conn.close()
+
+
+def _restore_orphans_from_root(db_path, pdf_base, args):
+    """将/pdf根目录下的PDF文件移回对应年份文件夹"""
+    print("=" * 60)
+    print("[*] 恢复多余PDF - 将/pdf根目录下的PDF移回对应年份文件夹")
+    print(f"[*] 数据库路径: {db_path}")
+    print(f"[*] PDF 根目录: {pdf_base}")
+    print("=" * 60)
+
+    if not os.path.exists(db_path):
+        print(f"[-] 错误: 数据库文件不存在: {db_path}")
+        return
+    if not os.path.exists(pdf_base):
+        print(f"[-] 错误: PDF 根目录不存在: {pdf_base}")
+        return
+
+    # 1. 扫描/pdf根目录下的PDF文件
+    print("[*] 正在扫描/pdf根目录下的PDF文件...")
+    root_pdfs = []
+    for f in os.listdir(pdf_base):
+        if f.lower().endswith(".pdf"):
+            full_path = os.path.join(pdf_base, f)
+            if os.path.isfile(full_path):
+                root_pdfs.append((f, full_path))
+
+    if not root_pdfs:
+        print("[*] /pdf根目录下没有PDF文件。")
+        return
+
+    print(f"[+] 扫描到 {len(root_pdfs)} 个PDF文件。")
+
+    # 2. 加载数据库记录
+    print("[*] 正在加载数据库中的资源记录...")
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, publish_time, pdf_path FROM resources")
+    db_rows = cursor.fetchall()
+    print(f"[+] 成功加载 {len(db_rows)} 条数据库记录。")
+
+    # 建立索引
+    db_by_title = defaultdict(list)
+    db_by_filename = defaultdict(list)
+    for row in db_rows:
+        r_id, r_title, r_publish_time, r_pdf_path = row
+        if r_pdf_path:
+            fn = os.path.basename(r_pdf_path.replace('\\', '/')).lower()
+            db_by_filename[fn].append(row)
+        if r_title:
+            db_by_title[r_title.strip()].append(row)
+
+    # 3. 对每个根目录PDF，判断应放入哪个年份文件夹
+    print("[*] 正在分析PDF文件归属...")
+    restore_plans = []  # (src_path, dst_path, filename, year)
+    no_match = []
+    skipped = []
+
+    for filename, full_path in root_pdfs:
+        # 尝试从文件名解析日期
+        fn_date, fn_title = parse_filename(filename)
+        clean_title = clean_title_suffix(fn_title) if fn_title else None
+
+        target_year = None
+        target_date = None
+
+        if fn_date and date_regex.match(fn_date):
+            # 文件名已有日期，直接使用
+            target_date = fn_date
+            target_year = fn_date.split('-')[0]
+        else:
+            # 尝试从数据库查找
+            matched_records = []
+
+            # 按文件名匹配
+            if filename.lower() in db_by_filename:
+                matched_records = db_by_filename[filename.lower()]
+
+            # 按标题匹配
+            if not matched_records and fn_title:
+                if fn_title in db_by_title:
+                    matched_records = db_by_title[fn_title]
+                elif clean_title and clean_title in db_by_title:
+                    matched_records = db_by_title[clean_title]
+
+            if matched_records:
+                # 取第一个有有效日期的记录
+                for r in matched_records:
+                    _, _, pub_time, _ = r
+                    if pub_time and date_regex.match(pub_time):
+                        target_date = pub_time
+                        target_year = pub_time.split('-')[0]
+                        break
+                if not target_year and matched_records:
+                    _, _, pub_time, _ = matched_records[0]
+                    if pub_time and date_regex.match(pub_time):
+                        target_date = pub_time
+                        target_year = pub_time.split('-')[0]
+
+        if target_year and target_year.isdigit():
+            year_dir = os.path.join(pdf_base, target_year)
+            new_filename = filename
+            if fn_date is None and target_date:
+                # 文件名没有日期前缀，加上
+                new_filename = f"{target_date}_{fn_title or filename[:-4]}.pdf"
+            dst_path = os.path.join(year_dir, new_filename)
+            # 避免重名
+            if os.path.exists(dst_path):
+                name, ext = os.path.splitext(new_filename)
+                counter = 1
+                while os.path.exists(dst_path):
+                    dst_path = os.path.join(year_dir, f"{name}_{counter}{ext}")
+                    counter += 1
+            restore_plans.append((full_path, dst_path, filename, target_year))
+        elif fn_date == "Unknown_Date":
+            skipped.append((filename, "文件中日期为 Unknown_Date，无法确定年份"))
+            no_match.append((filename, "文件中日期为 Unknown_Date"))
+        else:
+            no_match.append((filename, "无法从文件名或数据库确定日期"))
+
+    # 4. 报告
+    print("\n" + "=" * 60)
+    print(f"  /pdf根目录文件总数: {len(root_pdfs)}")
+    print(f"  可恢复(有对应年份): {len(restore_plans)}")
+    print(f"  无法确定归属: {len(no_match)}")
+    print("=" * 60)
+
+    if restore_plans:
+        print("\n[*] 以下文件可恢复到对应年份文件夹:")
+        for src, dst, fn, year in restore_plans:
+            print(f"  {fn} -> {year}/{os.path.basename(dst)}")
+
+    if no_match:
+        print("\n[!] 以下文件无法确定归属:")
+        for fn, reason in no_match:
+            print(f"  {fn} ({reason})")
+
+    if not restore_plans:
+        print("[*] 没有可恢复的文件。")
+        conn.close()
+        return
+
+    # 5. 询问是否移动
+    try:
+        confirm = input(f"\n[*] 是否将这 {len(restore_plans)} 个文件移回对应年份文件夹？[y/N]: ").strip().lower()
+    except (KeyboardInterrupt, EOFError):
+        print("\n[-] 操作已取消")
+        conn.close()
+        return
+
+    if confirm not in ('y', 'yes'):
+        print("[*] 未执行移动操作。")
+        conn.close()
+        return
+
+    # 6. 执行移动
+    print("[*] 正在移动文件...")
+    moved_count = 0
+    for src_path, dst_path, filename, year in restore_plans:
+        try:
+            dst_dir = os.path.dirname(dst_path)
+            if not os.path.exists(dst_dir):
+                os.makedirs(dst_dir, exist_ok=True)
+            os.rename(src_path, dst_path)
+            print(f"  [+] 已移动: {filename} -> {year}/{os.path.basename(dst_path)}")
+            moved_count += 1
+        except Exception as e:
+            print(f"  [-] 移动失败 {filename}: {e}")
+
+    print(f"\n[+] 成功移动 {moved_count}/{len(restore_plans)} 个文件。")
+    conn.close()
+
+
+def run_orphan(args):
+    """多余PDF管理 - 检查多余PDF或恢复多余PDF"""
+    db_path = get_db_path()
+    pdf_base = os.path.abspath(PDF_BASE_DIR)
+
+    print("=" * 60)
+    print("                 多余PDF管理工具")
+    print("=" * 60)
+    print("  1. 检查多余PDF - 将年份文件夹中数据库中无记录的PDF移到/pdf根目录")
+    print("  2. 恢复多余PDF - 将/pdf根目录下的PDF移回对应年份文件夹")
+    print("=" * 60)
+
+    try:
+        choice = input("请输入序号 [1/2] (直接回车默认 1): ").strip()
+        if not choice:
+            choice = "1"
+    except (KeyboardInterrupt, EOFError):
+        print("\n[-] 运行已取消")
+        return
+
+    if choice == "1":
+        _move_orphans_to_root(db_path, pdf_base, args)
+    elif choice == "2":
+        _restore_orphans_from_root(db_path, pdf_base, args)
+    else:
+        print("[-] 无效的序号。")
+
+
+# ===================================================================
+# 主入口 - 支持子命令: check-dates, fix-paths, redownload, rebuild, orphan
 # ===================================================================
 def main():
     setup_console_utf8()
     parser = argparse.ArgumentParser(
-        description="PDF 维护工具合集 - 检查日期、修正路径、重新下载小文件、重建缺失文件")
+        description="PDF 维护工具合集 - 检查日期、修正路径、重新下载小文件、重建缺失文件、管理多余PDF")
     subparsers = parser.add_subparsers(dest="command", help="可用的子命令")
 
     # check-dates
@@ -838,7 +1373,7 @@ def main():
     p_check.set_defaults(func=run_check_dates)
 
     # fix-paths
-    p_fix = subparsers.add_parser("fix-paths", help="将 Unknown_Year 中的 PDF 按数据库日期移到正确年份文件夹")
+    p_fix = subparsers.add_parser("fix-paths", help="将 Unknown_Year 中的 PDF 按数据库日期移到正确年份文件夹 + 全量检查修复文件名日期不匹配")
     p_fix.add_argument("--run", action="store_true", default=False,
                        help="正式运行修复，不加此参数时仅进行预览 (Dry Run)")
     p_fix.add_argument("--verbose", "-v", action="store_true", default=False,
@@ -861,25 +1396,35 @@ def main():
                            help="仅执行路径相对化和纠偏，不重新下载物理缺失的文件")
     p_rebuild.set_defaults(func=run_rebuild)
 
+    # orphan
+    p_orphan = subparsers.add_parser("orphan", help="检查多余PDF或将多余PDF移回原处")
+    p_orphan.set_defaults(func=run_orphan)
+
     args = parser.parse_args()
 
     if args.command is None:
-        # 无子命令时显示交互菜单
+        # 无子命令时，补充所有子命令参数的默认值
+        for attr in ('run', 'verbose', 'skip_download'):
+            if not hasattr(args, attr):
+                setattr(args, attr, False)
+
+        # 显示交互菜单
         print("=" * 60)
         print("                  PDF 维护工具合集")
         print("=" * 60)
         print("  请选择要运行的功能：")
         print()
         print("    1. check-dates  - 检查 PDF 文件与数据库日期的匹配情况并生成报告")
-        print("    2. fix-paths    - 将 Unknown_Year 中的 PDF 移到正确年份文件夹")
+        print("    2. fix-paths    - 将 Unknown_Year 中的 PDF 移到正确年份文件夹 + 全量修复文件名日期不匹配")
         print("    3. redownload   - 重新下载体积小于 20KB 的 PDF 文件")
         print("    4. rebuild      - 重建缺失的 PDF 文件并路径相对化")
+        print("    5. orphan       - 检查多余PDF或将多余PDF移回原处")
         print()
         print("    0. 退出")
         print("=" * 60)
 
         try:
-            choice = input("请输入序号 [0-4] (直接回车默认 1): ").strip()
+            choice = input("请输入序号 [0-5] (直接回车默认 1): ").strip()
             if not choice:
                 choice = "1"
         except (KeyboardInterrupt, EOFError):
@@ -894,6 +1439,8 @@ def main():
             run_redownload_small_pdfs(args)
         elif choice == "4":
             run_rebuild(args)
+        elif choice == "5":
+            run_orphan(args)
         elif choice == "0":
             print("[*] 已退出。")
             sys.exit(0)
