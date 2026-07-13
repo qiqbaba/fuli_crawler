@@ -25,8 +25,8 @@ async def _check_tcp_port(ip: str, port: int, timeout: float = 1.0) -> bool:
             asyncio.open_connection(ip, port),
             timeout=timeout
         )
-        writer.close()
         try:
+            writer.close()
             await writer.wait_closed()
         except Exception:
             pass
@@ -162,9 +162,6 @@ class ProxyVerifier:
                                                 working.append(proxy)
                                                 if len(working) >= target_count:
                                                     stop_event.set()
-                                                    # 立即取消所有 Worker 任务，终止剩余在途请求
-                                                    for w in workers:
-                                                        w.cancel()
                                         else:
                                             proxy["fail_count"] = proxy.get("fail_count", 0) + 1
                                             proxy["score"] = proxy.get("success_count", 0) - 3 * proxy["fail_count"]
