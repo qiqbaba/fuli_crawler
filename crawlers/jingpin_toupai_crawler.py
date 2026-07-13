@@ -32,6 +32,27 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         self._cooldown_seconds = 60
         self._domain_lock = threading.Lock()
 
+        from utils.pdf_generator import PDFRenderConfig
+        self.pdf_config = PDFRenderConfig(
+            emulate_media="screen",
+            ad_selectors=[
+                'div[style*="height:60px"]', 
+                'div[style*="height:55px"]', 
+                'div[style*="height:70px"]',
+                '#bottom_float',
+                '.layui-layer',
+                '.layui-layer-shade',
+                '[id*="layui-layer"]',
+                '.modal',
+                '.modal-backdrop'
+            ],
+            ad_block_js="""() => {
+                document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+                if (document.body) document.body.style.overflow = 'auto';
+                if (document.documentElement) document.documentElement.style.overflow = 'auto';
+            }"""
+        )
+
     def _build_headers(self, referer=None):
         """构造浏览器请求头，绕过 TLS 指纹检测"""
         ua = random.choice(USER_AGENTS)
@@ -54,77 +75,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             headers["Referer"] = self.base_domain + "/"
         return headers
 
-    def _save_pdf(self, target_url, publish_date, title):
-        """Playwright 打开详情页并渲染 PDF（去广告）"""
-        if getattr(self, 'no_pdf', False):
-            return ""
-        if not publish_date or publish_date == "Unknown_Date":
-            publish_date = "Unknown_Date"
-
-        local_path = self._get_pdf_local_tmp_path(publish_date, title)
-        page = None
-        try:
-            _, _, context = self._get_thread_resources()
-            page = context.new_page()
-
-            page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
-            time.sleep(5.0)
-            
-            # 清理详情页广告、漂浮弹窗、统计 iframe 及无关的 DOM 节点
-            try:
-                page.evaluate("""
-                    () => {
-                        // 移除所有的 iframe 广告
-                        document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
-                        
-                        // 常见广告/统计节点清除
-                        const selectors = [
-                            'div[style*="height:60px"]', 
-                            'div[style*="height:55px"]', 
-                            'div[style*="height:70px"]',
-                            '#bottom_float',
-                            '.layui-layer',
-                            '.layui-layer-shade',
-                            '[id*="layui-layer"]',
-                            '.modal',
-                            '.modal-backdrop'
-                        ];
-                        selectors.forEach(sel => {
-                            document.querySelectorAll(sel).forEach(el => el.remove());
-                        });
-
-                        // 强行把页面溢出滚动条打开
-                        if (document.body) document.body.style.overflow = 'auto';
-                        if (document.documentElement) document.documentElement.style.overflow = 'auto';
-                    }
-                """)
-            except Exception as ad_err:
-                print(f"[-] 屏蔽广告脚本执行失败: {ad_err}")
-
-            # 模拟 screen 排版，以保证 PDF 完全展现网页原本样貌
-            try:
-                page.emulate_media(media="screen")
-            except Exception:
-                pass
-
-            page.pdf(
-                path=local_path,
-                format="A4",
-                scale=0.75,              # PDF 压缩：缩小至 75%，显著减小文件体积
-                print_background=True,
-                margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"}
-            )
-            page.close()
-        except Exception as e:
-            print(f"[-] PDF 生成失败: {e}")
-            if page:
-                try:
-                    page.close()
-                except Exception:
-                    pass
-            return None
-
-        return self._upload_or_return_pdf_path(local_path, publish_date)
+    # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
     def fetch_list_page(self, page_num):
         """拉取列表页 HTML 并解码（解密全页倒序 Base64）"""

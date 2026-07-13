@@ -36,6 +36,30 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
         # 尝试从本地缓存加载之前发现的最新域名
         self._load_domains_from_cache()
 
+        from utils.pdf_generator import PDFRenderConfig
+        self.pdf_config = PDFRenderConfig(
+            ad_block_js="""() => {
+                const breadcrumbs = document.querySelector('.breadcrumbs');
+                if (breadcrumbs) {
+                    let prev = breadcrumbs.previousElementSibling;
+                    while (prev) {
+                        if (prev.classList.contains('gs-isgood') && 
+                            !prev.textContent.includes('永久地址') && 
+                            !prev.textContent.includes('永久')) {
+                            prev.remove();
+                        }
+                        prev = prev.previousElementSibling;
+                    }
+                }
+                const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
+                adDivs.forEach(div => div.remove());
+                const bottomFloat = document.getElementById('bottom_float');
+                if (bottomFloat) {
+                    bottomFloat.remove();
+                }
+            }"""
+        )
+
     def _build_headers(self, referer=None):
         """构造完整的浏览器请求头，模拟真实浏览器行为"""
         ua = random.choice(USER_AGENTS)
@@ -95,80 +119,6 @@ class DatangCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
                 print(f"[DEBUG] 初始化代理管理器时发生异常: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
-
-
-
-    def _save_pdf(self, target_url, publish_date, title):
-        """直接用 Playwright 打开详情页并保存为 PDF"""
-        if getattr(self, 'no_pdf', False):
-            return ""
-        # 确保日期有效，避免生成 Unknown_Date 文件名
-        if not publish_date or publish_date == "Unknown_Date":
-            from datetime import datetime
-            publish_date = datetime.now().strftime("%Y-%m-%d")
-            
-        local_path = self._get_pdf_local_tmp_path(publish_date, title)
-        page = None
-        try:
-            _, _, context = self._get_thread_resources()
-            page = context.new_page()
-            page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
-            time.sleep(3.0)
-            
-            # 屏蔽广告
-            try:
-                page.evaluate("""
-                    () => {
-                        // 1. 移除面包屑导航上方的广告容器
-                        const breadcrumbs = document.querySelector('.breadcrumbs');
-                        if (breadcrumbs) {
-                            let prev = breadcrumbs.previousElementSibling;
-                            while (prev) {
-                                if (prev.classList.contains('gs-isgood') && 
-                                    !prev.textContent.includes('永久地址') && 
-                                    !prev.textContent.includes('永久')) {
-                                    prev.remove();
-                                }
-                                prev = prev.previousElementSibling;
-                            }
-                        }
-                        
-                        // 2. 移除所有固定高度的广告容器
-                        const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
-                        adDivs.forEach(div => div.remove());
-                        
-                        // 3. 移除底部悬浮广告
-                        const bottomFloat = document.getElementById('bottom_float');
-                        if (bottomFloat) {
-                            bottomFloat.remove();
-                        }
-                    }
-                """)
-            except Exception as ad_err:
-                print(f"[-] 屏蔽广告脚本执行失败: {ad_err}")
-
-            page.pdf(
-                path=local_path,
-                format="A4",
-                scale=0.75,              # PDF 压缩：缩小至 75%，显著减小文件体积
-                print_background=True,
-                margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"}
-            )
-            page.close()
-        except Exception as e:
-            print(f"[-] PDF 生成失败: {e}")
-            if page:
-                try:
-                    page.close()
-                except Exception:
-                    pass
-            return None
-
-
-        return self._upload_or_return_pdf_path(local_path, publish_date)
-
-
-
     def fetch_list_page(self, page_num, retry_with_main=True):
         """请求列表页并解密 HTML，支持域名轮换重试和自动域名发现"""
         if not self.domains:

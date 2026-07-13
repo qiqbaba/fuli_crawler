@@ -25,6 +25,25 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         self.max_consecutive_existing = 20
         self.max_consecutive_duplicate_pages = 3
 
+        from utils.pdf_generator import PDFRenderConfig
+        self.pdf_config = PDFRenderConfig(
+            need_img_proxy=True,
+            pre_access_url="https://gcbt.net/",
+            referer="https://gcbt.net/",
+            need_lazy_scroll=True,
+            emulate_media="screen",
+            ad_selectors=[
+                '.layui-layer', '.layui-layer-shade',
+                '.modal', '.modal-backdrop',
+                '.swal-overlay', '.swal-modal', '.swal2-container',
+                '[id*="layui-layer"]'
+            ],
+            ad_block_js="""() => {
+                if (document.body) document.body.style.overflow = 'auto';
+                if (document.documentElement) document.documentElement.style.overflow = 'auto';
+            }"""
+        )
+
 
     def get_list_url(self, page_num):
         """获取指定页码的列表页 URL"""
@@ -101,179 +120,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
 
 
 
-    def _save_pdf(self, target_url, publish_date, title):
-        """直接用 Playwright 打开详情页并保存为 PDF"""
-        if getattr(self, 'no_pdf', False):
-            return ""
-        if not publish_date or publish_date == "Unknown_Date":
-            from datetime import datetime
-            publish_date = datetime.now().strftime("%Y-%m-%d")
-            
-        local_path = self._get_pdf_local_tmp_path(publish_date, title)
-        page = None
-        try:
-            _, _, context = self._get_thread_resources()
-            page = context.new_page()
-            
-            # 在网络层添加图片代理请求拦截器，在 Python 后台下载图片喂给浏览器以绕过防盗链和 GFW
-            try:
-                def img_router(route):
-                    req_url = route.request.url
-                    if "plugin/img_layer/data/" in req_url and "?src=" in req_url:
-                        try:
-                            import urllib.parse
-                            real_url = urllib.parse.unquote(req_url.split("?src=")[1])
-                            
-                            # 获取爬虫全局配置代理
-                            from config import get_crawler_proxy
-                            p_url = get_crawler_proxy()
-                            p_dict = {"http": p_url, "https": p_url} if p_url else None
-                            
-                            headers = {
-                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
-                            }
-                            
-                            import requests
-                            r = requests.get(real_url, headers=headers, proxies=p_dict, timeout=15)
-                            if r.status_code == 200:
-                                route.fulfill(
-                                    status=200,
-                                    content_type=r.headers.get("Content-Type", "image/jpeg"),
-                                    body=r.content
-                                )
-                                return
-                        except Exception as route_err:
-                            print(f"[!] 路由代理图片下载失败: {route_err}")
-                    route.continue_()
-
-                page.route("**/*", img_router)
-            except Exception as route_setup_err:
-                print(f"[!] 配置网络拦截路由异常: {route_setup_err}")
-            
-            # 1. 先访问首页以建立 Cookie/Session 并绕过重定向检测
-            try:
-                page.goto("https://gcbt.net/", timeout=20000, wait_until="domcontentloaded")
-                time.sleep(1.5)
-            except Exception as e_home:
-                print(f"[!] 详情页前置访问首页异常 (不影响后续): {e_home}")
-                
-            # 2. 携带 Referer 访问真正的详情页
-            page.goto(target_url, referer="https://gcbt.net/", timeout=30000, wait_until="domcontentloaded")
-            time.sleep(3.0)
-
-            # 2.5 强行模拟屏幕媒体排版，确保以网页真实外观进行 PDF 打印而绝不缺漏样式
-            try:
-                page.emulate_media(media="screen")
-            except Exception as media_err:
-                print(f"[!] 模拟 screen 媒体状态异常: {media_err}")
-
-            # 自动滚动整页以触发所有图片的懒加载（Lazy Load），并替换可能存在的懒加载属性
-            try:
-                page.evaluate("""
-                    async () => {
-                        // 1. 替换页面上可能存在的懒加载图片属性
-                        const replaceLazyAttrs = () => {
-                            const images = document.querySelectorAll('img');
-                            const lazyAttrs = ['data-src', 'data-original', 'data-lazy-src', 'data-src-webp', 'data-cfsrc', 'lazy-src'];
-                            images.forEach(img => {
-                                for (const attr of lazyAttrs) {
-                                    const val = img.getAttribute(attr);
-                                    if (val) {
-                                        img.src = val;
-                                        break;
-                                    }
-                                }
-                            });
-                        };
-                        replaceLazyAttrs();
-
-                        // 2. 逐步滚动到底部触发懒加载
-                        await new Promise((resolve) => {
-                            let totalHeight = 0;
-                            const distance = 600;
-                            const timer = setInterval(() => {
-                                const scrollHeight = document.body.scrollHeight;
-                                window.scrollBy(0, distance);
-                                totalHeight += distance;
-                                replaceLazyAttrs(); // 滚动时再次替换，以防动态生成
-
-                                if (totalHeight >= scrollHeight || window.scrollY + window.innerHeight >= scrollHeight) {
-                                    clearInterval(timer);
-                                    resolve();
-                                }
-                            }, 150);
-                        });
-
-                        // 3. 滚回顶部，准备打印PDF
-                        window.scrollTo(0, 0);
-                        await new Promise(r => setTimeout(r, 500));
-
-                        // 4. 等待所有图片完全加载
-                        const images = Array.from(document.querySelectorAll('img'));
-                        const imagePromises = images.map(img => {
-                            if (img.complete) return Promise.resolve();
-                            return new Promise(resolve => {
-                                img.addEventListener('load', resolve);
-                                img.addEventListener('error', resolve); // 即使加载失败也 resolve，避免卡死
-                            });
-                        });
-                        await Promise.all(imagePromises);
-                    }
-                """)
-                # print(f"[+] 线程 {threading.get_ident()} 完成页面全滚动及所有图片加载等待")
-            except Exception as scroll_err:
-                print(f"[!] 页面滚动或等待图片加载异常: {scroll_err}")
-
-            # 尽量等待网络静止以防有其它动态资源在加载
-            try:
-                page.wait_for_load_state(state="networkidle", timeout=5000)
-            except Exception:
-                pass
-
-            # 3. 动态清除阻挡视线的“收藏发布页”弹窗及半透明黑色遮罩层
-            try:
-                page.evaluate("""
-                    () => {
-                        const selectors = [
-                            '.layui-layer', '.layui-layer-shade',
-                            '.modal', '.modal-backdrop',
-                            '.swal-overlay', '.swal-modal', '.swal2-container',
-                            '[id*="layui-layer"]'
-                        ];
-                        selectors.forEach(sel => {
-                            const elms = document.querySelectorAll(sel);
-                            elms.forEach(el => el.remove());
-                        });
-                        
-                        // 恢复滚动条
-                        if (document.body) document.body.style.overflow = 'auto';
-                        if (document.documentElement) document.documentElement.style.overflow = 'auto';
-                    }
-                """)
-            except Exception as eval_err:
-                print(f"[-] 清理弹窗脚本执行异常: {eval_err}")
-
-
-
-            page.pdf(
-                path=local_path,
-                format="A4",
-                scale=0.75,              # PDF 压缩：缩小至 75%，显著减小文件体积
-                print_background=True,
-                margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"}
-            )
-            page.close()
-        except Exception as e:
-            print(f"[-] PDF 生成失败: {e}")
-            if page:
-                try:
-                    page.close()
-                except Exception:
-                    pass
-            return ""
-
-        return self._upload_or_return_pdf_path(local_path, publish_date)
+    # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
     def process_sub_page_if_needed(self, sub_url, idx):
         """处理详情页并转换数据与 PDF"""

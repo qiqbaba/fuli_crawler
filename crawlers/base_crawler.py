@@ -3,6 +3,7 @@ import json
 import time
 import random
 import threading
+from utils.pdf_generator import PDFGenerator, PDFRenderConfig
 from utils.date_parser import parse_date
 from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak_link
 from utils.lang_filter import is_japanese
@@ -460,6 +461,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
         self._active_resources = []
         self._resources_lock = threading.Lock()
         self.r2_uploader = None
+        self.pdf_generator = None
         self.use_persistent_context = False
         # Perf 1: 是否跨页面复用浏览器，避免每页销毁重建
         self._reuse_browser = True
@@ -481,6 +483,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
         from utils.r2_uploader import get_r2_uploader
         from config import is_local_mode
         self.r2_uploader = get_r2_uploader()
+        self.pdf_generator = PDFGenerator(self.r2_uploader)
         if self.r2_uploader:
             print(f"[*] Cloudflare R2 上传器已启用 ({self.source_name})", flush=True)
         else:
@@ -750,46 +753,36 @@ class PlaywrightBaseCrawler(BaseCrawler):
 
     def _get_pdf_local_tmp_path(self, publish_date, title):
         """获取 PDF 本地临时/持久化保存路径"""
-        if self.r2_uploader:
-            base = f"/tmp/{self.source_name}_pdfs"
-        else:
-            from config import PDF_BASE_DIR
-            base = PDF_BASE_DIR
-
-        year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
-        save_dir = os.path.join(base, year)
-        os.makedirs(save_dir, exist_ok=True)
-
-        from utils.metadata_parser import sanitize_filename
-        safe_title = sanitize_filename(title)
-        base_filename = f"{publish_date}_{safe_title}_{self.source_name}"
-        pdf_path = os.path.join(save_dir, f"{base_filename}.pdf")
-
-        counter = 1
-        while os.path.exists(pdf_path):
-            pdf_path = os.path.join(save_dir, f"{base_filename}_{counter}.pdf")
-            counter += 1
-
-        return pdf_path
+        if not self.pdf_generator:
+            self.pdf_generator = PDFGenerator(self.r2_uploader)
+        return self.pdf_generator._get_pdf_local_tmp_path(publish_date, title, self.source_name)
 
     def _upload_or_return_pdf_path(self, local_path, publish_date):
         """统一的 PDF R2 上传与相对路径返回逻辑"""
-        if not local_path or not os.path.exists(local_path):
-            return None
-        if self.r2_uploader:
-            year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
-            remote_key = f"pdfs/{year}/{os.path.basename(local_path)}"
-            result = self.r2_uploader.upload_pdf(local_path, remote_key)
-            if os.path.exists(local_path):
-                try:
-                    os.remove(local_path)
-                except Exception:
-                    pass
-            return result
-        else:
-            year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
-            rel_path = f"pdf/{year}/{os.path.basename(local_path)}"
-            return rel_path.replace('\\', '/')
+        if not self.pdf_generator:
+            self.pdf_generator = PDFGenerator(self.r2_uploader)
+        return self.pdf_generator._upload_or_return_pdf_path(local_path, publish_date, self.source_name)
+
+    def _save_pdf(self, page_or_url, publish_date, title):
+        """Playwright 统一保存 PDF 的向后兼容包装方法"""
+        if getattr(self, 'no_pdf', False):
+            return ""
+        if not self.pdf_generator:
+            self.pdf_generator = PDFGenerator(self.r2_uploader)
+        
+        config = getattr(self, "pdf_config", None)
+        if not config:
+            config = PDFRenderConfig()
+            
+        _, _, context = self._get_thread_resources()
+        return self.pdf_generator.generate_pdf(
+            page_or_context=context,
+            target_url_or_page=page_or_url,
+            publish_date=publish_date,
+            title=title,
+            source_name=self.source_name,
+            config=config
+        )
 
 
 class DomainRotationMixin:

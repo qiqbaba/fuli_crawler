@@ -1,4 +1,4 @@
-﻿import os
+import os
 import re
 import sys
 import sqlite3
@@ -629,21 +629,21 @@ def run_rebuild(args):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id, title, pdf_path, url, publish_time FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
+    cursor.execute("SELECT id, title, pdf_path, url, publish_time, source FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
     rows = cursor.fetchall()
     print(f"[*] 数据库中含有 pdf_path 的总记录数: {len(rows)}")
 
     needs_update_to_relative = []
     missing_records = []
 
-    for r_id, title, pdf_path, url, publish_time in rows:
+    for r_id, title, pdf_path, url, publish_time, source in rows:
         rel_path = to_relative_path(pdf_path)
         norm_abs_path = os.path.abspath(os.path.join(project_dir, rel_path))
         if norm_abs_path.lower() in phys_files:
             if pdf_path != rel_path:
                 needs_update_to_relative.append((r_id, rel_path))
         else:
-            missing_records.append((r_id, title, url, publish_time))
+            missing_records.append((r_id, title, url, publish_time, source))
 
     print(f"[*] 需要转换为相对路径（且物理文件已存在）的记录数: {len(needs_update_to_relative)}")
     print(f"[*] 真正物理缺失（本地无文件）的记录数: {len(missing_records)}")
@@ -680,51 +680,132 @@ def run_rebuild(args):
             print("[*] 提示: 预览模式下未下载任何文件。")
             print("[*] 若要正式开始修复，请运行: python fixes/pdf_maintenance.py rebuild --run")
         else:
-            print(f"\n[*] 准备拉起 Playwright 重新下载 {len(missing_records)} 个缺失的 PDF...")
+            print(f"\n[*] 准备拉起 Playwright 重新下载 {len(missing_records)} 个缺失 of PDF...")
             success_download = 0
             fail_download = 0
             not_found_download = 0
 
             try:
+                from utils.pdf_generator import PDFGenerator, PDFRenderConfig
+                
+                CONFIG_MAP = {
+                    "seju": PDFRenderConfig(
+                        margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
+                    ),
+                    "gcbt": PDFRenderConfig(
+                        need_img_proxy=True,
+                        pre_access_url="https://gcbt.net/",
+                        referer="https://gcbt.net/",
+                        need_lazy_scroll=True,
+                        emulate_media="screen",
+                        ad_selectors=[
+                            '.layui-layer', '.layui-layer-shade',
+                            '.modal', '.modal-backdrop',
+                            '.swal-overlay', '.swal-modal', '.swal2-container',
+                            '[id*="layui-layer"]'
+                        ],
+                        ad_block_js="""() => {
+                            if (document.body) document.body.style.overflow = 'auto';
+                            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+                        }"""
+                    ),
+                    "madou": PDFRenderConfig(
+                        ad_selectors=[
+                            'div[style*="height:60px"]',
+                            'div[style*="height:55px"]',
+                            'div[style*="height:70px"]',
+                            '#bottom_float'
+                        ]
+                    ),
+                    "datang": PDFRenderConfig(
+                        ad_block_js="""() => {
+                            const breadcrumbs = document.querySelector('.breadcrumbs');
+                            if (breadcrumbs) {
+                                let prev = breadcrumbs.previousElementSibling;
+                                while (prev) {
+                                    if (prev.classList.contains('gs-isgood') && 
+                                        !prev.textContent.includes('永久地址') && 
+                                        !prev.textContent.includes('永久')) {
+                                        prev.remove();
+                                    }
+                                    prev = prev.previousElementSibling;
+                                }
+                            }
+                            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
+                            adDivs.forEach(div => div.remove());
+                            const bottomFloat = document.getElementById('bottom_float');
+                            if (bottomFloat) {
+                                bottomFloat.remove();
+                            }
+                        }"""
+                    ),
+                    "jingpin_toupai": PDFRenderConfig(
+                        emulate_media="screen",
+                        ad_selectors=[
+                            'div[style*="height:60px"]', 
+                            'div[style*="height:55px"]', 
+                            'div[style*="height:70px"]',
+                            '#bottom_float',
+                            '.layui-layer',
+                            '.layui-layer-shade',
+                            '[id*="layui-layer"]',
+                            '.modal',
+                            '.modal-backdrop'
+                        ],
+                        ad_block_js="""() => {
+                            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+                            if (document.body) document.body.style.overflow = 'auto';
+                            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+                        }"""
+                    )
+                }
+
+                generator = PDFGenerator(r2_uploader=None)
+
                 with sync_playwright() as p:
                     browser, context = _create_browser_context(p)
-                    for idx, (r_id, title, url, publish_time) in enumerate(missing_records, 1):
-                        year = publish_time.split('-')[0] if (publish_time and '-' in publish_time) else "Unknown_Year"
-                        save_dir = os.path.join(base_dir, year)
-                        os.makedirs(save_dir, exist_ok=True)
-
-                        safe_title = sanitize_filename(title)
-                        pub_date = publish_time if publish_time else "Unknown_Date"
-                        base_filename = f"{pub_date}_{safe_title}"
-                        pdf_path = os.path.join(save_dir, f"{base_filename}.pdf")
-
-                        counter = 1
-                        while os.path.exists(pdf_path):
-                            pdf_path = os.path.join(save_dir, f"{base_filename}_{counter}.pdf")
-                            counter += 1
-
-                        page = context.new_page()
+                    for idx, (r_id, title, url, publish_time, source) in enumerate(missing_records, 1):
                         try:
-                            print(f"[*] [{idx}/{len(missing_records)}] 正在请求 URL: {url}")
-                            response = page.goto(url, timeout=60000, wait_until="domcontentloaded")
-                            page.wait_for_load_state("load", timeout=10000)
+                            print(f"[*] [{idx}/{len(missing_records)}] 正在请求 URL: {url} (来源: {source})")
+                            
+                            config = CONFIG_MAP.get(source, PDFRenderConfig())
 
-                            if response and response.status == 404:
+                            # 预检查 404 状态
+                            temp_page = context.new_page()
+                            is_404 = False
+                            try:
+                                response = temp_page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                                if response and response.status == 404:
+                                    is_404 = True
+                            except Exception:
+                                pass
+                            finally:
+                                temp_page.close()
+
+                            if is_404:
                                 print(f"  [-] 页面 404 未找到，清除该记录的 pdf_path。")
                                 cursor.execute("UPDATE resources SET pdf_path = '' WHERE id = ?", (r_id,))
                                 not_found_download += 1
                             else:
-                                page.pdf(path=pdf_path, format="A4", print_background=True)
-                                rel_pdf_path = f"pdf/{year}/{os.path.basename(pdf_path)}"
-                                cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (rel_pdf_path, r_id))
-                                success_download += 1
-                                print(f"  [+] 下载成功并更新数据库为相对路径: {rel_pdf_path}")
+                                rel_pdf_path = generator.generate_pdf(
+                                    page_or_context=context,
+                                    target_url_or_page=url,
+                                    publish_date=publish_time,
+                                    title=title,
+                                    source_name=source,
+                                    config=config
+                                )
+                                if rel_pdf_path:
+                                    cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (rel_pdf_path, r_id))
+                                    success_download += 1
+                                    print(f"  [+] 下载成功并更新数据库为相对路径: {rel_pdf_path}")
+                                else:
+                                    print(f"  [-] 下载物理文件失败 ID: {r_id}")
+                                    fail_download += 1
                             conn.commit()
                         except Exception as e:
                             print(f"  [-] 下载物理文件失败 ID: {r_id} | 错误: {e}")
                             fail_download += 1
-                        finally:
-                            page.close()
                         time.sleep(random.uniform(1.5, 3.5))
                     browser.close()
             except Exception as e:

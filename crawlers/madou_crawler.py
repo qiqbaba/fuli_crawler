@@ -34,6 +34,16 @@ class MadouCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
         # 尝试从本地缓存加载之前发现的最新域名
         self._load_domains_from_cache()
 
+        from utils.pdf_generator import PDFRenderConfig
+        self.pdf_config = PDFRenderConfig(
+            ad_selectors=[
+                'div[style*="height:60px"]',
+                'div[style*="height:55px"]',
+                'div[style*="height:70px"]',
+                '#bottom_float'
+            ]
+        )
+
     def _build_headers(self, referer=None):
         """构造完整的浏览器请求头，模拟真实浏览器行为"""
         ua = random.choice(USER_AGENTS)
@@ -87,55 +97,7 @@ class MadouCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
 
 
 
-    def _save_pdf(self, target_url, publish_date, title):
-        """直接用 Playwright 打开详情页并保存为 PDF"""
-        if getattr(self, 'no_pdf', False):
-            return ""
-        if not publish_date or publish_date == "Unknown_Date":
-            from datetime import datetime
-            publish_date = datetime.now().strftime("%Y-%m-%d")
-            
-        local_path = self._get_pdf_local_tmp_path(publish_date, title)
-        page = None
-        try:
-            _, _, context = self._get_thread_resources()
-            page = context.new_page()
-            page.goto(target_url, timeout=30000, wait_until="domcontentloaded")
-            time.sleep(3.0)
-            
-            # 屏蔽广告
-            try:
-                page.evaluate("""
-                    () => {
-                        const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
-                        adDivs.forEach(div => div.remove());
-                        const bottomFloat = document.getElementById('bottom_float');
-                        if (bottomFloat) {
-                            bottomFloat.remove();
-                        }
-                    }
-                """)
-            except Exception as ad_err:
-                print(f"[-] 屏蔽广告脚本执行失败: {ad_err}")
-
-            page.pdf(
-                path=local_path,
-                format="A4",
-                scale=0.75,              # PDF 压缩：缩小至 75%，显著减小文件体积
-                print_background=True,
-                margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"}
-            )
-            page.close()
-        except Exception as e:
-            print(f"[-] PDF 生成失败: {e}")
-            if page:
-                try:
-                    page.close()
-                except Exception:
-                    pass
-            return None
-
-        return self._upload_or_return_pdf_path(local_path, publish_date)
+    # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
 
 
