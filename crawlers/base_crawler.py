@@ -583,9 +583,9 @@ class PlaywrightBaseCrawler(BaseCrawler):
         # Perf 1: 是否跨页面复用浏览器，避免每页销毁重建
         self._reuse_browser = True
         # ========== Anti-detection 配置 ==========
-        from config import get_effective_browser_type, is_headless_forced, HEADFUL_LOCAL, HEADFUL_CLOUD, is_stealth_enabled, is_local_mode
-        # 浏览器类型: 'chromium' | 'firefox' | 'webkit'
-        self.browser_type = get_effective_browser_type()
+        from config import is_headless_forced, HEADFUL_LOCAL, HEADFUL_CLOUD, is_stealth_enabled, is_local_mode
+        # 浏览器类型固定为 chromium
+        self.browser_type = "chromium"
         # 本地模式是否使用 headful（有头）模式，默认 True 便于调试且更难被检测
         self.headful_local = HEADFUL_LOCAL
         # 云端模式是否使用 headful（默认 false 因为无图形界面）
@@ -601,18 +601,20 @@ class PlaywrightBaseCrawler(BaseCrawler):
         from config import is_local_mode
         self.r2_uploader = get_r2_uploader()
         self.pdf_generator = PDFGenerator(self.r2_uploader)
-        if self.r2_uploader:
-            print(f"[*] Cloudflare R2 上传器已启用 ({self.source_name})", flush=True)
-        else:
-            if is_local_mode():
-                print(f"[*] 本地模式已激活，PDF 将保存到本地目录 ({self.source_name})", flush=True)
+        if not self.quiet:
+            if self.r2_uploader:
+                print(f"[*] Cloudflare R2 上传器已启用 ({self.source_name})", flush=True)
             else:
-                print(f"[*] 未配置 R2 环境变量，PDF 将保存到本地目录 ({self.source_name})", flush=True)
+                if is_local_mode():
+                    print(f"[*] 本地模式已激活，PDF 将保存到本地目录 ({self.source_name})", flush=True)
+                else:
+                    print(f"[*] 未配置 R2 环境变量，PDF 将保存到本地目录 ({self.source_name})", flush=True)
         
         # 初始化代理管理器
         from config import is_proxy_manager_enabled
         if is_proxy_manager_enabled():
-            print(f"[*] 代理管理器已启用，正在获取和验证代理IP...", flush=True)
+            if not self.quiet:
+                print(f"[*] 代理管理器已启用，正在获取和验证代理IP...", flush=True)
             from utils.proxy_manager import get_proxy_manager
             from config import get_proxy_verify_workers_value
             try:
@@ -628,9 +630,11 @@ class PlaywrightBaseCrawler(BaseCrawler):
                         expected_content=expected_content
                     )
                     stats = manager.get_stats()
-                    print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个", flush=True)
+                    if not self.quiet:
+                        print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个", flush=True)
             except Exception as e:
-                print(f"[-] 初始化代理管理器时发生异常: {e}", flush=True)
+                if not self.quiet:
+                    print(f"[-] 初始化代理管理器时发生异常: {e}", flush=True)
 
     def release_thread_resources(self):
         """

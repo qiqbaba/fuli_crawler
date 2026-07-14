@@ -129,13 +129,6 @@ def main():
     
     # 反检测 / Stealth 相关参数
     parser.add_argument(
-        "--browser-type",
-        type=str,
-        default=None,
-        choices=["chromium", "firefox", "webkit"],
-        help="浏览器类型: chromium(默认), firefox, webkit (Firefox/WebKit 自动化特征更少，更难被检测)"
-    )
-    parser.add_argument(
         "--no-stealth",
         action="store_true",
         default=False,
@@ -186,7 +179,6 @@ def main():
     # 设定反检测参数
     from config import set_runtime_stealth
     set_runtime_stealth(
-        browser_type=args.browser_type,
         disable_stealth=args.no_stealth,
         force_headless=args.headless
     )

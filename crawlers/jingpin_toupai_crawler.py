@@ -204,7 +204,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             resource_link = data.get('tm', 'None').strip()
             size = data.get('ts', 'None').strip()
             res_format = data.get('tr', 'None').strip()
-            category = data.get('cn', '自拍').strip()
+            category = self.category_map.get(self.current_class, '自拍')
 
             print(f"[{idx}] 解析详情页成功: {title} | 大小: {size} | 链接: {resource_link[:50]}...")
 
@@ -281,6 +281,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         
         # 爬取的三个分类/板块板块
         classes = ["2935277", "2965277", "2975277"]
+        self.category_map = {"2935277": "国产", "2965277": "欧美", "2975277": "国产"}
 
         print(f"[*] 启动 {self.source_name} 爬虫流程...")
         self.on_start()

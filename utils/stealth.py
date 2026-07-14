@@ -56,7 +56,7 @@ _STEALTH_JS = """
             this.filename = filename;
             this.description = desc;
             this.length = 0;
-            this.__proto__ = Plugin.prototype;
+            Object.setPrototypeOf(this, Plugin.prototype);
             this.item = function() { return null; };
             this.namedItem = function() { return null; };
         }
@@ -90,7 +90,7 @@ _STEALTH_JS = """
             this.description = desc;
             this.suffixes = suffixes;
             this.enabledPlugin = null;
-            this.__proto__ = MimeType.prototype;
+            Object.setPrototypeOf(this, MimeType.prototype);
         }
         function _FakeMimeTypeArray() {
             var types = [
