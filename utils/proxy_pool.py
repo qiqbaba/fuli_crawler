@@ -186,43 +186,27 @@ class ProxyPool:
             self._working_proxies = []
 
     def _save_cache(self):
-        """立即保存代理列表及验证结果到 SQLite 缓存（用于 fetch/verify 等同步点）"""
-        # 执行前先刷新所有挂起的延迟写入
+        """立即保存代理列表及验证结果到 SQLite 缓存（用于 fetch/verify 等同步点）
+        
+        先刷新所有挂起的延迟写入，再执行全量写入以确保一致性。
+        """
         self._flush_pending_save()
+        # 即使 _flush_pending_save 已经写入，也执行一次确保 fetch/verify 的结果落盘
         self._do_save_cache()
         with self._lock:
             self._last_save_time = time.time()
 
     def _do_save_cache(self):
-        """实际执行 SQLite 写入"""
+        """实际执行 SQLite 写入 — 使用 UPSERT 增量更新，避免全量重写"""
+        conn = None
         try:
             conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
             cursor = conn.cursor()
 
-            # 使用事务批量写入
+            # 使用事务批量 UPSERT
             cursor.execute("BEGIN TRANSACTION")
 
-            # 清空旧数据
-            cursor.execute("DELETE FROM proxy_cache")
-            cursor.execute("DELETE FROM cache_meta")
-
-            # 写入代理列表
-            for p in self._proxies:
-                cursor.execute(
-                    "INSERT INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        p["protocol"],
-                        p["address"],
-                        p.get("source", ""),
-                        p.get("success_count", 0),
-                        p.get("fail_count", 0),
-                        p.get("score", 0.0),
-                        # 检查该代理是否在 working 列表中
-                        1.0 if any(w["address"] == p["address"] and w["protocol"] == p["protocol"] for w in self._working_proxies) else 0.0
-                    )
-                )
-
-            # 写入元数据
+            # 写入元数据（始终更新）
             cursor.execute(
                 "INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)",
                 ("last_fetch_time", str(int(self._last_fetch_time)))
@@ -232,14 +216,41 @@ class ProxyPool:
                 ("last_verify_time", str(int(self._last_verify_time)))
             )
 
+            # 增量 UPSERT 代理记录
+            for p in self._proxies:
+                last_verified = 1.0 if any(
+                    w["address"] == p["address"] and w["protocol"] == p["protocol"]
+                    for w in self._working_proxies
+                ) else 0.0
+                cursor.execute(
+                    """INSERT INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(protocol, address) DO UPDATE SET
+                           source = EXCLUDED.source,
+                           success_count = EXCLUDED.success_count,
+                           fail_count = EXCLUDED.fail_count,
+                           score = EXCLUDED.score,
+                           last_verified = EXCLUDED.last_verified""",
+                    (
+                        p["protocol"],
+                        p["address"],
+                        p.get("source", ""),
+                        p.get("success_count", 0),
+                        p.get("fail_count", 0),
+                        p.get("score", 0.0),
+                        last_verified
+                    )
+                )
+
             conn.commit()
             conn.close()
         except Exception as e:
             logger.warning("保存缓存失败: %s", e)
-            try:
-                conn.rollback()
-            except Exception:
-                pass
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
     def _flush_pending_save(self):
         """在合适的同步点强制执行所有挂起的延迟写入"""
@@ -250,6 +261,22 @@ class ProxyPool:
         self._do_save_cache()
         with self._lock:
             self._last_save_time = time.time()
+
+    def _save_cache_delayed(self):
+        """延迟批量写入缓存 — 合并高频写入（如 report_failure），降低 SQLite 压力
+        
+        仅在距离上次写入超过 _save_interval 时才真正落盘，
+        否则只标记 pending，由下次同步点一次性写入。
+        """
+        with self._lock:
+            self._pending_save = True
+            now = time.time()
+            if (now - self._last_save_time) >= self._save_interval:
+                self._pending_save = False
+                self._last_save_time = now
+            else:
+                return  # 未达到间隔，仅标记 pending
+        self._do_save_cache()
 
     def fetch_proxies(self, force: bool = False) -> int:
         """

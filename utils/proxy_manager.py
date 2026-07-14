@@ -17,7 +17,7 @@ from utils.proxy_pool import ProxyPool
 _proxy_manager: Optional[ProxyPool] = None
 
 
-def get_proxy_manager() -> Optional[ProxyManager]:
+def get_proxy_manager() -> Optional[ProxyPool]:
     """获取全局代理管理器实例"""
     global _proxy_manager
     local_on = is_local_mode()
@@ -30,7 +30,7 @@ def get_proxy_manager() -> Optional[ProxyManager]:
     return _proxy_manager
 
 
-def init_proxy_manager(force_fetch=False, force_verify=False) -> Optional[ProxyManager]:
+def init_proxy_manager(force_fetch=False, force_verify=False) -> Optional[ProxyPool]:
     """
     初始化并预加载代理管理器
     
@@ -39,7 +39,7 @@ def init_proxy_manager(force_fetch=False, force_verify=False) -> Optional[ProxyM
         force_verify: 是否强制验证代理
         
     Returns:
-        ProxyManager 实例或 None
+        ProxyPool 实例或 None
     """
     manager = get_proxy_manager()
     if manager is None:
