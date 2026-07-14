@@ -1,10 +1,60 @@
 import sqlite3
 import threading
+from abc import ABC, abstractmethod
 from utils.deduplication import DynamoDBDeduplicationService
 from utils.persistence import SqlitePersistenceService, SupabasePersistenceService
 from utils.crawl_state import SqliteCrawlStateService, SupabaseCrawlStateService
 
-class DBManager:
+
+class BaseDBManager(ABC):
+    """数据库管理器抽象基类，封装 AWS DynamoDB 去重与状态管理的公共逻辑"""
+
+    def check_url_exists(self, url):
+        """去重检查：单条 URL 是否已存在于 AWS DynamoDB 中"""
+        return self.aws_helper.check_url_exists(url)
+
+    def filter_existing_urls(self, urls):
+        """去重检查：批量检查哪些 URL 已存在于 AWS DynamoDB 中"""
+        return self.aws_helper.filter_existing_urls(urls)
+
+    def filter_existing_resource_links(self, resource_links):
+        """去重检查：批量检查哪些 resource_link 已存在于 AWS DynamoDB 中"""
+        return self.aws_helper.filter_existing_resource_links(resource_links)
+
+    @abstractmethod
+    def insert_resource(self, data):
+        """持久化写入并同步去重标记"""
+        ...
+
+    def commit(self):
+        """提交事务（不同后端实现不同）"""
+        self.persistence.commit()
+
+    def close(self):
+        """关闭连接，清理去重服务后台线程池"""
+        if hasattr(self, 'aws_helper'):
+            self.aws_helper.shutdown()
+        self.persistence.close()
+
+    # ========== 爬虫断点续爬状态管理 ==========
+
+    def save_crawl_state(self, source, class_name, page_num, completed=False):
+        self.state_service.save_crawl_state(source, class_name, page_num, completed)
+
+    def load_crawl_state(self, source):
+        return self.state_service.load_crawl_state(source)
+
+    def clear_crawl_state(self, source):
+        self.state_service.clear_crawl_state(source)
+
+    def mark_source_completed(self, source):
+        self.state_service.mark_source_completed(source)
+
+    def is_source_completed(self, source):
+        return self.state_service.is_source_completed(source)
+
+
+class DBManager(BaseDBManager):
     """本地 SQLite 数据库管理器（本地开发使用）"""
     def __init__(self, db_path):
         self.db_path = db_path
@@ -32,18 +82,6 @@ class DBManager:
         """确保 SQLite 数据库结构完整（静态方法，支持外部直接调用）"""
         SqlitePersistenceService.ensure_tables(db_path, cursor)
 
-    def check_url_exists(self, url):
-        """去重检查：单条 URL 是否已存在于 AWS DynamoDB 中"""
-        return self.aws_helper.check_url_exists(url)
-
-    def filter_existing_urls(self, urls):
-        """去重检查：批量检查哪些 URL 已存在于 AWS DynamoDB 中"""
-        return self.aws_helper.filter_existing_urls(urls)
-
-    def filter_existing_resource_links(self, resource_links):
-        """去重检查：批量检查哪些 resource_link 已存在于 AWS DynamoDB 中"""
-        return self.aws_helper.filter_existing_resource_links(resource_links)
-
     def insert_resource(self, data):
         """
         持久化与去重双写逻辑：
@@ -56,35 +94,8 @@ class DBManager:
             return True
         return False
 
-    def commit(self):
-        """手动提交本地事务"""
-        self.persistence.commit()
 
-    def close(self):
-        """关闭本地连接，并清理去重服务后台线程池"""
-        if hasattr(self, 'aws_helper'):
-            self.aws_helper.shutdown()
-        self.persistence.close()
-
-    # ========== 爬虫断点续爬状态管理 ==========
-
-    def save_crawl_state(self, source, class_name, page_num, completed=False):
-        self.state_service.save_crawl_state(source, class_name, page_num, completed)
-
-    def load_crawl_state(self, source):
-        return self.state_service.load_crawl_state(source)
-
-    def clear_crawl_state(self, source):
-        self.state_service.clear_crawl_state(source)
-
-    def mark_source_completed(self, source):
-        self.state_service.mark_source_completed(source)
-
-    def is_source_completed(self, source):
-        return self.state_service.is_source_completed(source)
-
-
-class SupabaseDBManager:
+class SupabaseDBManager(BaseDBManager):
     """Supabase PostgreSQL 数据库管理器（云端 GitHub Actions 使用）"""
 
     def __init__(self, supabase_url, supabase_key):
@@ -114,18 +125,6 @@ class SupabaseDBManager:
             print("[!] 请检查 AWS 凭证环境变量配置！")
             raise e
 
-    def check_url_exists(self, url):
-        """去重检查：单条 URL 是否已存在于 AWS DynamoDB 中"""
-        return self.aws_helper.check_url_exists(url)
-
-    def filter_existing_urls(self, urls):
-        """去重检查：批量检查哪些 URL 已存在于 AWS DynamoDB 中"""
-        return self.aws_helper.filter_existing_urls(urls)
-
-    def filter_existing_resource_links(self, resource_links):
-        """去重检查：批量检查哪些 resource_link 已存在于 AWS DynamoDB 中"""
-        return self.aws_helper.filter_existing_resource_links(resource_links)
-
     def insert_resource(self, data):
         """
         持久化与去重双写逻辑：
@@ -137,30 +136,3 @@ class SupabaseDBManager:
             self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'))
             return True
         return result
-
-    def commit(self):
-        """云端服务自动提交，保持空操作"""
-        self.persistence.commit()
-
-    def close(self):
-        """清理去重服务后台线程池"""
-        if hasattr(self, 'aws_helper'):
-            self.aws_helper.shutdown()
-        self.persistence.close()
-
-    # ========== 爬虫断点续爬状态管理 ==========
-
-    def save_crawl_state(self, source, class_name, page_num, completed=False):
-        self.state_service.save_crawl_state(source, class_name, page_num, completed)
-
-    def load_crawl_state(self, source):
-        return self.state_service.load_crawl_state(source)
-
-    def clear_crawl_state(self, source):
-        self.state_service.clear_crawl_state(source)
-
-    def mark_source_completed(self, source):
-        self.state_service.mark_source_completed(source)
-
-    def is_source_completed(self, source):
-        return self.state_service.is_source_completed(source)

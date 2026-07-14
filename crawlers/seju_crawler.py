@@ -76,7 +76,9 @@ class SejuCrawler(PlaywrightBaseCrawler):
             page.goto(list_url, timeout=60000, wait_until="domcontentloaded")
             
             # 检测并等待 Cloudflare 盾通过
-            self._wait_for_cloudflare_bypass(page)
+            bypassed = self._wait_for_cloudflare_bypass(page)
+            if not bypassed:
+                print(f"[!] Cloudflare 解盾超时，列表页 {list_url} 内容可能不完整")
             
             time.sleep(random.uniform(2, 4))
             return page.content()
@@ -136,7 +138,9 @@ class SejuCrawler(PlaywrightBaseCrawler):
             sub_page.goto(sub_url, timeout=60000, wait_until="domcontentloaded")
             
             # 检测并等待 Cloudflare 盾通过
-            self._wait_for_cloudflare_bypass(sub_page)
+            bypassed = self._wait_for_cloudflare_bypass(sub_page)
+            if not bypassed:
+                print(f"[!] Cloudflare 解盾超时，子页面 {sub_url} 内容可能不完整")
             
             try:
                 sub_page.wait_for_load_state("load", timeout=15000)
@@ -258,9 +262,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
 
             # 针对内部网页，使用当前的 Playwright 页面生成 PDF
             if not is_external:
-                if False: # self.is_test:
-                    print("-> 测试模式下跳过保存 PDF 以节省时间")
-                elif getattr(self, 'no_pdf', False):
+                if getattr(self, 'no_pdf', False):
                     print("-> 启用了 no_pdf 模式，跳过 PDF 渲染和保存")
                 else:
                     pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"

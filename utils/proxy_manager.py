@@ -29,9 +29,7 @@ def get_proxy_manager() -> Optional[ProxyManager]:
         if local_on or mgr_on:
             from config import PROXY_CACHE_TTL
             _proxy_manager = ProxyManager(cache_ttl=PROXY_CACHE_TTL)
-            print(f"[DEBUG] get_proxy_manager() 初始化成功: {_proxy_manager}", flush=True)
         else:
-            print("[DEBUG] get_proxy_manager() 条件不满足，返回 None", flush=True)
             return None
     return _proxy_manager
 

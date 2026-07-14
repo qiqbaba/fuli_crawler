@@ -7,6 +7,7 @@ from utils.pdf_generator import PDFGenerator, PDFRenderConfig
 from utils.date_parser import parse_date
 from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak_link
 from utils.lang_filter import is_japanese
+from config import USER_AGENTS
 
 class BaseCrawler:
     def __init__(self, db_manager, source_name):
@@ -16,6 +17,71 @@ class BaseCrawler:
         self.max_consecutive_duplicate_pages = None
         self.check_resource_link = False  # 是否额外检查 resource_link（磁力链接）去重，子类按需开启
         self.skip_japanese = True  # 是否跳过日语标题
+
+    def _build_headers(self, referer=None):
+        """构造完整的浏览器请求头，模拟真实浏览器行为"""
+        ua = random.choice(USER_AGENTS)
+        headers = {
+            "User-Agent": ua,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1",
+            "Cache-Control": "max-age=0",
+        }
+        if referer:
+            headers["Referer"] = referer
+        else:
+            base = getattr(self, 'base_domain', None) or getattr(self, 'base_url', None) or ""
+            headers["Referer"] = base + "/"
+        return headers
+
+    def _http_get(self, url, timeout=20, impersonate="chrome120"):
+        """通用 HTTP GET 请求，最多重试 3 次，支持代理自动切换和失败上报"""
+        from curl_cffi import requests
+        for attempt in range(1, 4):
+            proxies = None
+            try:
+                ua = random.choice(USER_AGENTS)
+                headers = {"User-Agent": ua}
+
+                from config import get_crawler_proxy, is_proxy_manager_enabled
+                crawler_proxy = get_crawler_proxy()
+                if crawler_proxy:
+                    proxies = {"http": crawler_proxy, "https": crawler_proxy}
+                elif is_proxy_manager_enabled():
+                    from utils.proxy_manager import get_proxy_dict
+                    proxies = get_proxy_dict()
+
+                r = requests.get(url, headers=headers, impersonate=impersonate, timeout=timeout, proxies=proxies)
+                r.encoding = 'utf-8'
+                if r.status_code == 200:
+                    return r.url, r.text
+                else:
+                    print(f"[-] HTTP 请求失败 ({url}) [第 {attempt}/3 次尝试]: 状态码 {r.status_code}")
+                    if r.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
+                        from utils.proxy_manager import get_proxy_manager
+                        manager = get_proxy_manager()
+                        if manager and "http" in proxies:
+                            manager.report_failure(proxies["http"])
+            except Exception as e:
+                from config import is_proxy_manager_enabled
+                print(f"[-] HTTP 请求异常 ({url}) [第 {attempt}/3 次尝试]: {e}")
+                if proxies and is_proxy_manager_enabled():
+                    from utils.proxy_manager import get_proxy_manager
+                    manager = get_proxy_manager()
+                    if manager and "http" in proxies:
+                        manager.report_failure(proxies["http"])
+
+            if attempt < 3:
+                time.sleep(random.uniform(1.0, 3.0))
+
+        return url, None
 
     def on_start(self):
         """生命周期钩子：爬网开始前（子类可选覆盖）"""
@@ -139,6 +205,205 @@ class BaseCrawler:
         except Exception as e:
             print(f"[!] 保存爬虫断点状态失败: {e}")
 
+    def _filter_new_items(self, raw_items, existing_urls, consecutive_count):
+        """URL级去重过滤 — 分离自 _crawl_pages 的过滤逻辑
+        
+        Args:
+            raw_items: 解析后的原始项列表
+            existing_urls: 已存在于数据库中的 URL 集合
+            consecutive_count: 当前连续已存在计数
+            
+        Returns:
+            (items_to_process, skipped_count, consecutive_count, early_stop_triggered)
+        """
+        items_to_process = []
+        skipped_count = 0
+        early_stop_triggered = False
+
+        for idx, raw_item in enumerate(raw_items, 1):
+            url = raw_item if isinstance(raw_item, str) else raw_item.get('url')
+            is_existing = url in existing_urls
+
+            # 日语标题预过滤
+            if not is_existing and self._is_japanese_title(raw_item):
+                if not self.quiet:
+                    title_preview = raw_item.get('title', '')[:40]
+                    print(f"[{idx}] 标题检测为日语，跳过: {title_preview}")
+                continue
+
+            if is_existing:
+                skipped_count += 1
+                if self.max_consecutive_existing is not None:
+                    consecutive_count += 1
+                    if not self.quiet:
+                        print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
+                        print(f"[*] 连续发现已存在数据: {consecutive_count}/{self.max_consecutive_existing}")
+                    if consecutive_count >= self.max_consecutive_existing:
+                        print(f"\n[触发停止条件] 连续 {self.max_consecutive_existing} 条数据已存在，停止处理当前页！")
+                        early_stop_triggered = True
+                        break
+                else:
+                    if not self.quiet:
+                        print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
+            else:
+                items_to_process.append((idx, raw_item))
+                consecutive_count = 0
+
+        return items_to_process, skipped_count, consecutive_count, early_stop_triggered
+
+    def _process_items_concurrently(self, items_to_process, max_workers, consecutive_subpage_count):
+        """并发处理子页面 — 分离自 _crawl_pages 的并发处理逻辑
+        
+        Args:
+            items_to_process: 待处理项列表 [(idx, raw_item), ...]
+            max_workers: 最大并发线程数
+            consecutive_subpage_count: 当前子页面级连续已存在计数
+            
+        Returns:
+            (results_dict, consecutive_subpage_count, early_stop_triggered)
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        results_dict = {}
+        early_stop_triggered = False
+
+        if max_workers == 1:
+            for idx, raw_item in items_to_process:
+                try:
+                    res = self.process_sub_page_if_needed(raw_item, idx)
+                    if res:
+                        is_existing, data = res
+                        if is_existing:
+                            if self.max_consecutive_existing is not None:
+                                consecutive_subpage_count += 1
+                                if not self.quiet:
+                                    print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_subpage_count}/{self.max_consecutive_existing}")
+                                if consecutive_subpage_count >= self.max_consecutive_existing:
+                                    early_stop_triggered = True
+                                    break
+                        if data:
+                            results_dict[idx] = data
+                except Exception as e:
+                    print(f"[-] 处理索引为 [{idx}] 的项目时发生异常: {e}")
+            self.release_thread_resources()
+        else:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_idx = {
+                    executor.submit(self.process_sub_page_if_needed, raw_item, idx): idx
+                    for idx, raw_item in items_to_process
+                }
+
+                collected_results = {}
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        res = future.result()
+                        if res:
+                            is_existing, data = res
+                            collected_results[idx] = (is_existing, data)
+                    except Exception as e:
+                        print(f"[-] 线程处理索引为 [{idx}] 的项目时发生异常: {e}")
+
+                for idx in sorted(collected_results.keys()):
+                    is_existing, data = collected_results[idx]
+                    if is_existing:
+                        if self.max_consecutive_existing is not None:
+                            consecutive_subpage_count += 1
+                            if not self.quiet:
+                                print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_subpage_count}/{self.max_consecutive_existing}")
+                            if consecutive_subpage_count >= self.max_consecutive_existing:
+                                early_stop_triggered = True
+                    if data:
+                        results_dict[idx] = data
+
+                print("[*] 正在向并发工作线程发送资源清理指令...")
+                cleanup_futures = [
+                    executor.submit(self.release_thread_resources)
+                    for _ in range(max_workers)
+                ]
+                for f in as_completed(cleanup_futures):
+                    try:
+                        f.result()
+                    except Exception as e:
+                        print(f"[-] 清理工作线程资源时发生异常: {e}")
+
+        if early_stop_triggered:
+            print(f"[!] 子页面级去重触发早停标记，已完成的结果将继续入库。")
+
+        return results_dict, consecutive_subpage_count, early_stop_triggered
+
+    def _write_results_to_db(self, results, consecutive_count):
+        """写入结果到数据库并更新计数 — 分离自 _crawl_pages 的写入逻辑
+        
+        Args:
+            results: 待写入的结构化数据列表
+            consecutive_count: 当前连续已存在计数
+            
+        Returns:
+            (inserted_count, skipped_count, consecutive_count, early_stop_triggered)
+        """
+        inserted_count = 0
+        skipped_count = 0
+        early_stop_triggered = False
+
+        # 日语标题后置过滤
+        if self.skip_japanese:
+            filtered_jp = []
+            jp_skipped = 0
+            for d in results:
+                title = d.get('title', '')
+                if title and is_japanese(title):
+                    jp_skipped += 1
+                    if not self.quiet:
+                        print(f"[*] 结果标题检测为日语，过滤: {title[:40]}")
+                else:
+                    filtered_jp.append(d)
+            if jp_skipped > 0:
+                print(f"[*] 日语标题后置过滤掉 {jp_skipped} 条")
+            results = filtered_jp
+
+        # 磁力链接二次去重
+        if self.check_resource_link:
+            resource_links = [d.get('resource_link') for d in results]
+            existing_links = self.db_manager.filter_existing_resource_links(resource_links)
+            filtered_results = []
+            resource_link_skipped = 0
+            for d in results:
+                link = d.get('resource_link', '')
+                if link and link in existing_links:
+                    resource_link_skipped += 1
+                    if not self.quiet:
+                        print(f"[*] 磁力链接已存在数据库中，跳过: {link[:60]}...")
+                else:
+                    filtered_results.append(d)
+            if resource_link_skipped > 0:
+                print(f"[*] 磁力链接去重过滤掉 {resource_link_skipped} 条")
+            results = filtered_results
+
+        print(f"[*] 正在写入 {len(results)} 条新纪录到数据库...")
+        for data in results:
+            success = self.db_manager.insert_resource(data)
+            if success:
+                inserted_count += 1
+                consecutive_count = 0
+            elif success is None:
+                skipped_count += 1
+                if not self.quiet:
+                    print(f"[*] 写入失败 (网络/API 错误)，不计入连续已存在计数")
+            else:
+                skipped_count += 1
+                if self.max_consecutive_existing is not None:
+                    consecutive_count += 1
+                    if not self.quiet:
+                        print(f"[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
+                    if consecutive_count >= self.max_consecutive_existing:
+                        early_stop_triggered = True
+                        break
+                else:
+                    if not self.quiet:
+                        print(f"[*] 写入失败或重复 (DB IGNORE)")
+
+        return inserted_count, skipped_count, consecutive_count, early_stop_triggered
+
     def _crawl_pages(self, start_page, end_page, max_workers, class_name=None):
         """
         爬虫页面循环核心逻辑（不含 on_start/on_finish），
@@ -146,17 +411,15 @@ class BaseCrawler:
         
         class_name: 可选，用于断点续爬时记录当前板块名称
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed
         import time
         import random
-        import os
 
         consecutive_count = 0
+        consecutive_subpage_count = 0
         consecutive_duplicate_pages = 0
-        # 通过 config 模块统一判断运行环境
         from config import is_local_mode
         is_gha = not is_local_mode()
-        early_break = False  # 跟踪是否因早停而跳出循环
+        early_break = False
 
         for page_num in range(start_page, end_page + 1):
             if is_gha:
@@ -178,42 +441,14 @@ class BaseCrawler:
 
                 print(f"[+] 本页共解析到 {len(raw_items)} 条记录。")
 
-                items_to_process = []
-                skipped_count = 0
-                early_stop_triggered = False
-
+                # === 步骤 1: URL 级去重过滤 ===
                 urls_to_check = [raw_item if isinstance(raw_item, str) else raw_item.get('url') for raw_item in raw_items]
                 existing_urls = self.db_manager.filter_existing_urls(urls_to_check)
+                items_to_process, skipped_count, consecutive_count, early_stop_triggered = self._filter_new_items(
+                    raw_items, existing_urls, consecutive_count
+                )
 
-                for idx, raw_item in enumerate(raw_items, 1):
-                    url = raw_item if isinstance(raw_item, str) else raw_item.get('url')
-                    is_existing = url in existing_urls
-
-                    # 日语标题预过滤（仅对标题已在 raw_item 中的爬虫有效）
-                    if not is_existing and self._is_japanese_title(raw_item):
-                        if not self.quiet:
-                            title_preview = raw_item.get('title', '')[:40]
-                            print(f"[{idx}] 标题检测为日语，跳过: {title_preview}")
-                        continue
-
-                    if is_existing:
-                        skipped_count += 1
-                        if self.max_consecutive_existing is not None:
-                            consecutive_count += 1
-                            if not self.quiet:
-                                print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
-                                print(f"[*] 连续发现已存在数据: {consecutive_count}/{self.max_consecutive_existing}")
-                            if consecutive_count >= self.max_consecutive_existing:
-                                print(f"\n[触发停止条件] 连续 {self.max_consecutive_existing} 条数据已存在，停止处理当前页！")
-                                early_stop_triggered = True
-                                break
-                        else:
-                            if not self.quiet:
-                                print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
-                    else:
-                        items_to_process.append((idx, raw_item))
-                        consecutive_count = 0
-
+                # === 步骤 2: 整页重复检测 ===
                 if not early_stop_triggered:
                     is_page_duplicate = (skipped_count == len(raw_items))
                     if is_page_duplicate:
@@ -226,183 +461,65 @@ class BaseCrawler:
                     else:
                         consecutive_duplicate_pages = 0
 
+                # === 步骤 3: 早停或无待处理项 ===
                 if not items_to_process or early_stop_triggered:
                     if not items_to_process:
                         print(f"[+] 页面 {page_num} 所有项均已被跳过。")
                     else:
                         print(f"[+] 页面 {page_num} 触发早停，跳过 {len(items_to_process)} 条待处理项。")
-                    # 保存断点（每页完成时记录）
                     if class_name is not None:
                         self._save_page_state(class_name, page_num + 1)
-                    if early_stop_triggered or (self.max_consecutive_existing is not None and consecutive_count >= self.max_consecutive_existing):
+                    if early_stop_triggered or (self.max_consecutive_existing is not None and max(consecutive_count, consecutive_subpage_count) >= self.max_consecutive_existing):
                         print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                         early_break = True
                         break
-                    if self.no_pdf:
-                        time.sleep(random.uniform(0.5, 1.5))
-                    else:
-                        time.sleep(random.uniform(3.0, 6.0))
+                    self._sleep_between_pages(self.no_pdf)
                     continue
 
+                # === 步骤 4: 并发处理子页面 ===
                 print(f"[*] 开始并发处理 {len(items_to_process)} 条新纪录 (并发线程数: {max_workers})...")
+                results_dict, consecutive_subpage_count, subpage_early_stop = self._process_items_concurrently(
+                    items_to_process, max_workers, consecutive_subpage_count
+                )
+                if subpage_early_stop:
+                    early_stop_triggered = True
 
-                inserted_count = 0
-                results_dict = {}
-
-                if max_workers == 1:
-                    for idx, raw_item in items_to_process:
-                        try:
-                            res = self.process_sub_page_if_needed(raw_item, idx)
-                            if res:
-                                is_existing, data = res
-                                if is_existing:
-                                    skipped_count += 1
-                                    if self.max_consecutive_existing is not None:
-                                        consecutive_count += 1
-                                        if not self.quiet:
-                                            print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
-                                        if consecutive_count >= self.max_consecutive_existing:
-                                            early_stop_triggered = True
-                                            break
-                                if data:
-                                    results_dict[idx] = data
-                        except Exception as e:
-                            print(f"[-] 处理索引为 [{idx}] 的项目时发生异常: {e}")
-                    # 单线程模式清理资源
-                    self.release_thread_resources()
-                else:
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        future_to_idx = {
-                            executor.submit(self.process_sub_page_if_needed, raw_item, idx): idx
-                                for idx, raw_item in items_to_process
-                        }
-
-                        # 先收集所有结果（as_completed 不保证顺序）
-                        collected_results = {}  # idx -> (is_existing, data)
-                        for future in as_completed(future_to_idx):
-                            idx = future_to_idx[future]
-                            try:
-                                res = future.result()
-                                if res:
-                                    is_existing, data = res
-                                    collected_results[idx] = (is_existing, data)
-                            except Exception as e:
-                                print(f"[-] 线程处理索引为 [{idx}] 的项目时发生异常: {e}")
-
-                        # Bug 3 fix: 按原始顺序重新处理，确保连续计数正确
-                        for idx in sorted(collected_results.keys()):
-                            is_existing, data = collected_results[idx]
-                            if is_existing:
-                                skipped_count += 1
-                                if self.max_consecutive_existing is not None:
-                                    consecutive_count += 1
-                                    if not self.quiet:
-                                        print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
-                                    if consecutive_count >= self.max_consecutive_existing:
-                                        early_stop_triggered = True
-                            if data:
-                                results_dict[idx] = data
-
-                        print("[*] 正在向并发工作线程发送资源清理指令...")
-                        cleanup_futures = [
-                            executor.submit(self.release_thread_resources)
-                            for _ in range(max_workers)
-                        ]
-                        for f in as_completed(cleanup_futures):
-                            try:
-                                f.result()
-                            except Exception as e:
-                                print(f"[-] 清理工作线程资源时发生异常: {e}")
-
-                # 子页面级去重早停标记（已处理的结果仍会入库，稍后翻页循环会退出）
-                if early_stop_triggered:
-                    print(f"[!] 子页面级去重触发早停标记，已完成的结果将继续入库。")
-
+                # === 步骤 5: 写入数据库 ===
                 results = [results_dict[idx] for idx in sorted(results_dict.keys())]
-
                 if results:
-                    # 日语标题后置过滤（针对预过滤无法获取标题的爬虫）
-                    if self.skip_japanese:
-                        filtered_jp = []
-                        jp_skipped = 0
-                        for d in results:
-                            title = d.get('title', '')
-                            if title and is_japanese(title):
-                                jp_skipped += 1
-                                if not self.quiet:
-                                    print(f"[*] 结果标题检测为日语，过滤: {title[:40]}")
-                            else:
-                                filtered_jp.append(d)
-                        if jp_skipped > 0:
-                            print(f"[*] 日语标题后置过滤掉 {jp_skipped} 条")
-                        results = filtered_jp
+                    inserted_count, db_skipped, consecutive_count, db_early_stop = self._write_results_to_db(results, consecutive_count)
+                    if db_early_stop:
+                        early_stop_triggered = True
+                else:
+                    inserted_count = 0
+                    db_skipped = 0
 
-                    # 可选：对已获取的 resource_link（磁力链接）进行二次去重
-                    if self.check_resource_link:
-                        resource_links = [d.get('resource_link') for d in results]
-                        existing_links = self.db_manager.filter_existing_resource_links(resource_links)
-                        filtered_results = []
-                        resource_link_skipped = 0
-                        for d in results:
-                            link = d.get('resource_link', '')
-                            if link and link in existing_links:
-                                resource_link_skipped += 1
-                                if not self.quiet:
-                                    print(f"[*] 磁力链接已存在数据库中，跳过: {link[:60]}...")
-                            else:
-                                filtered_results.append(d)
-                        if resource_link_skipped > 0:
-                            print(f"[*] 磁力链接去重过滤掉 {resource_link_skipped} 条")
-                        results = filtered_results
-
-                    print(f"[*] 正在写入 {len(results)} 条新纪录到数据库...")
-                    for data in results:
-                        success = self.db_manager.insert_resource(data)
-                        if success:
-                            inserted_count += 1
-                            consecutive_count = 0
-                        elif success is None:
-                            # 网络/API 错误（如 Supabase 不可达），不触发早停
-                            skipped_count += 1
-                            if not self.quiet:
-                                print(f"[*] 写入失败 (网络/API 错误)，不计入连续已存在计数")
-                        else:
-                            skipped_count += 1
-                            if self.max_consecutive_existing is not None:
-                                consecutive_count += 1
-                                if not self.quiet:
-                                    print(f"[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
-                                if consecutive_count >= self.max_consecutive_existing:
-                                    early_stop_triggered = True
-                                    break
-                            else:
-                                if not self.quiet:
-                                    print(f"[*] 写入失败或重复 (DB IGNORE)")
-
-                print(f"[+] 页面 {page_num} 处理完成：写入 {inserted_count} 条，跳过 {skipped_count} 条。")
+                print(f"[+] 页面 {page_num} 处理完成：写入 {inserted_count} 条，跳过 {skipped_count + db_skipped} 条。")
                 self.db_manager.commit()
 
-                # 保存断点状态（每页完成时记录）
                 if class_name is not None:
                     self._save_page_state(class_name, page_num + 1)
 
-                if early_stop_triggered or (self.max_consecutive_existing is not None and consecutive_count >= self.max_consecutive_existing):
+                if early_stop_triggered or (self.max_consecutive_existing is not None and max(consecutive_count, consecutive_subpage_count) >= self.max_consecutive_existing):
                     print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                     early_break = True
                     break
 
-                if self.no_pdf:
-                    time.sleep(random.uniform(0.3, 0.8))
-                else:
-                    time.sleep(random.uniform(1.5, 3.0))
+                self._sleep_between_pages(self.no_pdf)
             finally:
                 if is_gha:
                     print("::endgroup::", flush=True)
         
-        # 所有页正常爬完（for 循环自然结束且未早停），保存当前板块已完成
         if class_name is not None and not early_break:
             self._save_page_state(class_name, end_page + 1)
-            print(f"[+] 板块 {class_name} 所有页面爬取完成")
+
+    def _sleep_between_pages(self, no_pdf):
+        """页面间延迟等待，降低被反爬检测的风险"""
+        import time, random
+        if no_pdf:
+            time.sleep(random.uniform(0.3, 0.8))
+        else:
+            time.sleep(random.uniform(1.5, 3.0))
 
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """
@@ -497,7 +614,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
         if is_proxy_manager_enabled():
             print(f"[*] 代理管理器已启用，正在获取和验证代理IP...", flush=True)
             from utils.proxy_manager import get_proxy_manager
-            from config import PROXY_VERIFY_WORKERS
+            from config import get_proxy_verify_workers_value
             try:
                 manager = get_proxy_manager()
                 if manager:
@@ -506,7 +623,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
                     expected_content = getattr(self, 'proxy_expected_content', None)
                     manager.verify_proxies(
                         force=False, 
-                        max_workers=PROXY_VERIFY_WORKERS, 
+                        max_workers=get_proxy_verify_workers_value(), 
                         test_url=test_url, 
                         expected_content=expected_content
                     )
@@ -683,10 +800,9 @@ class PlaywrightBaseCrawler(BaseCrawler):
                     user_agent=ua,
                 )
                 profile_dir = None
-            
-            # 注入高级 stealth 脚本（无论是否 persistent context 都执行）
-            if self.enable_stealth:
-                apply_stealth(context, browser_type=self.browser_type)
+                # 非持久化上下文模式下注入 stealth
+                if self.enable_stealth:
+                    apply_stealth(context, browser_type=self.browser_type)
                 
             self.thread_local.playwright = p
             self.thread_local.browser = browser
@@ -875,10 +991,10 @@ class DomainRotationMixin:
             
             # 所有域名都在冷却中
             if len(self.domains) > 1:
-                min_wait = min(
+                min_wait = max(0, min(
                     self._cooldown_seconds - (now - self._domain_cooldown.get(d, 0))
                     for d in self.domains
-                )
+                ))
                 wait_time = max(min_wait, 10) + random.uniform(2, 5)
                 print(f"[!] 所有域名均在冷却中，等待 {wait_time:.1f} 秒...")
                 time.sleep(wait_time)

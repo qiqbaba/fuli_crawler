@@ -15,6 +15,8 @@ class DynamoDBDeduplicationService:
         self.use_gsi = True
         self._lock = threading.Lock()          # 线程安全锁
         self._scanned_resource_links = None    # 扫描结果本地缓存
+        self._scan_cache_time = 0.0            # 扫描缓存的时间戳
+        self._scan_cache_ttl = 300             # 扫描缓存 TTL（秒），5 分钟后过期
         self._cached_urls = set()              # 新插入的 URL 缓存
         self._cached_resource_links = set()    # 新插入的磁力链接缓存
         self._executor = None                  # 线程池延迟加载
@@ -116,10 +118,13 @@ class DynamoDBDeduplicationService:
                     if url_val:
                         existing.add(url_val)
                 
-                # 处理未处理完的 Keys
+                # 处理未处理完的 Keys（最大重试 5 次）
                 unprocessed = response.get("UnprocessedKeys", {}).get(self.table_name, {})
-                while unprocessed and "Keys" in unprocessed and unprocessed["Keys"]:
-                    time.sleep(0.5)  # 退避重试
+                max_retries = 5
+                retry_count = 0
+                while unprocessed and "Keys" in unprocessed and unprocessed["Keys"] and retry_count < max_retries:
+                    retry_count += 1
+                    time.sleep(0.5 * (1 + retry_count * 0.5))  # 退避重试，逐渐增加等待
                     response = self.client.batch_get_item(RequestItems=unprocessed)
                     responses = response.get("Responses", {}).get(self.table_name, [])
                     for item in responses:
@@ -127,6 +132,8 @@ class DynamoDBDeduplicationService:
                         if url_val:
                             existing.add(url_val)
                     unprocessed = response.get("UnprocessedKeys", {}).get(self.table_name, {})
+                if unprocessed and "Keys" in unprocessed and unprocessed["Keys"]:
+                    print(f"[!] AWS DynamoDB filter_existing_urls 有 {len(unprocessed['Keys'])} 个未处理 Keys，已超过最大重试次数 {max_retries}")
             except Exception as e:
                 print(f"[-] AWS DynamoDB filter_existing_urls 失败: {e}")
         return existing
@@ -182,13 +189,14 @@ class DynamoDBDeduplicationService:
                 print(f"[-] AWS DynamoDB query GSI 失败: {e}")
                 return existing
 
-        # 回退到 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link）
-        if self._scanned_resource_links is None:
-            print("[*] 正在执行首次 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
+        # 回退到 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link，带 TTL 过期）
+        if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
+            print("[*] 正在执行 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
             with self._lock:
-                if self._scanned_resource_links is None:  # 双重检查锁定
+                if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:  # 双重检查锁定
                      self._scanned_resource_links = self.get_all_resource_links_by_scan()
-                     print(f"[+] 首次扫描缓存同步完成，已加载 {len(self._scanned_resource_links)} 条磁力链接。")
+                     self._scan_cache_time = time.time()
+                     print(f"[+] 扫描缓存同步完成，已加载 {len(self._scanned_resource_links)} 条磁力链接，缓存 TTL {self._scan_cache_ttl} 秒。")
 
         with self._lock:
             for link in links_to_query:
@@ -259,13 +267,17 @@ class DynamoDBDeduplicationService:
             )
         except Exception as e:
             # 异步写入失败不应影响主流程，记录即可
-            pass
             print(f"[-] AWS DynamoDB 异步写入记录失败 ({url}): {e}")
 
     def shutdown(self):
-        """在爬虫关闭时清理后台线程池"""
+        """在爬虫关闭时清理后台线程池并关闭 DynamoDB 客户端连接"""
         if self._executor:
             try:
                 self._executor.shutdown(wait=True)
             except Exception as e:
-                print(f"[-] DynamoDBDeduplicationService shutdown 异常: {e}")
+                print(f"[-] DynamoDBDeduplicationService shutdown executor 异常: {e}")
+        if self.client:
+            try:
+                self.client.close()
+            except Exception as e:
+                print(f"[-] DynamoDBDeduplicationService shutdown client 异常: {e}")

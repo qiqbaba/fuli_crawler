@@ -10,6 +10,7 @@ from utils.proxy_manager import get_proxy_dict, get_proxy_manager
 try:
     from utils.pikpak_extractor import get_pikpak_link
 except ImportError:
+    print("[!] 警告: 无法导入 pikpak_extractor，PikPak 链接解析功能将不可用")
     def get_pikpak_link(url, timeout=30, poll_interval=2, quiet=False):
         return url
 
@@ -29,11 +30,11 @@ class U3c3Crawler(BaseCrawler):
         from config import is_proxy_manager_enabled
         if is_proxy_manager_enabled():
             print("[*] 代理管理器已启用，正在获取和验证代理IP...")
-            from config import PROXY_VERIFY_WORKERS
+            from config import get_proxy_verify_workers_value
             manager = get_proxy_manager()
             if manager:
                 manager.fetch_proxies(force=False)
-                manager.verify_proxies(force=False, max_workers=PROXY_VERIFY_WORKERS, test_url="https://u3c3.com/")
+                manager.verify_proxies(force=False, max_workers=get_proxy_verify_workers_value(), test_url="https://u3c3.com/")
                 stats = manager.get_stats()
                 print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个")
 
@@ -168,8 +169,8 @@ class U3c3Crawler(BaseCrawler):
         real_pikpak = None
         if pikpak_link:
             try:
-                # 限制超时为 5 秒，防止未缓存链接导致爬虫长时间阻塞
-                real_pikpak = get_pikpak_link(pikpak_link, timeout=5, quiet=self.quiet)
+                # 限制超时为 30 秒（与 pikpak_extractor 函数默认值一致），防止过短超时导致频繁解析失败
+                real_pikpak = get_pikpak_link(pikpak_link, timeout=30, quiet=self.quiet)
             except Exception:
                 pass
             if not real_pikpak:

@@ -1,4 +1,8 @@
 import os
+from functools import lru_cache
+
+# ========== 项目根目录（用于解析相对路径，跨平台兼容） ==========
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # 尝试加载本地 .env 文件（本地开发时使用，CI 环境中无效但无副作用）
 try:
@@ -30,10 +34,10 @@ def is_local_mode():
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
-# 本地 SQLite 回退路径（仅本地开发使用）
+# 本地 SQLite 回退路径（优先检查项目根目录，跨平台兼容）
 _LOCAL_DB_PATHS = [
-    r"d:\programme\seju\all_data.db",
-    r"d:\seju\all_data.db"
+    os.path.join(PROJECT_ROOT, "..", "seju", "all_data.db"),
+    os.path.join(PROJECT_ROOT, "..", "..", "seju", "all_data.db")
 ]
 DB_PATHS = _LOCAL_DB_PATHS
 
@@ -43,8 +47,7 @@ def get_db_path():
     for path in _LOCAL_DB_PATHS:
         if os.path.exists(path):
             return path
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(current_dir, "all_data.db")
+    return os.path.join(PROJECT_ROOT, "all_data.db")
 
 def use_supabase():
     """判断是否使用 Supabase（通过环境变量是否配置来决定）"""
@@ -70,17 +73,16 @@ def _get_default_pdf_base_dir():
     pdf_dir = os.environ.get("PDF_BASE_DIR")
     if pdf_dir:
         return pdf_dir
-    # 否则，如果是本地模式，检查默认的几个备选路径
+    # 否则，如果是本地模式，检查默认的几个备选路径（相对于项目根目录）
     _LOCAL_PDF_PATHS = [
-        r"d:\programme\seju\pdf",
-        r"d:\seju\pdf"
+        os.path.join(PROJECT_ROOT, "..", "seju", "pdf"),
+        os.path.join(PROJECT_ROOT, "..", "..", "seju", "pdf")
     ]
     for path in _LOCAL_PDF_PATHS:
         if os.path.exists(path):
             return path
     # 默认 fallback 到当前目录下的 pdf 子目录
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(current_dir, "pdf")
+    return os.path.join(PROJECT_ROOT, "pdf")
 
 PDF_BASE_DIR = _get_default_pdf_base_dir()
 
@@ -91,6 +93,11 @@ AWS_REGION = os.environ.get("AWS_REGION", "ap-northeast-1")
 
 # ========== 反爬 User-Agent 列表 ==========
 USER_AGENTS = [
+    # Chrome 120 (与爬虫 impersonate="chrome120" 版本对齐，减少指纹不一致风险)
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     # Chrome (Windows)
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
@@ -130,11 +137,17 @@ PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "43200"))
 PROXY_VERIFY_TIMEOUT = int(os.environ.get("PROXY_VERIFY_TIMEOUT", "10"))
 # 代理验证时是否校验 SSL 证书（默认 True，关闭存在 MITM 风险）
 PROXY_VERIFY_SSL = os.environ.get("PROXY_VERIFY_SSL", "true").lower() == "true"
-# 代理验证并发线程数
-def get_auto_workers(base_multiplier=30, max_limit=300, min_limit=50):
+# 代理验证并发线程数（惰性求值，首次访问时根据硬件计算）
+@lru_cache(maxsize=None)
+def get_proxy_verify_workers():
     """
     根据设备的 CPU 核心数和内存大小动态计算代理验证的最大并发协程数
+    使用 lru_cache 确保仅计算一次，避免模块导入时立即执行耗时操作
     """
+    return _compute_auto_workers()
+
+
+def _compute_auto_workers(base_multiplier=30, max_limit=300, min_limit=50):
     import sys
     try:
         # 1. 获取 CPU 核心数
@@ -169,14 +182,25 @@ def get_auto_workers(base_multiplier=30, max_limit=300, min_limit=50):
     # 限制在安全区间内 [min_limit, max_limit]
     return max(min_limit, min(workers, max_limit))
 
-_env_workers = os.environ.get("PROXY_VERIFY_WORKERS")
-if _env_workers:
+
+# ========== 代理验证并发数（惰性求值，不再在模块导入时计算） ==========
+# 环境变量优先级最高，其次使用惰性计算的值
+_get_proxy_workers_env = os.environ.get("PROXY_VERIFY_WORKERS")
+if _get_proxy_workers_env:
     try:
-        PROXY_VERIFY_WORKERS = int(_env_workers)
+        PROXY_VERIFY_WORKERS = int(_get_proxy_workers_env)
     except ValueError:
-        PROXY_VERIFY_WORKERS = get_auto_workers()
+        # 环境变量格式错误时留空，由 get_proxy_verify_workers() 惰性计算
+        PROXY_VERIFY_WORKERS = None
 else:
-    PROXY_VERIFY_WORKERS = get_auto_workers()
+    PROXY_VERIFY_WORKERS = None
+
+
+def get_proxy_verify_workers_value():
+    """获取代理验证并发数（环境变量优先，否则惰性计算硬件适配值）"""
+    if PROXY_VERIFY_WORKERS is not None:
+        return PROXY_VERIFY_WORKERS
+    return get_proxy_verify_workers()
 
 # ========== 运行时代理覆盖（由 main.py 命令行参数设置） ==========
 _runtime_proxy_override = None

@@ -14,6 +14,27 @@ from crawlers.jingpin_toupai_crawler import JingpinToupaiCrawler
 # Windows下控制台强制使用utf-8编码输出，防止中文乱码
 setup_console_utf8()
 
+# 爬虫注册表：集中管理所有爬虫的类、默认结束页码、默认并发数
+CRAWLER_REGISTRY = {
+    "seju":         (SejuCrawler,         4,  8),
+    "u3c3":         (U3c3Crawler,        20, 50),
+    "datang":       (DatangCrawler,       60, 8),
+    "gcbt":         (GcbtCrawler,         20, 8),
+    "madou":        (MadouCrawler,        60, 8),
+    "jingpin_toupai": (JingpinToupaiCrawler, 20, 8),
+}
+
+# 交互式爬虫选择菜单
+CRAWLER_CHOICES = [
+    ("seju", "seju (默认)"),
+    ("u3c3", "u3c3"),
+    ("datang", "datang"),
+    ("gcbt", "gcbt"),
+    ("madou", "madou"),
+    ("jingpin_toupai", "jingpin_toupai"),
+]
+
+
 def main():
     parser = argparse.ArgumentParser(description="多网站通用数据爬虫统一入口")
     parser.add_argument(
@@ -132,29 +153,22 @@ def main():
     # 如果没有指定 --crawler，进行交互式交互询问
     if not args.crawler:
         print("[*] 未通过命令行指定爬虫模块，请选择要运行的爬虫：")
-        print("    1. seju (默认)")
-        print("    2. u3c3")
-        print("    3. datang")
-        print("    4. gcbt")
-        print("    5. madou")
-        print("    6. jingpin_toupai")
+        for i, (key, label) in enumerate(CRAWLER_CHOICES, 1):
+            print(f"    {i}. {label}")
         try:
-            choice = input("请输入序号 [1/2/3/4/5/6] (直接回车默认 1): ").strip()
-            if choice == "2":
-                args.crawler = "u3c3"
-            elif choice == "3":
-                args.crawler = "datang"
-            elif choice == "4":
-                args.crawler = "gcbt"
-            elif choice == "5":
-                args.crawler = "madou"
-            elif choice == "6":
-                args.crawler = "jingpin_toupai"
+            choice = input(f"请输入序号 [1-{len(CRAWLER_CHOICES)}] (直接回车默认 1): ").strip()
+            choice_idx = 1  # 默认
+            if choice:
+                choice_idx = int(choice)
+            if 1 <= choice_idx <= len(CRAWLER_CHOICES):
+                args.crawler = CRAWLER_CHOICES[choice_idx - 1][0]
             else:
                 args.crawler = "seju"
         except (KeyboardInterrupt, EOFError):
             print("\n[-] 运行已取消")
             sys.exit(0)
+        except ValueError:
+            args.crawler = "seju"
     
     # 设定全局运行模式
     if args.mode != "auto":
@@ -206,36 +220,11 @@ def main():
     crawler = None
     default_end = 1
     
-    if args.crawler == "seju":
-        crawler = SejuCrawler(db_manager)
-        default_end = 4
+    if args.crawler in CRAWLER_REGISTRY:
+        crawler_cls, default_end, default_workers = CRAWLER_REGISTRY[args.crawler]
+        crawler = crawler_cls(db_manager)
         if args.workers is None:
-            args.workers = 8
-    elif args.crawler == "u3c3":
-        crawler = U3c3Crawler(db_manager)
-        default_end = 20
-        if args.workers is None:
-            args.workers = 50
-    elif args.crawler == "datang":
-        crawler = DatangCrawler(db_manager)
-        default_end = 60
-        if args.workers is None:
-            args.workers = 8
-    elif args.crawler == "gcbt":
-        crawler = GcbtCrawler(db_manager)
-        default_end = 20
-        if args.workers is None:
-            args.workers = 8
-    elif args.crawler == "madou":
-        crawler = MadouCrawler(db_manager)
-        default_end = 60
-        if args.workers is None:
-            args.workers = 8
-    elif args.crawler == "jingpin_toupai":
-        crawler = JingpinToupaiCrawler(db_manager)
-        default_end = 20
-        if args.workers is None:
-            args.workers = 8
+            args.workers = default_workers
         
     if crawler is None:
         print(f"[-] 找不到指定的爬虫: {args.crawler}")

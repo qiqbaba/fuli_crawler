@@ -7,11 +7,9 @@ import threading
 from curl_cffi import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-from playwright.sync_api import sync_playwright
 
-from config import USER_AGENTS, is_local_mode
 from crawlers.base_crawler import PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin
-from utils.proxy_manager import get_proxy_string, get_proxy_dict, get_proxy_manager
+from utils.proxy_manager import get_proxy_dict
 
 
 class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
@@ -69,27 +67,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             ]
         )
 
-    def _build_headers(self, referer=None):
-        """构造浏览器请求头，绕过 TLS 指纹检测"""
-        ua = random.choice(USER_AGENTS)
-        headers = {
-            "User-Agent": ua,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0",
-        }
-        if referer:
-            headers["Referer"] = referer
-        else:
-            headers["Referer"] = self.base_domain + "/"
-        return headers
+    # _build_headers 已提取到 BaseCrawler 基类中
 
     # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
@@ -155,7 +133,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         try:
             decoded_bytes = base64.b64decode(j_b64_str)
             decoded_json = decoded_bytes.decode('utf-8')
-            data = json.loads(decoded_json) if 'json' in globals() else __import__('json').loads(decoded_json)
+            data = json.loads(decoded_json)
             
             items = data.get('l', {}).get('a', [])
             sub_urls = []
@@ -217,7 +195,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         try:
             decoded_bytes = base64.b64decode(j_b64_str)
             decoded_json = decoded_bytes.decode('utf-8')
-            data = json.loads(decoded_json) if 'json' in globals() else __import__('json').loads(decoded_json)
+            data = json.loads(decoded_json)
 
             title = data.get('name', '无标题').strip()
             pub_time = "Unknown_Date" # 原始数据未直接暴露发布时间，留空

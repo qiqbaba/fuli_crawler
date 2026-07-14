@@ -1,6 +1,5 @@
 import os
 import re
-import base64
 import random
 import time
 import threading
@@ -8,10 +7,8 @@ from curl_cffi import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
-from config import USER_AGENTS, is_local_mode
 from crawlers.base_crawler import PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin
-from utils.proxy_manager import get_proxy_string, get_proxy_dict
-from utils.metadata_parser import sanitize_filename
+from utils.proxy_manager import get_proxy_dict
 
 
 class MadouCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
@@ -44,56 +41,10 @@ class MadouCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
             ]
         )
 
-    def _build_headers(self, referer=None):
-        """构造完整的浏览器请求头，模拟真实浏览器行为"""
-        ua = random.choice(USER_AGENTS)
-        headers = {
-            "User-Agent": ua,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-User": "?1",
-            "Cache-Control": "max-age=0",
-        }
-        if referer:
-            headers["Referer"] = referer
-        else:
-            headers["Referer"] = self.base_domain + "/"
-        return headers
+    # _build_headers 已提取到 BaseCrawler 基类中
 
 
-    def on_start(self):
-        """初始化 R2 上传器和代理管理器"""
-        self.r2_uploader = get_r2_uploader()
-        if self.r2_uploader:
-            print("[*] Cloudflare R2 上传器已启用", flush=True)
-        else:
-            if is_local_mode():
-                print("[*] 本地模式已激活，PDF 将保存到本地目录", flush=True)
-            else:
-                print("[*] 未配置 R2 环境变量，PDF 将保存到本地目录", flush=True)
-        
-        # 初始化代理管理器
-        from config import is_proxy_manager_enabled
-        print(f"[DEBUG] is_proxy_manager_enabled() = {is_proxy_manager_enabled()}", flush=True)
-        if is_proxy_manager_enabled():
-            print("[*] 代理管理器已启用，正在获取和验证代理IP...", flush=True)
-            from utils.proxy_manager import get_proxy_manager
-            from config import PROXY_VERIFY_WORKERS
-            try:
-                manager = get_proxy_manager()
-                if manager:
-                    manager.fetch_proxies(force=False)
-                    manager.verify_proxies(force=False, max_workers=PROXY_VERIFY_WORKERS, test_url=self.base_domain)
-                    stats = manager.get_stats()
-                    print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个", flush=True)
-            except Exception as e:
-                print(f"[DEBUG] 初始化代理管理器时发生异常: {e}", flush=True)
+    # on_start 继承自 PlaywrightBaseCrawler，无需重复实现
 
 
 

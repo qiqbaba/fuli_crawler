@@ -1,16 +1,9 @@
 import os
 import re
-import threading
-import time
-import random
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
-from curl_cffi import requests
-from config import USER_AGENTS, is_local_mode
+from config import is_local_mode
 from crawlers.base_crawler import PlaywrightBaseCrawler
-from utils.date_parser import parse_date
-from utils.proxy_manager import get_proxy_string, get_proxy_dict, get_proxy_manager
-from utils.metadata_parser import sanitize_filename
 
 
 class GcbtCrawler(PlaywrightBaseCrawler):
@@ -51,45 +44,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
             return self.base_url
         return urljoin(self.base_url, f"page/{page_num}")
 
-    def _http_get(self, url, timeout=20):
-        """使用 curl_cffi 模拟浏览器获取 URL，最多重试 3 次，都失败再跳过"""
-        for attempt in range(1, 4):
-            proxies = None
-            crawler_proxy = None
-            try:
-                ua = random.choice(USER_AGENTS)
-                headers = {"User-Agent": ua}
-                
-                from config import get_crawler_proxy, is_proxy_manager_enabled
-                crawler_proxy = get_crawler_proxy()
-                if crawler_proxy:
-                    proxies = {"http": crawler_proxy, "https": crawler_proxy}
-                elif is_proxy_manager_enabled():
-                    proxies = get_proxy_dict()
-                
-                r = requests.get(url, headers=headers, impersonate="chrome120", timeout=timeout, proxies=proxies)
-                r.encoding = 'utf-8'
-                if r.status_code == 200:
-                    return r.url, r.text
-                else:
-                    print(f"[-] HTTP 请求失败 ({url}) [第 {attempt}/3 次尝试]: 状态码 {r.status_code}")
-                    if r.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
-                        manager = get_proxy_manager()
-                        if manager and "http" in proxies:
-                            manager.report_failure(proxies["http"])
-            except Exception as e:
-                print(f"[-] HTTP 请求异常 ({url}) [第 {attempt}/3 次尝试]: {e}")
-                if proxies and is_proxy_manager_enabled():
-                    manager = get_proxy_manager()
-                    if manager and "http" in proxies:
-                        manager.report_failure(proxies["http"])
-            
-            if attempt < 3:
-                time.sleep(random.uniform(1.0, 3.0))
-                
-        return url, None
-
-
+    # _http_get 继承自 BaseCrawler，无需重复实现
 
     def fetch_list_page(self, page_num):
         """抓取列表页内容"""

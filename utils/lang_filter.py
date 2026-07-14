@@ -17,14 +17,21 @@ JAPANESE_CHAR_RATIO_THRESHOLD = 0.2
 try:
     from lingua import Language, LanguageDetectorBuilder
 
-    # 只加载日语和中文模型，最小化资源占用
-    _detector = LanguageDetectorBuilder.from_languages(
-        Language.JAPANESE, Language.CHINESE
-    ).with_minimum_relative_distance(0.5).build()
-
     _LINGUA_AVAILABLE = True
+    _detector = None  # 惰性加载，首次使用时才构建
 except ImportError:
     _LINGUA_AVAILABLE = False
+
+
+def _get_detector():
+    """惰性初始化 LanguageDetector，仅在首次调用时加载模型"""
+    global _detector
+    if _detector is None and _LINGUA_AVAILABLE:
+        # 只加载日语和中文模型，最小化资源占用
+        _detector = LanguageDetectorBuilder.from_languages(
+            Language.JAPANESE, Language.CHINESE
+        ).with_minimum_relative_distance(0.5).build()
+    return _detector
 
 
 def is_japanese(text):
@@ -58,7 +65,10 @@ def is_japanese(text):
         return True
 
     try:
-        lang = _detector.detect_language_of(text)
+        detector = _get_detector()
+        if detector is None:
+            return True
+        lang = detector.detect_language_of(text)
         return lang == Language.JAPANESE
     except Exception:
         return False

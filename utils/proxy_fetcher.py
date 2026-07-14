@@ -4,6 +4,7 @@
 """
 import re
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict
 
 # ========== 代理源配置 ==========
@@ -77,27 +78,39 @@ class ProxyFetcher:
     def __init__(self, sources: Dict[str, str] = None):
         self.sources = sources or PROXY_SOURCES
 
-    def fetch_all(self) -> List[Dict[str, str]]:
+def fetch_all(self, max_workers: int = 20) -> List[Dict[str, str]]:
         """
-        从所有配置 of 每一个源获取代理IP并去重返回
-        
+        从所有配置的源并发获取代理IP并去重返回
+
+        Args:
+            max_workers: 并发线程数，默认 20
+
         Returns:
             获取到的代理元信息列表，格式例如:
             [{"protocol": "http", "address": "ip:port", "source": "..."}]
         """
-        print(f"[ProxyFetcher] 开始从 {len(self.sources)} 个源获取代理IP...")
+        print(f"[ProxyFetcher] 开始从 {len(self.sources)} 个源并发获取代理IP（并发数={max_workers}）...")
         all_proxies = {}  # 使用字典去重
 
-        for source_name, url in self.sources.items():
-            try:
-                proxies = self._fetch_from_source(source_name, url)
-                for proxy in proxies:
-                    key = f"{proxy['protocol']}://{proxy['address']}"
-                    if key not in all_proxies:
-                        all_proxies[key] = proxy
-                print(f"[ProxyFetcher]   {source_name}: 获取到 {len(proxies)} 个代理")
-            except Exception as e:
-                print(f"[ProxyFetcher]   {source_name}: 获取失败 - {e}")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 提交所有任务
+            future_map = {
+                executor.submit(self._fetch_from_source, name, url): name
+                for name, url in self.sources.items()
+            }
+
+            # 逐个收集结果
+            for future in as_completed(future_map):
+                source_name = future_map[future]
+                try:
+                    proxies = future.result()
+                    for proxy in proxies:
+                        key = f"{proxy['protocol']}://{proxy['address']}"
+                        if key not in all_proxies:
+                            all_proxies[key] = proxy
+                    print(f"[ProxyFetcher]   {source_name}: 获取到 {len(proxies)} 个代理")
+                except Exception as e:
+                    print(f"[ProxyFetcher]   {source_name}: 获取失败 - {e}")
 
         print(f"[ProxyFetcher] 共获取到 {len(all_proxies)} 个唯一代理")
         return list(all_proxies.values())
