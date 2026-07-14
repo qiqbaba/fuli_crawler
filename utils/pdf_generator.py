@@ -41,6 +41,27 @@ class PDFGenerator:
     """通用的 PDF 生成与存储归档服务"""
     def __init__(self, r2_uploader=None):
         self.r2_uploader = r2_uploader
+        self.http_session = aiohttp.ClientSession()
+    
+    def close(self):
+        """关闭HTTP会话，释放资源"""
+        import asyncio
+        if self.http_session and not self.http_session.closed:
+            try:
+                # 尝试获取当前事件循环
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # 如果事件循环正在运行，创建任务关闭会话
+                    loop.create_task(self.http_session.close())
+                else:
+                    # 如果事件循环未运行，直接运行关闭会话
+                    loop.run_until_complete(self.http_session.close())
+            except Exception as e:
+                logger.warning("关闭HTTP会话失败: %s", e)
+    
+    def __del__(self):
+        """析构函数，确保HTTP会话被关闭"""
+        self.close()
 
     def _get_pdf_local_tmp_path(self, publish_date, title, source_name):
         """获取 PDF 本地临时/持久化保存路径"""
@@ -101,8 +122,7 @@ class PDFGenerator:
                             "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
                         }
                         
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                        async with self.http_session.get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
                                 if r.status == 200:
                                     content = await r.read()
                                     content_type = r.headers.get("Content-Type", "image/jpeg")

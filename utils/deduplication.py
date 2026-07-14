@@ -166,16 +166,25 @@ class DynamoDBDeduplicationService:
 
         if self.use_gsi:
             try:
-                for link in links_to_query:
+                # 使用 IN 操作符批量查询，每批最多 100 个值（DynamoDB 限制）
+                for i in range(0, len(links_to_query), 100):
+                    chunk = links_to_query[i:i+100]
+                    # 构建 IN 表达式: resource_link IN (:v0, :v1, ...)
+                    placeholders = [f":v{j}" for j in range(len(chunk))]
+                    in_expr = "resource_link IN (" + ", ".join(placeholders) + ")"
+                    attr_values = {f":v{j}": {"S": link} for j, link in enumerate(chunk)}
+
                     response = self.client.query(
                         TableName=self.table_name,
                         IndexName="resource_link-index",
-                        KeyConditionExpression="resource_link = :rl",
-                        ExpressionAttributeValues={":rl": {"S": link}},
+                        KeyConditionExpression=in_expr,
+                        ExpressionAttributeValues=attr_values,
                         ProjectionExpression="resource_link"
                     )
-                    if response.get("Items"):
-                        existing.add(link)
+                    for item in response.get("Items", []):
+                        link_val = item.get("resource_link", {}).get("S")
+                        if link_val:
+                            existing.add(link_val)
                 return existing
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code")
@@ -185,6 +194,24 @@ class DynamoDBDeduplicationService:
                     logger.warning("正在回退到 Scan 缓存兼容模式。")
                     logger.warning("为了更好的性能，建议您在 AWS DynamoDB 控制台中为表 fuli_resources 创建二级索引（分区键: resource_link, 索引名: resource_link-index）。")
                     self.use_gsi = False
+                    # 回退到 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link，带 TTL 过期）
+                    needs_scan = False
+                    with self._lock:
+                        if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
+                            needs_scan = True
+                    if needs_scan:
+                        logger.info("正在执行 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
+                        with self._lock:
+                            if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
+                                 self._scanned_resource_links = self.get_all_resource_links_by_scan()
+                                 self._scan_cache_time = time.time()
+                                 logger.info("扫描缓存同步完成，已加载 %s 条磁力链接，缓存 TTL %s 秒。", len(self._scanned_resource_links), self._scan_cache_ttl)
+
+                    with self._lock:
+                        for link in links_to_query:
+                            if link in self._scanned_resource_links:
+                                existing.add(link)
+                    return existing
                 else:
                     logger.error("AWS DynamoDB query GSI 失败: %s", e)
                     return existing
@@ -192,7 +219,7 @@ class DynamoDBDeduplicationService:
                 logger.error("AWS DynamoDB query GSI 失败: %s", e)
                 return existing
 
-        # 回退到 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link，带 TTL 过期）
+        # 正常使用 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link，带 TTL 过期）
         needs_scan = False
         with self._lock:
             if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
