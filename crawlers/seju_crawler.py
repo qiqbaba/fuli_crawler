@@ -37,25 +37,42 @@ class SejuCrawler(PlaywrightBaseCrawler):
         return self.base_url.format(page_num)
 
     def _wait_for_cloudflare_bypass(self, page, timeout_sec=60):
-        """检测并等待 Cloudflare Challenge (Just a moment...) 页面自动重定向通过。"""
+        """检测并等待 Cloudflare Challenge (Just a moment...) 页面自动重定向通过。
+        
+        优先使用 page.wait_for_url() 等待非 Cloudflare URL，减少轮询次数。
+        若 wait_for_url 超时，则回退到轻量轮询（仅检查 title）。
+        """
         from config import is_local_mode
         start_time = time.time()
+        
+        # 第一步：尝试用 wait_for_url 等待跳转到非 Cloudflare URL
+        try:
+            page.wait_for_url(
+                lambda url: "cloudflare" not in url.lower(),
+                timeout=timeout_sec * 1000
+            )
+            logger.info("[+] 已通过 wait_for_url 绕过 Cloudflare。当前 URL: %s", page.url)
+            return True
+        except Exception:
+            # wait_for_url 超时，回退到轻量轮询
+            pass
+        
+        # 第二步：回退轮询（仅检查 title，减少 page.title() 调用频率）
         while time.time() - start_time < timeout_sec:
             try:
                 title = page.title()
-                url = page.url
-                if "Just a moment..." in title or "cloudflare" in url or "cloudflare" in title.lower():
-                    logger.info("[*] 检测到 Cloudflare 盾页面，正在等待自动解盾... (当前 Title: '%s')", title)
+                if "Just a moment..." in title:
                     if is_local_mode():
                         logger.warning("[!] 【有头辅助提示】检测到验证码，若卡在此处，请在弹出的浏览器窗口中手动完成验证。")
-                    time.sleep(1.5)
+                    time.sleep(2.0)  # 增加间隔，减少轮询次数
                 else:
-                    logger.info("[+] 疑似已绕过 Cloudflare。当前 Title: '%s', URL: %s", title, url)
+                    logger.info("[+] 疑似已绕过 Cloudflare。当前 Title: '%s', URL: %s", title, page.url)
                     return True
             except Exception as e:
                 logger.error("[-] 检查 Cloudflare 状态时异常: %s", e)
-                time.sleep(1.5)
+                time.sleep(2.0)
         
+        # 最终检查
         try:
             final_title = page.title()
             if "Just a moment..." not in final_title and "cloudflare" not in page.url:
