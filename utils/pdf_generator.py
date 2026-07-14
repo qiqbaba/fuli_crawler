@@ -238,6 +238,11 @@ class PDFGenerator:
 
         try:
             if is_reuse_page:
+                # 挂载图片代理（复用页面也需启用）
+                if config.need_img_proxy:
+                    self._setup_image_proxy(page)
+                # 注册广告网络层拦截
+                self._setup_ad_blocking_route(page, config)
                 # 1. 屏蔽广告
                 self._apply_ad_blocking(page, config)
                 # 2. 模拟排版
@@ -270,13 +275,13 @@ class PDFGenerator:
                 # 前置访问
                 if config.pre_access_url:
                     try:
-                        page.goto(config.pre_access_url, timeout=20000, wait_until="domcontentloaded")
+                        page.goto(config.pre_access_url, timeout=20000, wait_until="networkidle")
                         time.sleep(1.5)
                     except Exception as e_home:
                         print(f"[!] 前置访问异常: {e_home}")
 
                 # 加载真正的详情页
-                goto_args = {"timeout": 30000, "wait_until": "domcontentloaded"}
+                goto_args = {"timeout": 30000, "wait_until": "networkidle"}
                 if config.referer:
                     goto_args["referer"] = config.referer
                 page.goto(target_url, **goto_args)

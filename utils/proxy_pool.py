@@ -45,6 +45,9 @@ class ProxyPool:
         # 确保缓存目录存在
         os.makedirs(_PROXY_CACHE_DIR, exist_ok=True)
         
+        # 清理过期的 .bak 备份文件
+        self._cleanup_bak_files()
+        
         # 初始化 SQLite 缓存数据库表结构
         self._init_cache_db()
         
@@ -54,10 +57,26 @@ class ProxyPool:
         # 加载缓存
         self._load_cache()
 
+    def _cleanup_bak_files(self):
+        """清理 temp_profiles 目录下过期的 .bak 备份文件"""
+        try:
+            bak_dir = _PROXY_CACHE_DIR
+            for fname in os.listdir(bak_dir):
+                if fname.endswith(".bak"):
+                    fpath = os.path.join(bak_dir, fname)
+                    try:
+                        os.remove(fpath)
+                        print(f"[ProxyPool] 清理过期备份文件: {fname}")
+                    except Exception as e:
+                        print(f"[ProxyPool] 清理备份文件失败 {fname}: {e}")
+        except Exception as e:
+            print(f"[ProxyPool] 扫描备份文件时出错: {e}")
+
     def _init_cache_db(self):
-        """初始化 SQLite 缓存数据库表结构"""
+        """初始化 SQLite 缓存数据库表结构，启用 WAL 模式以提升并发读写性能"""
         try:
             conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
+            conn.execute("PRAGMA journal_mode=WAL;")
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS proxy_cache (

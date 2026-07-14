@@ -193,7 +193,12 @@ class ProxyVerifier:
                 t = asyncio.create_task(worker())
                 workers.append(t)
 
-            await asyncio.gather(*workers, return_exceptions=True)
+            gather_results = await asyncio.gather(*workers, return_exceptions=True)
+
+            # 检查 worker 是否有异常被静默吞掉
+            for i, r in enumerate(gather_results):
+                if isinstance(r, Exception):
+                    print(f"[ProxyVerifier] Worker {i} 发生未捕获异常: {r}")
 
         # 检测是否已在异步上下文中（有事件循环正在运行）
         try:
