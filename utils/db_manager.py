@@ -128,11 +128,15 @@ class SupabaseDBManager(BaseDBManager):
     def insert_resource(self, data):
         """
         持久化与去重双写逻辑：
-        1. 云端 Supabase 持久化写入
+        1. 云端 Supabase 持久化写入（网络异常时 raise）
         2. 写入成功时，同步向 AWS DynamoDB 插入 URL 与资源链接做去重标记
+        
+        返回：
+            True: 新增成功
+            False: 已存在（被 ignore）
         """
         result = self.persistence.insert_resource(data)
         if result is True:
             self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'))
             return True
-        return result
+        return False

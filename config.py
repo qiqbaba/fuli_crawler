@@ -137,13 +137,18 @@ PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "43200"))
 PROXY_VERIFY_TIMEOUT = int(os.environ.get("PROXY_VERIFY_TIMEOUT", "10"))
 # 代理验证时是否校验 SSL 证书（默认 True，关闭存在 MITM 风险）
 PROXY_VERIFY_SSL = os.environ.get("PROXY_VERIFY_SSL", "true").lower() == "true"
-# 代理验证并发线程数（惰性求值，首次访问时根据硬件计算）
+# 代理验证并发线程数（惰性求值，首次访问时根据环境变量或硬件计算）
 @lru_cache(maxsize=None)
 def get_proxy_verify_workers():
     """
-    根据设备的 CPU 核心数和内存大小动态计算代理验证的最大并发协程数
-    使用 lru_cache 确保仅计算一次，避免模块导入时立即执行耗时操作
+    获取代理验证并发数（环境变量 PROXY_VERIFY_WORKERS 优先，否则惰性计算硬件适配值）
     """
+    env_val = os.environ.get("PROXY_VERIFY_WORKERS")
+    if env_val:
+        try:
+            return int(env_val)
+        except ValueError:
+            pass
     return _compute_auto_workers()
 
 
@@ -182,25 +187,6 @@ def _compute_auto_workers(base_multiplier=30, max_limit=300, min_limit=50):
     # 限制在安全区间内 [min_limit, max_limit]
     return max(min_limit, min(workers, max_limit))
 
-
-# ========== 代理验证并发数（惰性求值，不再在模块导入时计算） ==========
-# 环境变量优先级最高，其次使用惰性计算的值
-_get_proxy_workers_env = os.environ.get("PROXY_VERIFY_WORKERS")
-if _get_proxy_workers_env:
-    try:
-        PROXY_VERIFY_WORKERS = int(_get_proxy_workers_env)
-    except ValueError:
-        # 环境变量格式错误时留空，由 get_proxy_verify_workers() 惰性计算
-        PROXY_VERIFY_WORKERS = None
-else:
-    PROXY_VERIFY_WORKERS = None
-
-
-def get_proxy_verify_workers_value():
-    """获取代理验证并发数（环境变量优先，否则惰性计算硬件适配值）"""
-    if PROXY_VERIFY_WORKERS is not None:
-        return PROXY_VERIFY_WORKERS
-    return get_proxy_verify_workers()
 
 # ========== 运行时代理覆盖（由 main.py 命令行参数设置） ==========
 _runtime_proxy_override = None

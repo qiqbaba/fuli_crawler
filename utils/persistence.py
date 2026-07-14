@@ -171,7 +171,7 @@ class SupabasePersistenceService:
             return False
         except Exception as e:
             print(f"[-] Supabase insert_resource 失败 (网络/API 错误): {e}")
-            return None
+            raise
 
     def commit(self):
         """Supabase 自动提交，此处为空操作"""

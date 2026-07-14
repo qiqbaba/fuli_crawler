@@ -286,6 +286,7 @@ def main():
     if args.resume:
         print(f"[*] 断点续爬模式已启用，将自动跳过已完成板块/页面")
     
+    interrupted = False
     try:
         crawler.run(
             is_test=is_test,
@@ -297,22 +298,32 @@ def main():
             resume=args.resume,
             no_pdf=args.no_pdf
         )
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\n[-] 用户中断，跳过统计，正在释放资源...")
+        raise
     finally:
-        # 输出三个平台的数据统计信息
-        print("\n" + "=" * 50)
-        print("📊 爬虫完成，正在输出平台数据统计...")
-        print("=" * 50)
-        try:
+        if not interrupted:
+            # 输出三个平台的数据统计信息
+            print("\n" + "=" * 50)
+            print("📊 爬虫完成，正在输出平台数据统计...")
+            print("=" * 50)
             try:
-                from sync.stats import query_supabase, query_r2, query_dynamodb
-                query_supabase()
-                query_r2()
-                query_dynamodb()
-            except ImportError as ie:
-                print(f"[-] 统计模块导入失败（不影响爬虫结果）: {ie}")
-            except Exception as e:
-                print(f"[-] 统计查询失败: {e}")
-        finally:
+                try:
+                    from sync.stats import query_supabase, query_r2, query_dynamodb
+                    query_supabase()
+                    query_r2()
+                    query_dynamodb()
+                except ImportError as ie:
+                    print(f"[-] 统计模块导入失败（不影响爬虫结果）: {ie}")
+                except Exception as e:
+                    print(f"[-] 统计查询失败: {e}")
+            finally:
+                print("[*] 正在释放数据库资源...")
+                db_manager.close()
+                print("[+] 数据库已安全关闭！")
+        else:
+            # 中断时仅释放资源，跳过统计
             print("[*] 正在释放数据库资源...")
             db_manager.close()
             print("[+] 数据库已安全关闭！")

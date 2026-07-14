@@ -190,10 +190,14 @@ class DynamoDBDeduplicationService:
                 return existing
 
         # 回退到 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link，带 TTL 过期）
-        if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
+        needs_scan = False
+        with self._lock:
+            if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
+                needs_scan = True
+        if needs_scan:
             print("[*] 正在执行 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
             with self._lock:
-                if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:  # 双重检查锁定
+                if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
                      self._scanned_resource_links = self.get_all_resource_links_by_scan()
                      self._scan_cache_time = time.time()
                      print(f"[+] 扫描缓存同步完成，已加载 {len(self._scanned_resource_links)} 条磁力链接，缓存 TTL {self._scan_cache_ttl} 秒。")

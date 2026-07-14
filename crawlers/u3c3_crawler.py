@@ -30,11 +30,11 @@ class U3c3Crawler(BaseCrawler):
         from config import is_proxy_manager_enabled
         if is_proxy_manager_enabled():
             print("[*] 代理管理器已启用，正在获取和验证代理IP...")
-            from config import get_proxy_verify_workers_value
+            from config import get_proxy_verify_workers
             manager = get_proxy_manager()
             if manager:
                 manager.fetch_proxies(force=False)
-                manager.verify_proxies(force=False, max_workers=get_proxy_verify_workers_value(), test_url="https://u3c3.com/")
+                manager.verify_proxies(force=False, max_workers=get_proxy_verify_workers(), test_url="https://u3c3.com/")
                 stats = manager.get_stats()
                 print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个")
 

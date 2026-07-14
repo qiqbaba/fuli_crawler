@@ -386,10 +386,6 @@ class BaseCrawler:
             if success:
                 inserted_count += 1
                 consecutive_count = 0
-            elif success is None:
-                skipped_count += 1
-                if not self.quiet:
-                    print(f"[*] 写入失败 (网络/API 错误)，不计入连续已存在计数")
             else:
                 skipped_count += 1
                 if self.max_consecutive_existing is not None:
@@ -617,7 +613,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
             if not self.quiet:
                 print(f"[*] 代理管理器已启用，正在获取和验证代理IP...", flush=True)
             from utils.proxy_manager import get_proxy_manager
-            from config import get_proxy_verify_workers_value
+            from config import get_proxy_verify_workers
             try:
                 manager = get_proxy_manager()
                 if manager:
@@ -626,7 +622,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
                     expected_content = getattr(self, 'proxy_expected_content', None)
                     manager.verify_proxies(
                         force=False, 
-                        max_workers=get_proxy_verify_workers_value(), 
+                        max_workers=get_proxy_verify_workers(), 
                         test_url=test_url, 
                         expected_content=expected_content
                     )

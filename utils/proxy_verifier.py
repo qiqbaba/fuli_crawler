@@ -8,7 +8,7 @@ import aiohttp
 import time
 from typing import List, Dict, Optional
 from aiohttp_socks import ProxyConnector
-from config import PROXY_VERIFY_TIMEOUT, PROXY_VERIFY_SSL, get_proxy_verify_workers_value
+from config import PROXY_VERIFY_TIMEOUT, PROXY_VERIFY_SSL, get_proxy_verify_workers
 
 # 测试目标URL（用于验证代理是否可用）
 PROXY_TEST_URLS = [
@@ -69,7 +69,7 @@ class ProxyVerifier:
             return []
 
         if max_workers is None:
-            max_workers = get_proxy_verify_workers_value()
+            max_workers = get_proxy_verify_workers()
 
         # 验证超时取配置值，但不超过 5 秒以加速验证
         verify_timeout = min(PROXY_VERIFY_TIMEOUT, 5)
