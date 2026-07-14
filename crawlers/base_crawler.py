@@ -8,7 +8,7 @@ from typing import List, Optional
 from utils.pdf_generator import PDFGenerator, PDFRenderConfig
 from utils.date_parser import parse_date
 from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak_link
-from utils.lang_filter import is_japanese
+from utils.lang_filter import is_japanese, batch_is_japanese
 from utils.logger import get_logger
 from config import USER_AGENTS
 
@@ -259,12 +259,22 @@ class BaseCrawler:
         skipped_count = 0
         early_stop_triggered = False
 
+        # 批量日语预过滤：先收集所有标题，一次性调用 batch_is_japanese
+        if self.skip_japanese:
+            titles = [
+                raw_item.get('title', '') if isinstance(raw_item, dict) else ''
+                for raw_item in raw_items
+            ]
+            is_jp_results = batch_is_japanese(titles)
+        else:
+            is_jp_results = [False] * len(raw_items)
+
         for idx, raw_item in enumerate(raw_items, 1):
             url = raw_item if isinstance(raw_item, str) else raw_item.get('url')
             is_existing = url in existing_urls
 
-            # 日语标题预过滤
-            if not is_existing and self._is_japanese_title(raw_item):
+            # 日语标题预过滤（使用批量检测结果）
+            if not is_existing and is_jp_results[idx - 1]:
                 if not self.quiet:
                     title_preview = raw_item.get('title', '')[:40]
                     logger.info("[%s] 标题检测为日语，跳过: %s", idx, title_preview)
@@ -365,16 +375,17 @@ class BaseCrawler:
         skipped_count = 0
         early_stop_triggered = False
 
-        # 日语标题后置过滤
+        # 日语标题后置过滤（批量检测）
         if self.skip_japanese:
+            titles = [d.get('title', '') for d in results]
+            is_jp_results = batch_is_japanese(titles)
             filtered_jp = []
             jp_skipped = 0
-            for d in results:
-                title = d.get('title', '')
-                if title and is_japanese(title):
+            for d, is_jp in zip(results, is_jp_results):
+                if is_jp:
                     jp_skipped += 1
                     if not self.quiet:
-                        logger.info("[*] 结果标题检测为日语，过滤: %s", title[:40])
+                        logger.info("[*] 结果标题检测为日语，过滤: %s", d.get('title', '')[:40])
                 else:
                     filtered_jp.append(d)
             if jp_skipped > 0:
@@ -870,6 +881,20 @@ class PlaywrightBaseCrawler(BaseCrawler):
 
 
 class DomainRotationMixin:
+    def __init_subclass__(cls, **kwargs):
+        """确保子类实例化时 _domain_lock 被初始化"""
+        super().__init_subclass__(**kwargs)
+        # 保存原始 __init__，以便在子类中注入锁初始化
+        original_init = cls.__init__
+
+        def wrapped_init(self, *args, **kwargs):
+            # 确保 _domain_lock 存在（子类可能已初始化，此处作为兜底）
+            if not hasattr(self, '_domain_lock'):
+                self._domain_lock = threading.Lock()
+            original_init(self, *args, **kwargs)
+
+        cls.__init__ = wrapped_init
+
     def _get_domain_cache_path(self):
         """获取域名缓存文件路径（按 source_name 区分）"""
         cache_dir = os.path.join(os.path.dirname(__file__), "..", "cache")

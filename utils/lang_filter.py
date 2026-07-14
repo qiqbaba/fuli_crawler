@@ -72,3 +72,75 @@ def is_japanese(text):
         return lang == Language.JAPANESE
     except Exception:
         return False
+
+
+def batch_is_japanese(titles):
+    """
+    批量判断多个标题是否为日语，减少 lingua 模型重复加载开销。
+    
+    策略：
+    1. 先用快速正则预过滤所有标题，筛出"疑似日语"的候选
+    2. 对候选列表一次性调用 lingua 批量检测（若可用）
+    
+    Args:
+        titles: 标题字符串列表
+    
+    Returns:
+        list[bool]: 与 titles 一一对应的日语判断结果
+    """
+    if not titles:
+        return []
+
+    # 第一步：快速正则预过滤（无模型开销）
+    candidates = {}  # index -> title
+    results = [False] * len(titles)
+
+    for i, text in enumerate(titles):
+        if not text:
+            continue
+        jp_chars = len(re.findall(r'[\u3040-\u309F\u30A0-\u30FF]', text))
+        if jp_chars == 0:
+            continue
+        meaningful_chars = len(
+            re.findall(r'[^\s\-_,.;:!?()\[\]{}【】「」『』《》<>・/\\~`@#$%^&*+=|"\']', text)
+        )
+        if meaningful_chars == 0:
+            continue
+        if jp_chars / meaningful_chars < JAPANESE_CHAR_RATIO_THRESHOLD:
+            continue
+        candidates[i] = text
+
+    # 无候选，全部返回 False
+    if not candidates:
+        return results
+
+    # 无 lingua 时，候选全部视为日语
+    if not _LINGUA_AVAILABLE:
+        for i in candidates:
+            results[i] = True
+        return results
+
+    # 第二步：lingua 批量检测
+    try:
+        detector = _get_detector()
+        if detector is None:
+            for i in candidates:
+                results[i] = True
+            return results
+
+        # 批量检测：lingua 支持 detect_languages_of 批量接口
+        if hasattr(detector, 'detect_languages_of'):
+            detected = detector.detect_languages_of(list(candidates.values()))
+            for (i, _), lang in zip(candidates.items(), detected):
+                results[i] = (lang == Language.JAPANESE)
+        else:
+            # 回退：逐个检测
+            for i, text in candidates.items():
+                lang = detector.detect_language_of(text)
+                results[i] = (lang == Language.JAPANESE)
+    except Exception:
+        # 检测失败时，保守地视为日语
+        for i in candidates:
+            results[i] = True
+
+    return results
