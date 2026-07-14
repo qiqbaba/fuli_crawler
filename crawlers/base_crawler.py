@@ -11,6 +11,7 @@ from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak
 from utils.lang_filter import is_japanese, batch_is_japanese
 from utils.logger import get_logger
 from config import USER_AGENTS
+from curl_cffi import requests
 
 logger = get_logger(__name__)
 
@@ -314,6 +315,8 @@ class BaseCrawler:
     def _process_items_concurrently(self, items_to_process, max_workers, consecutive_subpage_count):
         """并发处理子页面 — 分离自 _crawl_pages 的并发处理逻辑
         
+        使用预分配 dict 按 idx 索引，避免排序开销。
+        
         Args:
             items_to_process: 待处理项列表 [(idx, raw_item), ...]
             max_workers: 最大并发线程数
@@ -332,19 +335,23 @@ class BaseCrawler:
                 for idx, raw_item in items_to_process
             }
 
-            collected_results = {}
+            # 预分配 dict，按 idx 索引，避免后续排序
+            collected_results = {idx: None for idx, _ in items_to_process}
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
                 try:
                     res = future.result()
                     if res:
-                        is_existing, data = res
-                        collected_results[idx] = (is_existing, data)
+                        collected_results[idx] = res
                 except Exception as e:
                     logger.error("线程处理索引为 [%s] 的项目时发生异常: %s", idx, e)
 
-            for idx in sorted(collected_results.keys()):
-                is_existing, data = collected_results[idx]
+            # 按预分配顺序遍历（Python 3.7+ 保持插入顺序），无需排序
+            for idx in collected_results:
+                res = collected_results[idx]
+                if res is None:
+                    continue
+                is_existing, data = res
                 consecutive_subpage_count, should_stop = self._check_consecutive_subpage_stop(
                     idx, is_existing, consecutive_subpage_count
                 )
@@ -431,6 +438,20 @@ class BaseCrawler:
 
         return inserted_count, skipped_count, consecutive_count, early_stop_triggered
 
+    def _check_early_stop_condition(self, consecutive_count, consecutive_subpage_count):
+        """检查是否触发早停条件（连续已存在数据超过阈值）
+        
+        Args:
+            consecutive_count: URL 级连续已存在计数
+            consecutive_subpage_count: 子页面级连续已存在计数
+            
+        Returns:
+            是否应早停
+        """
+        if self.max_consecutive_existing is None:
+            return False
+        return max(consecutive_count, consecutive_subpage_count) >= self.max_consecutive_existing
+
     def _crawl_pages(self, start_page, end_page, max_workers, class_name=None):
         """
         爬虫页面循环核心逻辑（不含 on_start/on_finish），
@@ -493,7 +514,7 @@ class BaseCrawler:
                         logger.info("页面 %s 触发早停，跳过 %s 条待处理项。", page_num, len(items_to_process))
                     if class_name is not None:
                         self._save_page_state(class_name, page_num + 1)
-                    if early_stop_triggered or (self.max_consecutive_existing is not None and max(consecutive_count, consecutive_subpage_count) >= self.max_consecutive_existing):
+                    if early_stop_triggered or self._check_early_stop_condition(consecutive_count, consecutive_subpage_count):
                         logger.info("\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                         early_break = True
                         break
@@ -524,7 +545,7 @@ class BaseCrawler:
                 if class_name is not None:
                     self._save_page_state(class_name, page_num + 1)
 
-                if early_stop_triggered or (self.max_consecutive_existing is not None and max(consecutive_count, consecutive_subpage_count) >= self.max_consecutive_existing):
+                if early_stop_triggered or self._check_early_stop_condition(consecutive_count, consecutive_subpage_count):
                     logger.info("\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                     early_break = True
                     break
