@@ -27,6 +27,9 @@ except ImportError:
 # 确保能加载项目根目录的模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def format_size(size_bytes):
@@ -44,12 +47,12 @@ def format_size(size_bytes):
 
 def query_supabase():
     """查询 Supabase 数据库的记录数和表大小"""
-    print("\n" + "=" * 50)
-    print("📊 Supabase (PostgreSQL) 统计")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("📊 Supabase (PostgreSQL) 统计")
+    logger.info("=" * 50)
 
     if not config.use_supabase():
-        print("[-] Supabase 未配置，跳过")
+        logger.info("[-] Supabase 未配置，跳过")
         return
 
     from supabase import create_client
@@ -62,30 +65,30 @@ def query_supabase():
     client = create_client(clean_url, key)
 
     # 1. 获取总记录数
-    print("[*] 正在查询 Supabase 记录数...")
+    logger.info("[*] 正在查询 Supabase 记录数...")
     try:
         resp = client.table("resources").select("*", count="exact").execute()
         total_count = resp.count
-        print(f"[+] 总记录数: {total_count:,}")
+        logger.info("[+] 总记录数: %s", f"{total_count:,}")
     except Exception as e:
-        print(f"[-] 查询记录数失败: {e}")
+        logger.error("[-] 查询记录数失败: %s", e)
         return
 
     # 2. 按 source 分组统计（服务端聚合，避免全量传输）
-    print("[*] 正在按来源分组统计...")
+    logger.info("[*] 正在按来源分组统计...")
     try:
         # 使用 PostgREST 的 count() 聚合函数进行服务端分组
         resp = client.table("resources").select("source, count()").not_.is_("source", "null").execute()
         sources = {row["source"]: row["count"] for row in resp.data}
 
-        print(f"\n  按来源分布:")
+        logger.info("  按来源分布:")
         for src, cnt in sorted(sources.items(), key=lambda x: -x[1]):
-            print(f"    {src}: {cnt:,} 条")
+            logger.info("    %s: %s 条", src, f"{cnt:,}")
     except Exception as e:
-        print(f"[-] 按来源分组失败: {e}")
+        logger.error("[-] 按来源分组失败: %s", e)
 
     # 3. 查询表大小（通过 RPC 函数 / 估算 fallback）
-    print("[*] 正在查询表大小...")
+    logger.info("[*] 正在查询表大小...")
 
     # 辅助函数：通过 RPC 调用 pg_total_relation_size
     def _try_rpc_table_size(clean_url, key):
@@ -111,58 +114,58 @@ def query_supabase():
         # 这是 Supabase 推荐的方式（/rest/v1/sql 端点在新项目中已被移除）
         rpc_result = _try_rpc_table_size(clean_url, key)
         if rpc_result:
-            print(f"[+] 表大小 (RPC): {rpc_result}")
-            print(f"    💡 免费额度: 500 MB 数据库存储 (Supabase Free Tier)")
+            logger.info("[+] 表大小 (RPC): %s", rpc_result)
+            logger.info("    💡 免费额度: 500 MB 数据库存储 (Supabase Free Tier)")
             return
 
         # 方式 B: RPC 也不可用，用记录数和平均行大小估算
-        print("[*] RPC 函数不存在，尝试基于记录数估算表大小...")
-        print("")
-        print("  ⚠️  无法直接获取表大小，请在 Supabase SQL Editor 中执行以下语句创建函数：")
-        print("     ```sql")
-        print("     CREATE OR REPLACE FUNCTION get_table_size()")
-        print("     RETURNS TABLE(size TEXT) LANGUAGE plpgsql AS $$")
-        print("     BEGIN")
-        print("         RETURN QUERY SELECT pg_size_pretty(pg_total_relation_size('resources'));")
-        print("     END;")
-        print("     $$;")
-        print("     ```")
-        print("")
+        logger.info("[*] RPC 函数不存在，尝试基于记录数估算表大小...")
+        logger.info("")
+        logger.info("  ⚠️  无法直接获取表大小，请在 Supabase SQL Editor 中执行以下语句创建函数：")
+        logger.info("     ```sql")
+        logger.info("     CREATE OR REPLACE FUNCTION get_table_size()")
+        logger.info("     RETURNS TABLE(size TEXT) LANGUAGE plpgsql AS $$")
+        logger.info("     BEGIN")
+        logger.info("         RETURN QUERY SELECT pg_size_pretty(pg_total_relation_size('resources'));")
+        logger.info("     END;")
+        logger.info("     $$;")
+        logger.info("     ```")
+        logger.info("")
         # 使用记录数做粗略估算
-        print(f"  📊 基于总记录数的粗略估算:")
+        logger.info("  📊 基于总记录数的粗略估算:")
         try:
             resp2 = client.table("resources").select("*", count="exact").execute()
             rec_count = resp2.count
             # PostgreSQL 每行平均约 500-800 字节（含索引），这里保守估计 600 字节
             est_size = rec_count * 600
-            print(f"     记录数: {rec_count:,}")
-            print(f"     估算表大小: ~{format_size(est_size)} ({est_size:,} 字节)")
-            print(f"     ⚠️  此为粗略估算，仅供参考（不含索引和 TOAST 数据）")
+            logger.info("     记录数: %s", f"{rec_count:,}")
+            logger.info("     估算表大小: ~%s (%s 字节)", format_size(est_size), f"{est_size:,}")
+            logger.info("     ⚠️  此为粗略估算，仅供参考（不含索引和 TOAST 数据）")
         except Exception:
             pass
         return
 
     except Exception as e:
-        print(f"[-] 查询表大小失败: {e}")
+        logger.error("[-] 查询表大小失败: %s", e)
 
     # 4. 查询 PDF 文件数（有 pdf_path 的记录）
-    print("[*] 正在查询 PDF 文件数...")
+    logger.info("[*] 正在查询 PDF 文件数...")
     try:
         resp = client.table("resources").select("pdf_path", count="exact").neq("pdf_path", "").execute()
         pdf_count = resp.count
-        print(f"[+] 有 PDF 路径的记录: {pdf_count:,}")
+        logger.info("[+] 有 PDF 路径的记录: %s", f"{pdf_count:,}")
     except Exception as e:
-        print(f"[-] 查询 PDF 记录数失败: {e}")
+        logger.error("[-] 查询 PDF 记录数失败: %s", e)
 
 
 def query_r2(year=None):
     """查询 Cloudflare R2 的 PDF 文件数和大小"""
-    print("\n" + "=" * 50)
-    print("📊 Cloudflare R2 统计")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("📊 Cloudflare R2 统计")
+    logger.info("=" * 50)
 
     if not config.use_r2():
-        print("[-] R2 未配置，跳过")
+        logger.info("[-] R2 未配置，跳过")
         return
 
     import boto3
@@ -190,7 +193,7 @@ def query_r2(year=None):
     year_stats = {}
 
     for prefix in prefixes:
-        print(f"[*] 正在扫描 R2 前缀: {prefix}")
+        logger.info("[*] 正在扫描 R2 前缀: %s", prefix)
         paginator = client.get_paginator("list_objects_v2")
         page_count = 0
 
@@ -217,32 +220,32 @@ def query_r2(year=None):
                         year_stats[y]["count"] += 1
                         year_stats[y]["size"] += size
 
-        print(f"  [进度] 已扫描 {page_count} 页")
+        logger.info("  [进度] 已扫描 %s 页", page_count)
 
     # 输出结果
-    print(f"\n[+] PDF 文件总数: {total_count:,}")
-    print(f"[+] PDF 总大小: {format_size(total_size)} ({total_size:,} bytes)")
-    print(f"    💡 免费额度: 10 GB 存储 + 1,000,000 次 Class A 操作/月 (R2 Free Tier)")
+    logger.info("[+] PDF 文件总数: %s", f"{total_count:,}")
+    logger.info("[+] PDF 总大小: %s (%s bytes)", format_size(total_size), f"{total_size:,}")
+    logger.info("    💡 免费额度: 10 GB 存储 + 1,000,000 次 Class A 操作/月 (R2 Free Tier)")
 
     if year_stats:
-        print(f"\n  按年份分布:")
+        logger.info("  按年份分布:")
         for y in sorted(year_stats.keys()):
             s = year_stats[y]
-            print(f"    {y}: {s['count']:,} 个文件, {format_size(s['size'])}")
+            logger.info("    %s: %s 个文件, %s", y, f"{s['count']:,}", format_size(s['size']))
 
 
 def query_dynamodb():
     """查询 AWS DynamoDB 的记录数和表大小"""
-    print("\n" + "=" * 50)
-    print("📊 AWS DynamoDB 统计")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("📊 AWS DynamoDB 统计")
+    logger.info("=" * 50)
 
     aws_key = config.AWS_ACCESS_KEY_ID
     aws_secret = config.AWS_SECRET_ACCESS_KEY
     aws_region = config.AWS_REGION
 
     if not aws_key or not aws_secret:
-        print("[-] AWS 凭证未配置，跳过")
+        logger.info("[-] AWS 凭证未配置，跳过")
         return
 
     import boto3
@@ -258,7 +261,7 @@ def query_dynamodb():
     table_name = "fuli_resources"
 
     # 1. 获取表描述（包含近似计数和表大小）
-    print(f"[*] 正在查询 DynamoDB 表: {table_name}")
+    logger.info("[*] 正在查询 DynamoDB 表: %s", table_name)
     try:
         response = client.describe_table(TableName=table_name)
         table = response["Table"]
@@ -267,27 +270,27 @@ def query_dynamodb():
         table_size = table.get("TableSizeBytes", 0)
         status = table.get("TableStatus", "N/A")
 
-        print(f"[+] 表状态: {status}")
-        print(f"[+] 近似记录数: {item_count:,}")
-        print(f"[+] 表大小: {format_size(table_size)} ({table_size:,} bytes)")
-        print(f"    💡 免费额度: 25 GB 存储 + 25 RCUs + 25 WCUs (AWS Free Tier)")
+        logger.info("[+] 表状态: %s", status)
+        logger.info("[+] 近似记录数: %s", f"{item_count:,}")
+        logger.info("[+] 表大小: %s (%s bytes)", format_size(table_size), f"{table_size:,}")
+        logger.info("    💡 免费额度: 25 GB 存储 + 25 RCUs + 25 WCUs (AWS Free Tier)")
 
         # 2. 精确计数（消耗读取容量，仅当近似计数为 0 或用户需要时）
         if item_count == 0:
-            print("[*] 近似计数为 0，正在执行精确计数...")
+            logger.info("[*] 近似计数为 0，正在执行精确计数...")
             try:
                 scan_resp = client.scan(TableName=table_name, Select="COUNT")
                 exact_count = scan_resp.get("Count", 0)
-                print(f"[+] 精确记录数: {exact_count:,}")
+                logger.info("[+] 精确记录数: %s", f"{exact_count:,}")
             except Exception as e:
-                print(f"[-] 精确计数失败: {e}")
+                logger.error("[-] 精确计数失败: %s", e)
 
     except ClientError as e:
         error_code = e.response.get("Error", {}).get("Code", "")
         if error_code == "ResourceNotFoundException":
-            print(f"[-] 表 {table_name} 不存在")
+            logger.info("[-] 表 %s 不存在", table_name)
         else:
-            print(f"[-] 查询失败: {e}")
+            logger.error("[-] 查询失败: %s", e)
 
 
 def main():
@@ -305,10 +308,10 @@ def main():
         args.r2 = True
         args.dynamodb = True
 
-    print("=" * 50)
-    print("📊 多平台数据统计工具")
-    print(f"   运行时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("📊 多平台数据统计工具")
+    logger.info("   运行时间: %s", datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+    logger.info("=" * 50)
 
     t0 = time.time()
 
@@ -322,9 +325,9 @@ def main():
         query_dynamodb()
 
     elapsed = time.time() - t0
-    print("\n" + "=" * 50)
-    print(f"✅ 统计完成，耗时 {elapsed:.2f} 秒")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("✅ 统计完成，耗时 %.2f 秒", elapsed)
+    logger.info("=" * 50)
 
 
 if __name__ == "__main__":
