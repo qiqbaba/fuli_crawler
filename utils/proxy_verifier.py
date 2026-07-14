@@ -6,6 +6,7 @@ import random
 import asyncio
 import aiohttp
 import time
+import threading
 from typing import List, Dict, Optional
 from aiohttp_socks import ProxyConnector
 from config import PROXY_VERIFY_TIMEOUT, PROXY_VERIFY_SSL, get_proxy_verify_workers
@@ -86,6 +87,7 @@ class ProxyVerifier:
         logger.info("开始异步验证 %s 个代理（并发: %s，超时: %ss，目标数: %s，测试目标: %s）...", len(proxies), max_workers, verify_timeout, target_count, current_test_url)
 
         working = []
+        working_lock = threading.Lock()
         total = len(proxies)
         verified_count = [0]
         start_time = time.time()
@@ -159,12 +161,13 @@ class ProxyVerifier:
                                                 is_valid = False
                                         
                                         if is_valid:
-                                            if not stop_event.is_set():
-                                                proxy["success_count"] = proxy.get("success_count", 0) + 1
-                                                proxy["score"] = proxy["success_count"] - 3 * proxy.get("fail_count", 0)
-                                                working.append(proxy)
-                                                if len(working) >= target_count:
-                                                    stop_event.set()
+                                            with working_lock:
+                                                if not stop_event.is_set():
+                                                    proxy["success_count"] = proxy.get("success_count", 0) + 1
+                                                    proxy["score"] = proxy["success_count"] - 3 * proxy.get("fail_count", 0)
+                                                    working.append(proxy)
+                                                    if len(working) >= target_count:
+                                                        stop_event.set()
                                         else:
                                             proxy["fail_count"] = proxy.get("fail_count", 0) + 1
                                             proxy["score"] = proxy.get("success_count", 0) - 3 * proxy["fail_count"]
@@ -188,7 +191,9 @@ class ProxyVerifier:
                             curr_count = verified_count[0]
                             if curr_count % 1000 == 0 or curr_count == total:
                                 elapsed = time.time() - start_time
-                                logger.info("  进度: %s/%s（已找到 %s 个可用，耗时 %.1fs）", curr_count, total, len(working), elapsed)
+                                with working_lock:
+                                    current_working_count = len(working)
+                                logger.info("  进度: %s/%s（已找到 %s 个可用，耗时 %.1fs）", curr_count, total, current_working_count, elapsed)
 
             # 启动并发 worker 协程
             num_workers = min(max_workers, total)
@@ -238,5 +243,7 @@ class ProxyVerifier:
                 asyncio.set_event_loop(None)
 
         elapsed = time.time() - start_time
-        logger.info("验证完成: %s/%s 个代理可用（总耗时 %.1fs）", len(working), total, elapsed)
-        return working
+        with working_lock:
+            final_working = list(working)
+        logger.info("验证完成: %s/%s 个代理可用（总耗时 %.1fs）", len(final_working), total, elapsed)
+        return final_working
