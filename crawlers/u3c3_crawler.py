@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from config import USER_AGENTS
 from crawlers.base_crawler import BaseCrawler
-from utils.proxy_manager import get_proxy_dict, get_proxy_manager
+from utils.proxy_manager import get_proxy_manager
 
 try:
     from utils.pikpak_extractor import get_pikpak_link
@@ -45,16 +45,11 @@ class U3c3Crawler(BaseCrawler):
             "User-Agent": random.choice(USER_AGENTS)
         }
         
-        from config import get_crawler_proxy, is_proxy_manager_enabled
+        from config import get_effective_proxy
         
         for attempt in range(3):
             # 获取代理配置
-            proxies = None
-            crawler_proxy = get_crawler_proxy()
-            if crawler_proxy:
-                proxies = {"http": crawler_proxy, "https": crawler_proxy}
-            elif is_proxy_manager_enabled():
-                proxies = get_proxy_dict()
+            proxies = get_effective_proxy()
             
             try:
                 response = requests.get(url, headers=headers, timeout=20, proxies=proxies, impersonate="chrome120")

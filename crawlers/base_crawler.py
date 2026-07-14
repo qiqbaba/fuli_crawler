@@ -3,11 +3,50 @@ import json
 import time
 import random
 import threading
+from dataclasses import dataclass, field
+from typing import List, Optional
 from utils.pdf_generator import PDFGenerator, PDFRenderConfig
 from utils.date_parser import parse_date
 from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak_link
 from utils.lang_filter import is_japanese
 from config import USER_AGENTS
+
+
+@dataclass
+class CrawlConfig:
+    """爬虫配置数据类，替代零散的类属性
+
+    为 DecryptSiteBaseCrawler 及其子类提供统一配置入口。
+    初始化后可通过 config.domains / config.base_domain 等访问派生属性。
+    """
+    source_name: str
+    categories: List[str] = field(default_factory=list)
+    initial_domains: List[str] = field(default_factory=list)
+    main_domain: str = ""
+    domain_pattern: str = r'([a-z]{2,5}\.\d{5,7}\.xyz)'
+    list_url_template: str = "{base}/list.php?class={cat}&page={page}"
+    check_resource_link: bool = True
+    max_consecutive_existing: Optional[int] = 15
+
+    # ---- 派生属性（由 init 后调用 build() 生成） ----
+    domains: List[str] = field(init=False)
+    base_domain: str = field(init=False)
+    base_list_url: str = field(init=False)
+
+    def __post_init__(self):
+        self.domains = list(self.initial_domains)
+        if self.main_domain:
+            self.base_domain = self.main_domain
+        elif self.domains:
+            self.base_domain = f"https://{self.domains[0]}"
+        else:
+            self.base_domain = ""
+        self.base_list_url = self.list_url_template.format(
+            base=self.base_domain,
+            cat="{cat}",
+            page="{page}"
+        )
+
 
 class BaseCrawler:
     def __init__(self, db_manager, source_name):
@@ -45,19 +84,14 @@ class BaseCrawler:
     def _http_get(self, url, timeout=20, impersonate="chrome120"):
         """通用 HTTP GET 请求，最多重试 3 次，支持代理自动切换和失败上报"""
         from curl_cffi import requests
-        from config import get_crawler_proxy, is_proxy_manager_enabled
-        from utils.proxy_manager import get_proxy_dict
+        from config import get_effective_proxy, is_proxy_manager_enabled
         for attempt in range(1, 4):
             proxies = None
             try:
                 ua = random.choice(USER_AGENTS)
                 headers = {"User-Agent": ua}
 
-                crawler_proxy = get_crawler_proxy()
-                if crawler_proxy:
-                    proxies = {"http": crawler_proxy, "https": crawler_proxy}
-                elif is_proxy_manager_enabled():
-                    proxies = get_proxy_dict()
+                proxies = get_effective_proxy()
 
                 r = requests.get(url, headers=headers, impersonate=impersonate, timeout=timeout, proxies=proxies)
                 r.encoding = 'utf-8'
@@ -701,8 +735,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
             from playwright.sync_api import sync_playwright
             p = sync_playwright().start()
             
-            from config import USER_AGENTS, is_local_mode, get_crawler_proxy, is_proxy_manager_enabled
-            from utils.proxy_manager import get_proxy_string
+            from config import USER_AGENTS, is_local_mode
             from utils.stealth import get_browser_launch_args, apply_stealth
             
             ua = random.choice(USER_AGENTS)
@@ -726,13 +759,10 @@ class PlaywrightBaseCrawler(BaseCrawler):
             
             playwright_proxy = None
             if not no_proxy:
-                crawler_proxy = get_crawler_proxy()
-                if crawler_proxy:
-                    playwright_proxy = {"server": crawler_proxy}
-                elif is_proxy_manager_enabled():
-                    proxy_url = get_proxy_string()
-                    if proxy_url:
-                        playwright_proxy = {"server": proxy_url}
+                from config import get_effective_proxy_string
+                proxy_url = get_effective_proxy_string(exclusive=True)
+                if proxy_url:
+                    playwright_proxy = {"server": proxy_url}
                 
             if getattr(self, "use_persistent_context", False):
                 profile_dir = os.path.join(
@@ -1142,14 +1172,8 @@ class DomainRotationMixin:
         headers = self._build_headers(referer=self.main_domain)
         
         # 1. 优先获取代理
-        proxies = None
-        from config import get_crawler_proxy, is_proxy_manager_enabled
-        crawler_proxy = get_crawler_proxy()
-        if crawler_proxy:
-            proxies = {"http": crawler_proxy, "https": crawler_proxy}
-        elif is_proxy_manager_enabled():
-            from utils.proxy_manager import get_proxy_dict
-            proxies = get_proxy_dict()
+        from config import get_effective_proxy
+        proxies = get_effective_proxy()
             
         html = None
         # Perf 4: curl_cffi 与 Playwright 并发请求，谁先完成用谁
@@ -1294,7 +1318,7 @@ class DecryptMixin:
 class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
     """
     支持域名轮换、HTML 解密的站点爬虫抽象基类
-    
+
     提取 DatangCrawler / MadouCrawler 的公共逻辑：
     - 多分类板块遍历 (guochan/wuma/oumei)
     - 域名轮换 fetch_list_page
@@ -1304,18 +1328,32 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
     """
     CATEGORIES = []  # 子类定义分类列表，如 ["guochan", "wuma", "oumei"]
 
-    def __init__(self, db_manager, source_name):
+    def __init__(self, db_manager, source_name, config: Optional[CrawlConfig] = None):
         super().__init__(db_manager, source_name)
-        self.check_resource_link = True
-        self.domains = []
         self.current_domain_idx = 0
-        self.base_domain = ""
-        self.base_list_url = ""
         self.current_class = ""
-        self.max_consecutive_existing = 15
         self._domain_cooldown = {}
         self._cooldown_seconds = 60
         self._domain_lock = threading.Lock()
+
+        if config is not None:
+            # 从 CrawlConfig 统一初始化
+            self.check_resource_link = config.check_resource_link
+            self.max_consecutive_existing = config.max_consecutive_existing
+            self.domain_pattern = config.domain_pattern
+            self.main_domain = config.main_domain
+            self.domains = list(config.domains)
+            self.base_domain = config.base_domain
+            self.base_list_url = config.base_list_url
+            if config.categories:
+                self.CATEGORIES = config.categories
+        else:
+            # 向后兼容：子类手动设置各属性
+            self.check_resource_link = True
+            self.domains = []
+            self.base_domain = ""
+            self.base_list_url = ""
+            self.max_consecutive_existing = 15
 
     def _get_full_list_url(self, page_num):
         """子类可覆盖，默认格式 base_list_url.format(class, page)"""
@@ -1336,13 +1374,8 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             for attempt in range(3):
                 proxies = None
                 if attempt < 2:
-                    from config import get_crawler_proxy, is_proxy_manager_enabled
-                    crawler_proxy = get_crawler_proxy()
-                    if crawler_proxy:
-                        proxies = {"http": crawler_proxy, "https": crawler_proxy}
-                    elif is_proxy_manager_enabled():
-                        from utils.proxy_manager import get_proxy_dict
-                        proxies = get_proxy_dict()
+                    from config import get_effective_proxy
+                    proxies = get_effective_proxy()
 
                 try:
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
@@ -1442,12 +1475,8 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             for attempt in range(3):
                 proxies = None
                 if attempt < 2:
-                    from config import get_crawler_proxy, is_proxy_manager_enabled
-                    crawler_proxy = get_crawler_proxy()
-                    if crawler_proxy:
-                        proxies = {"http": crawler_proxy, "https": crawler_proxy}
-                    elif is_proxy_manager_enabled():
-                        proxies = get_proxy_dict()
+                    from config import get_effective_proxy
+                    proxies = get_effective_proxy()
 
                 try:
                     response = requests.get(final_url, headers=req_headers, timeout=15, proxies=proxies, impersonate="chrome120")
@@ -1582,4 +1611,204 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             print(f"\n[致命错误] 运行中发生未捕获的异常: {e}")
         finally:
             self.on_finish()
+
+    # ------------------------------------------------------------------ #
+    #  以下为子类可覆盖的钩子方法，用于 process_sub_page_if_needed() 中的差异化逻辑
+    # ------------------------------------------------------------------ #
+
+    def _is_valid_detail_page(self, html):
+        """子类覆盖：判断 Playwright 兜底时详情页是否有效"""
+        return True
+
+    def _should_rewrite_url(self, netloc):
+        """子类覆盖：判断是否应使用当前域名重写 URL（用于域名轮换）"""
+        return any(d in netloc for d in self.domains)
+
+    def _get_category_map(self):
+        """子类覆盖：返回分类名称映射字典 e.g. {'guochan': '国产', ...}"""
+        return {}
+
+    def _extract_detail_metadata(self, detail_html, raw_item):
+        """从详情页提取发布时间、大小、格式
+
+        子类可覆盖以支持自定义提取逻辑（如不同的 HTML 结构）。
+        默认尝试匹配通用格式 【发布时间】/【影片大小】/【影片格式】
+
+        Returns:
+            (date_str, size_val, res_format) 三元组
+        """
+        date_str = raw_item['date_str']
+        size_val = ""
+        res_format = ""
+
+        date_match = re.search(r"【发布时间】：\s*(\d{4}-\d{2}-\d{2})", detail_html)
+        if date_match:
+            date_str = date_match.group(1)
+        size_match = re.search(r"【影片大小】：\s*([^<]+)", detail_html)
+        if size_match:
+            size_val = size_match.group(1).strip()
+        format_match = re.search(r"【影片格式】：\s*([^<]+)", detail_html)
+        if format_match:
+            res_format = format_match.group(1).strip()
+
+        return date_str, size_val, res_format
+
+    # ------------------------------------------------------------------ #
+    #  统一的详情页处理流程（替代子类中的重复实现）
+    # ------------------------------------------------------------------ #
+
+    def process_sub_page_if_needed(self, raw_item, idx):
+        """请求详情页，解析资源元数据并生成 PDF，支持域名轮换重试
+
+        通过调用 _is_valid_detail_page / _should_rewrite_url / _get_category_map
+        / _extract_detail_metadata 等钩子方法处理站点差异。
+        """
+        original_url = raw_item['url']
+        is_existing = False
+
+        # 每个详情页请求前随机延迟，模拟人类浏览行为
+        if getattr(self, 'no_pdf', False):
+            time.sleep(random.uniform(0.3, 0.8))
+        else:
+            time.sleep(random.uniform(2.0, 5.0))
+
+        detail_html = None
+        url = original_url
+
+        # 最多尝试轮换所有域名的次数
+        for _ in range(len(self.domains)):
+            from urllib.parse import urlparse, urlunparse
+            parsed_url = urlparse(original_url)
+            with self._domain_lock:
+                current_base = self.base_domain
+            parsed_base = urlparse(current_base)
+            if self._should_rewrite_url(parsed_url.netloc):
+                parsed_url = parsed_url._replace(netloc=parsed_base.netloc, scheme=parsed_base.scheme)
+                url = urlunparse(parsed_url)
+            else:
+                url = original_url
+
+            list_url = self.base_list_url.format(self.current_class, 1)
+            headers = self._build_headers(referer=list_url)
+            redirect_content = None
+
+            # 1. 优先使用 requests
+            for attempt in range(3):
+                proxies = None
+                if attempt < 2:
+                    from config import get_effective_proxy
+                    proxies = get_effective_proxy()
+
+                try:
+                    response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
+                    if response.status_code == 200:
+                        decrypted = self.decrypt_html(response.text)
+                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                            detail_html = decrypted
+                            break
+                        if decrypted and "正在检测最新可用线路" in decrypted:
+                            redirect_content = decrypted
+                        elif "正在检测最新可用线路" in response.text:
+                            redirect_content = response.text
+                    elif response.status_code == 403:
+                        print(f"[!] 详情页返回 403，疑似触发反爬: {url}")
+                        break
+                except Exception:
+                    pass
+                time.sleep(random.uniform(2.0, 4.0))
+
+            if detail_html:
+                break
+
+            # 2. 兜底使用 Playwright
+            if not detail_html:
+                try:
+                    _, _, context = self._get_thread_resources()
+                    page = context.new_page()
+                    page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    time.sleep(random.uniform(2.0, 4.0))
+                    html = page.content()
+                    page.close()
+                    if self._is_valid_detail_page(html):
+                        detail_html = html
+                        break
+                    else:
+                        decrypted = self.decrypt_html(html)
+                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                            detail_html = decrypted
+                            break
+                        if decrypted and "正在检测最新可用线路" in decrypted:
+                            redirect_content = decrypted
+                        elif "正在检测最新可用线路" in html:
+                            redirect_content = html
+                except Exception as e:
+                    print(f"[-] Playwright 兜底抓取详情页异常 ({url}): {e}")
+
+            if detail_html:
+                break
+
+            # 尝试从跳转页面提取最新域名
+            if redirect_content and self._update_domains_from_redirect(redirect_content):
+                continue
+
+            # 当前域名请求失败，冷却等待后轮换域名重试
+            time.sleep(random.uniform(5.0, 10.0))
+            self._rotate_domain()
+
+        if not detail_html:
+            print(f"[-] 详情页 {original_url} 抓取失败（最终尝试 URL: {url}）")
+            return False, None
+
+        # 提取磁力链接
+        magnet_link = ""
+        magnet_match = re.search(r"magnet:\?xt=urn:btih:[A-Za-z0-9]+", detail_html)
+        if magnet_match:
+            magnet_link = magnet_match.group(0)
+        else:
+            magnet_match = re.search(r"magnet:\?[^\s'\"<>\)]+", detail_html)
+            if magnet_match:
+                magnet_link = magnet_match.group(0)
+
+        if not magnet_link:
+            print(f"[-] 在详情页中未找到磁力链接: {original_url}")
+            return False, None
+
+        date_str, size_val, res_format = self._extract_detail_metadata(detail_html, raw_item)
+
+        category_map = self._get_category_map()
+        category = category_map.get(raw_item['class_name'], raw_item['class_name'])
+
+        data = self.clean_common_metadata(
+            title=raw_item['title'],
+            date_str=date_str,
+            resource_link=magnet_link,
+            category=category,
+            url=url,
+            pikpak_link='',
+            pdf_path=''
+        )
+
+        if size_val:
+            data['size'] = size_val
+        if res_format:
+            data['resource_format'] = res_format
+
+        # === 提前去重：在 PDF 生成前检查磁力链接是否已存在 ===
+        if self.check_resource_link and magnet_link:
+            existing_links = self.db_manager.filter_existing_resource_links([magnet_link])
+            if magnet_link in existing_links:
+                print(f"[{idx}] 磁力链接已存在，跳过 PDF 生成: {magnet_link[:60]}...")
+                data['source'] = self.source_name
+                return True, data
+
+        # 处理 PDF 文件生成
+        if self.is_test:
+            print("-> 测试模式下跳过保存 PDF 以节省时间")
+        else:
+            data['pdf_path'] = self.retry_generate_pdf(
+                url, date_str, raw_item['title'],
+                max_retries=4, no_proxy_last=True
+            )
+
+        return is_existing, data
 

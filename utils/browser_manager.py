@@ -1,6 +1,6 @@
 import random
 import warnings
-from config import USER_AGENTS, get_crawler_proxy, is_proxy_manager_enabled
+from config import USER_AGENTS
 
 def create_browser_context(playwright, user_agent=None, viewport=None):
     """
@@ -26,17 +26,13 @@ def create_browser_context(playwright, user_agent=None, viewport=None):
     ]
     
     playwright_proxy = None
-    crawler_proxy = get_crawler_proxy()
-    if crawler_proxy:
-        playwright_proxy = {"server": crawler_proxy}
-    elif is_proxy_manager_enabled():
-        try:
-            from utils.proxy_manager import get_proxy_string
-            proxy_url = get_proxy_string()
-            if proxy_url:
-                playwright_proxy = {"server": proxy_url}
-        except Exception as ex:
-            print(f"[!] 获取自动代理失败: {ex}")
+    try:
+        from config import get_effective_proxy_string
+        proxy_url = get_effective_proxy_string(exclusive=True)
+        if proxy_url:
+            playwright_proxy = {"server": proxy_url}
+    except Exception as ex:
+        print(f"[!] 获取自动代理失败: {ex}")
             
     if playwright_proxy:
         print(f"[*] Playwright 启动代理: {playwright_proxy['server']}")

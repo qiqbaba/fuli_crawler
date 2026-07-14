@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from typing import Dict, Optional
 
 # ========== 项目根目录（用于解析相对路径，跨平台兼容） ==========
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -221,6 +222,42 @@ def is_proxy_manager_enabled():
     if _runtime_enable_proxy_manager is not None:
         return _runtime_enable_proxy_manager
     return ENABLE_PROXY_MANAGER
+
+
+def get_effective_proxy(exclusive: bool = False) -> Optional[Dict[str, str]]:
+    """
+    统一代理获取入口：固定代理 > 代理池 > 无代理
+    
+    Args:
+        exclusive: 是否为 Playwright 等长连接客户端获取独占代理
+    Returns:
+        {"http": "...", "https": "..."} 或 None
+    """
+    fixed = get_crawler_proxy()
+    if fixed:
+        return {"http": fixed, "https": fixed}
+    if is_proxy_manager_enabled():
+        from utils.proxy_manager import get_proxy_dict
+        return get_proxy_dict(exclusive=exclusive)
+    return None
+
+
+def get_effective_proxy_string(exclusive: bool = True) -> str:
+    """
+    统一代理字符串获取入口：固定代理 > 代理池 > 直连
+    
+    Args:
+        exclusive: 是否为 Playwright 等长连接客户端获取独占代理
+    Returns:
+        代理 URL 字符串，或空字符串（直连）
+    """
+    fixed = get_crawler_proxy()
+    if fixed:
+        return fixed
+    if is_proxy_manager_enabled():
+        from utils.proxy_manager import get_proxy_string
+        return get_proxy_string(exclusive=exclusive)
+    return ""
 
 
 # ========== 反检测 / Stealth 配置 ==========

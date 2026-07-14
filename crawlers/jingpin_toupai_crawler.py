@@ -9,7 +9,6 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 from crawlers.base_crawler import PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin
-from utils.proxy_manager import get_proxy_dict
 
 
 class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
@@ -81,12 +80,8 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                 # 前两次尝试用代理，第三次降级为直连（避免代理异常导致误判网站不可达）
                 proxies = None
                 if attempt < 2:
-                    from config import get_crawler_proxy, is_proxy_manager_enabled
-                    crawler_proxy = get_crawler_proxy()
-                    if crawler_proxy:
-                        proxies = {"http": crawler_proxy, "https": crawler_proxy}
-                    elif is_proxy_manager_enabled():
-                        proxies = get_proxy_dict()
+                    from config import get_effective_proxy
+                    proxies = get_effective_proxy()
 
                 try:
                     print(f"[*] 正在拉取列表页 (尝试 {attempt+1}/3): {url}")
@@ -155,12 +150,8 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             # 前两次尝试用代理，第三次降级为直连（避免代理异常导致误判网站不可达）
             proxies = None
             if attempt < 2:
-                from config import get_crawler_proxy, is_proxy_manager_enabled
-                crawler_proxy = get_crawler_proxy()
-                if crawler_proxy:
-                    proxies = {"http": crawler_proxy, "https": crawler_proxy}
-                elif is_proxy_manager_enabled():
-                    proxies = get_proxy_dict()
+                from config import get_effective_proxy
+                proxies = get_effective_proxy()
 
             try:
                 r = requests.get(sub_url, headers=headers, impersonate="chrome110", timeout=20, proxies=proxies)

@@ -90,9 +90,8 @@ class PDFGenerator:
                     try:
                         real_url = urllib.parse.unquote(req_url.split("?src=")[1])
                         
-                        from config import get_crawler_proxy
-                        p_url = get_crawler_proxy()
-                        p_dict = {"http": p_url, "https": p_url} if p_url else None
+                        from config import get_effective_proxy
+                        p_dict = get_effective_proxy(exclusive=True)
                         
                         headers = {
                             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",

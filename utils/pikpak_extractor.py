@@ -30,8 +30,8 @@ def get_pikpak_link(keepshare_url, timeout=30, poll_interval=2, quiet=False):
     # 获取全局代理配置以规避网络异常
     proxies = None
     try:
-        from utils.proxy_manager import get_proxy_dict
-        proxies = get_proxy_dict()
+        from config import get_effective_proxy
+        proxies = get_effective_proxy()
     except Exception:
         pass
 
