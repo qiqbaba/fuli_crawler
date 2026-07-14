@@ -39,9 +39,9 @@ CRAWLER_CHOICES = [
 ]
 
 
-def _prompt_page_number(prompt: str, default: int) -> int:
-    """交互式询问页码，支持非 TTY 环境自动使用默认值"""
-    if not sys.stdin.isatty():
+def _prompt_page_number(prompt: str, default: int, non_interactive: bool = False) -> int:
+    """交互式询问页码，支持非 TTY 环境和非交互模式自动使用默认值"""
+    if non_interactive or not sys.stdin.isatty():
         return default
     try:
         val = input(f"[*] {prompt} (直接回车默认 {default}): ").strip()
@@ -159,28 +159,43 @@ def main():
         default=False,
         help="强制使用 headless 无头模式 (默认本地自动 headful，便于调试且降低检测风险)"
     )
+    parser.add_argument(
+        "--non-interactive", "-n",
+        action="store_true",
+        default=False,
+        help="非交互模式：跳过所有交互式提示，使用默认值 (CI/CD 环境推荐)"
+    )
     
     args = parser.parse_args()
     
+    # 自动检测非 TTY 环境（管道输入、重定向、CI/CD 等），强制非交互模式
+    if not sys.stdin.isatty():
+        args.non_interactive = True
+        logger.info("[*] 检测到非 TTY 环境，自动启用非交互模式")
+    
     # 如果没有指定 --crawler，进行交互式交互询问
     if not args.crawler:
-        print("[*] 未通过命令行指定爬虫模块，请选择要运行的爬虫：")
-        for i, (key, label) in enumerate(CRAWLER_CHOICES, 1):
-            print(f"    {i}. {label}")
-        try:
-            choice = input(f"请输入序号 [1-{len(CRAWLER_CHOICES)}] (直接回车默认 1): ").strip()
-            choice_idx = 1  # 默认
-            if choice:
-                choice_idx = int(choice)
-            if 1 <= choice_idx <= len(CRAWLER_CHOICES):
-                args.crawler = CRAWLER_CHOICES[choice_idx - 1][0]
-            else:
-                args.crawler = "seju"
-        except (KeyboardInterrupt, EOFError):
-            print("\n[-] 运行已取消")
-            sys.exit(0)
-        except ValueError:
+        if args.non_interactive:
             args.crawler = "seju"
+            logger.info("[*] 非交互模式，使用默认爬虫: seju")
+        else:
+            print("[*] 未通过命令行指定爬虫模块，请选择要运行的爬虫：")
+            for i, (key, label) in enumerate(CRAWLER_CHOICES, 1):
+                print(f"    {i}. {label}")
+            try:
+                choice = input(f"请输入序号 [1-{len(CRAWLER_CHOICES)}] (直接回车默认 1): ").strip()
+                choice_idx = 1  # 默认
+                if choice:
+                    choice_idx = int(choice)
+                if 1 <= choice_idx <= len(CRAWLER_CHOICES):
+                    args.crawler = CRAWLER_CHOICES[choice_idx - 1][0]
+                else:
+                    args.crawler = "seju"
+            except (KeyboardInterrupt, EOFError):
+                print("\n[-] 运行已取消")
+                sys.exit(0)
+            except ValueError:
+                args.crawler = "seju"
     
     # 设定全局运行模式
     if args.mode != "auto":
@@ -247,11 +262,11 @@ def main():
         
     start_page = args.start
     if start_page is None:
-        start_page = _prompt_page_number("请输入起始页码", 1)
+        start_page = _prompt_page_number("请输入起始页码", 1, args.non_interactive)
 
     end_page = args.end
     if end_page is None:
-        end_page = _prompt_page_number("请输入结束页码", default_end)
+        end_page = _prompt_page_number("请输入结束页码", default_end, args.non_interactive)
 
     # 做基本的验证
     if start_page < 1:
@@ -262,7 +277,7 @@ def main():
         end_page = start_page
     
     # 交互式询问是否启用断点续爬（仅当未通过命令行指定时）
-    if not args.resume and sys.stdin.isatty():
+    if not args.resume and not args.non_interactive and sys.stdin.isatty():
         try:
             val = input("[*] 是否启用断点续爬模式？(y/N, 直接回车默认 N): ").strip().lower()
             if val in ('y', 'yes'):
