@@ -9,6 +9,9 @@ import time
 from typing import List, Dict, Optional
 from aiohttp_socks import ProxyConnector
 from config import PROXY_VERIFY_TIMEOUT, PROXY_VERIFY_SSL, get_proxy_verify_workers
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 # 测试目标URL（用于验证代理是否可用）
 PROXY_TEST_URLS = [
@@ -80,7 +83,7 @@ class ProxyVerifier:
         # 在多协程验证队列开始前，将待校验代理按历史评分 score 降序排序，优先测试表现好的代理
         proxies.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
-        print(f"[ProxyVerifier] 开始异步验证 {len(proxies)} 个代理（并发: {max_workers}，超时: {verify_timeout}s，目标数: {target_count}，测试目标: {current_test_url}）...")
+        logger.info("开始异步验证 %s 个代理（并发: %s，超时: %ss，目标数: %s，测试目标: %s）...", len(proxies), max_workers, verify_timeout, target_count, current_test_url)
 
         working = []
         total = len(proxies)
@@ -185,7 +188,7 @@ class ProxyVerifier:
                             curr_count = verified_count[0]
                             if curr_count % 1000 == 0 or curr_count == total:
                                 elapsed = time.time() - start_time
-                                print(f"[ProxyVerifier]   进度: {curr_count}/{total}（已找到 {len(working)} 个可用，耗时 {elapsed:.1f}s）")
+                                logger.info("  进度: %s/%s（已找到 %s 个可用，耗时 %.1fs）", curr_count, total, len(working), elapsed)
 
             # 启动并发 worker 协程
             num_workers = min(max_workers, total)
@@ -198,7 +201,7 @@ class ProxyVerifier:
             # 检查 worker 是否有异常被静默吞掉
             for i, r in enumerate(gather_results):
                 if isinstance(r, Exception):
-                    print(f"[ProxyVerifier] Worker {i} 发生未捕获异常: {r}")
+                    logger.warning("Worker %s 发生未捕获异常: %s", i, r)
 
         # 检测是否已在异步上下文中（有事件循环正在运行）
         try:
@@ -216,7 +219,7 @@ class ProxyVerifier:
                 try:
                     _loop.run_until_complete(main_verify())
                 except Exception as e:
-                    print(f"[ProxyVerifier] 异步事件循环发生异常: {e}")
+                    logger.warning("异步事件循环发生异常: %s", e)
                 finally:
                     _loop.close()
                     asyncio.set_event_loop(None)
@@ -229,11 +232,11 @@ class ProxyVerifier:
                 asyncio.set_event_loop(loop)
                 loop.run_until_complete(main_verify())
             except Exception as e:
-                print(f"[ProxyVerifier] 异步事件循环发生异常: {e}")
+                logger.warning("异步事件循环发生异常: %s", e)
             finally:
                 loop.close()
                 asyncio.set_event_loop(None)
 
         elapsed = time.time() - start_time
-        print(f"[ProxyVerifier] 验证完成: {len(working)}/{total} 个代理可用（总耗时 {elapsed:.1f}s）")
+        logger.info("验证完成: %s/%s 个代理可用（总耗时 %.1fs）", len(working), total, elapsed)
         return working

@@ -4,6 +4,9 @@
 """
 from typing import Optional, Dict
 from config import is_local_mode
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 # 导入拆分后的组件与常量以实现向后兼容
 from utils.proxy_fetcher import PROXY_SOURCES
@@ -102,27 +105,27 @@ def get_proxy_dict(exclusive: bool = False) -> Optional[Dict[str, str]]:
 
 if __name__ == "__main__":
     # 测试代理管理器
-    print("=" * 60)
-    print("代理IP管理器（兼容测试层）测试")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("代理IP管理器（兼容测试层）测试")
+    logger.info("=" * 60)
     
     manager = ProxyManager()
     
     # 获取代理
     count = manager.fetch_proxies(force=True)
-    print(f"\n获取到 {count} 个代理")
+    logger.info("获取到 %s 个代理", count)
     
     # 验证代理
     if count > 0:
         working = manager.verify_proxies(force=True, max_workers=100, target_count=5)
-        print(f"可用代理: {working} 个")
+        logger.info("可用代理: %s 个", working)
         
         # 显示统计
         stats = manager.get_stats()
-        print(f"\n统计信息: {stats}")
+        logger.info("统计信息: %s", stats)
         
         # 获取随机代理
         proxy = manager.get_random_proxy()
-        print(f"\n随机代理: {proxy}")
+        logger.info("随机代理: %s", proxy)
     else:
-        print("未获取到代理，请检查网络连接")
+        logger.warning("未获取到代理，请检查网络连接")

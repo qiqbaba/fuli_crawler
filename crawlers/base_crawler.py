@@ -9,7 +9,10 @@ from utils.pdf_generator import PDFGenerator, PDFRenderConfig
 from utils.date_parser import parse_date
 from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak_link
 from utils.lang_filter import is_japanese
+from utils.logger import get_logger
 from config import USER_AGENTS
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -57,6 +60,7 @@ class BaseCrawler:
         self.check_resource_link = False  # 是否额外检查 resource_link（磁力链接）去重，子类按需开启
         self.skip_japanese = True  # 是否跳过日语标题
         self.is_test = False
+        self.quiet = False  # 静音模式，在 run() 中可被覆盖
 
     def _build_headers(self, referer=None):
         """构造完整的浏览器请求头，模拟真实浏览器行为"""
@@ -85,6 +89,11 @@ class BaseCrawler:
         """通用 HTTP GET 请求，最多重试 3 次，支持代理自动切换和失败上报"""
         from curl_cffi import requests
         from config import get_effective_proxy, is_proxy_manager_enabled
+        from utils.proxy_manager import get_proxy_manager
+
+        # 预先获取代理管理器实例（移出重试循环，只执行一次）
+        proxy_manager = get_proxy_manager() if is_proxy_manager_enabled() else None
+
         for attempt in range(1, 4):
             proxies = None
             try:
@@ -98,20 +107,15 @@ class BaseCrawler:
                 if r.status_code == 200:
                     return r.url, r.text
                 else:
-                    print(f"[-] HTTP 请求失败 ({url}) [第 {attempt}/3 次尝试]: 状态码 {r.status_code}")
-                    if r.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
-                        from utils.proxy_manager import get_proxy_manager
-                        manager = get_proxy_manager()
-                        if manager and "http" in proxies:
-                            manager.report_failure(proxies["http"])
+                    logger.error("HTTP 请求失败 (%s) [第 %s/3 次尝试]: 状态码 %s", url, attempt, r.status_code)
+                    if r.status_code in (403, 407, 502, 503, 504) and proxies and proxy_manager:
+                        if "http" in proxies:
+                            proxy_manager.report_failure(proxies["http"])
             except Exception as e:
-                from config import is_proxy_manager_enabled
-                print(f"[-] HTTP 请求异常 ({url}) [第 {attempt}/3 次尝试]: {e}")
-                if proxies and is_proxy_manager_enabled():
-                    from utils.proxy_manager import get_proxy_manager
-                    manager = get_proxy_manager()
-                    if manager and "http" in proxies:
-                        manager.report_failure(proxies["http"])
+                logger.error("HTTP 请求异常 (%s) [第 %s/3 次尝试]: %s", url, attempt, e)
+                if proxies and proxy_manager:
+                    if "http" in proxies:
+                        proxy_manager.report_failure(proxies["http"])
 
             if attempt < 3:
                 time.sleep(random.uniform(1.0, 3.0))
@@ -202,43 +206,43 @@ class BaseCrawler:
 
     def _run_test_mode(self, start_page):
         """测试模式：抓取第一页前 5 条并输出，不入库"""
-        print(f"【测试模式】正在抓取第一页以提供测试数据...")
+        logger.info("【测试模式】正在抓取第一页以提供测试数据...")
         list_content = self.fetch_list_page(start_page)
         if not list_content:
-            print("[-] 抓取列表页测试数据失败。")
+            logger.error("抓取列表页测试数据失败。")
             return
 
         raw_items = self.parse_list_page(list_content, start_page)
-        print(f"[+] 列表页解析完成，共找到 {len(raw_items)} 条记录。")
+        logger.info("列表页解析完成，共找到 %s 条记录。", len(raw_items))
 
         test_items = raw_items[:5]
-        print(f"\n================ 进行前 5 条数据测试 ================")
+        logger.info("\n================ 进行前 5 条数据测试 ================")
         for idx, raw_item in enumerate(test_items, 1):
             res = self.process_sub_page_if_needed(raw_item, idx)
             if not res:
-                print(f"[{idx}] 提取测试失败")
+                logger.info("[%s] 提取测试失败", idx)
                 continue
             is_existing, data = res
             if data:
-                print(f"[{idx}] 状态 (已存在数据库: {is_existing})")
-                print(f"    - title (标题): {data['title']}")
-                print(f"    - publish_time (发布时间): {data['publish_time']}")
-                print(f"    - category (分类): {data['category']}")
-                print(f"    - resource_link (资源链接): {data['resource_link'][:80]}...")
-                print(f"    - pikpak_link (PikPak): {data['pikpak_link']}")
-                print(f"    - size (大小): {data['size']}")
-                print(f"    - resource_format (格式): {data['resource_format']}")
-                print(f"    - url (链接): {data['url']}")
-                print(f"    - pdf_path (PDF): {data['pdf_path']}")
+                logger.info("[%s] 状态 (已存在数据库: %s)", idx, is_existing)
+                logger.info("    - title (标题): %s", data['title'])
+                logger.info("    - publish_time (发布时间): %s", data['publish_time'])
+                logger.info("    - category (分类): %s", data['category'])
+                logger.info("    - resource_link (资源链接): %s...", data['resource_link'][:80])
+                logger.info("    - pikpak_link (PikPak): %s", data['pikpak_link'])
+                logger.info("    - size (大小): %s", data['size'])
+                logger.info("    - resource_format (格式): %s", data['resource_format'])
+                logger.info("    - url (链接): %s", data['url'])
+                logger.info("    - pdf_path (PDF): %s", data['pdf_path'])
                 print("-" * 80)
-        print("\n[+] 测试完毕。")
+        logger.info("测试完毕。")
 
     def _save_page_state(self, class_name, page_num, completed=False):
         """保存当前爬取进度到数据库（断点续爬）"""
         try:
             self.db_manager.save_crawl_state(self.source_name, class_name, page_num, completed=completed)
         except Exception as e:
-            print(f"[!] 保存爬虫断点状态失败: {e}")
+            logger.warning("保存爬虫断点状态失败: %s", e)
 
     def _filter_new_items(self, raw_items, existing_urls, consecutive_count):
         """URL级去重过滤 — 分离自 _crawl_pages 的过滤逻辑
@@ -263,7 +267,7 @@ class BaseCrawler:
             if not is_existing and self._is_japanese_title(raw_item):
                 if not self.quiet:
                     title_preview = raw_item.get('title', '')[:40]
-                    print(f"[{idx}] 标题检测为日语，跳过: {title_preview}")
+                    logger.info("[%s] 标题检测为日语，跳过: %s", idx, title_preview)
                 continue
 
             if is_existing:
@@ -271,20 +275,31 @@ class BaseCrawler:
                 if self.max_consecutive_existing is not None:
                     consecutive_count += 1
                     if not self.quiet:
-                        print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
-                        print(f"[*] 连续发现已存在数据: {consecutive_count}/{self.max_consecutive_existing}")
-                    if consecutive_count >= self.max_consecutive_existing:
-                        print(f"\n[触发停止条件] 连续 {self.max_consecutive_existing} 条数据已存在，停止处理当前页！")
-                        early_stop_triggered = True
-                        break
+                        logger.info("[%s] 网址已存在数据库中，跳过抓取: %s", idx, url)
+                        logger.info("[*] 连续发现已存在数据: %s/%s", consecutive_count, self.max_consecutive_existing)
+                        if consecutive_count >= self.max_consecutive_existing:
+                            logger.info("\n[触发停止条件] 连续 %s 条数据已存在，停止处理当前页！", self.max_consecutive_existing)
+                            early_stop_triggered = True
+                            break
                 else:
                     if not self.quiet:
-                        print(f"[{idx}] 网址已存在数据库中，跳过抓取: {url}")
+                        logger.info("[%s] 网址已存在数据库中，跳过抓取: %s", idx, url)
             else:
                 items_to_process.append((idx, raw_item))
                 consecutive_count = 0
 
         return items_to_process, skipped_count, consecutive_count, early_stop_triggered
+
+    def _check_consecutive_subpage_stop(self, idx, is_existing, consecutive_subpage_count):
+        """检查子页面级连续已存在计数，返回 (new_count, should_stop)"""
+        if not is_existing or self.max_consecutive_existing is None:
+            return consecutive_subpage_count, False
+        consecutive_subpage_count += 1
+        if not self.quiet:
+            logger.info("[%s] 子页面级去重跳过: 连续已存在计数: %s/%s",
+                        idx, consecutive_subpage_count, self.max_consecutive_existing)
+        should_stop = consecutive_subpage_count >= self.max_consecutive_existing
+        return consecutive_subpage_count, should_stop
 
     def _process_items_concurrently(self, items_to_process, max_workers, consecutive_subpage_count):
         """并发处理子页面 — 分离自 _crawl_pages 的并发处理逻辑
@@ -301,68 +316,46 @@ class BaseCrawler:
         results_dict = {}
         early_stop_triggered = False
 
-        if max_workers == 1:
-            for idx, raw_item in items_to_process:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx = {
+                executor.submit(self.process_sub_page_if_needed, raw_item, idx): idx
+                for idx, raw_item in items_to_process
+            }
+
+            collected_results = {}
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
                 try:
-                    res = self.process_sub_page_if_needed(raw_item, idx)
+                    res = future.result()
                     if res:
                         is_existing, data = res
-                        if is_existing:
-                            if self.max_consecutive_existing is not None:
-                                consecutive_subpage_count += 1
-                                if not self.quiet:
-                                    print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_subpage_count}/{self.max_consecutive_existing}")
-                                if consecutive_subpage_count >= self.max_consecutive_existing:
-                                    early_stop_triggered = True
-                                    break
-                        if data:
-                            results_dict[idx] = data
+                        collected_results[idx] = (is_existing, data)
                 except Exception as e:
-                    print(f"[-] 处理索引为 [{idx}] 的项目时发生异常: {e}")
-            self.release_thread_resources()
-        else:
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_idx = {
-                    executor.submit(self.process_sub_page_if_needed, raw_item, idx): idx
-                    for idx, raw_item in items_to_process
-                }
+                    logger.error("线程处理索引为 [%s] 的项目时发生异常: %s", idx, e)
 
-                collected_results = {}
-                for future in as_completed(future_to_idx):
-                    idx = future_to_idx[future]
-                    try:
-                        res = future.result()
-                        if res:
-                            is_existing, data = res
-                            collected_results[idx] = (is_existing, data)
-                    except Exception as e:
-                        print(f"[-] 线程处理索引为 [{idx}] 的项目时发生异常: {e}")
+            for idx in sorted(collected_results.keys()):
+                is_existing, data = collected_results[idx]
+                consecutive_subpage_count, should_stop = self._check_consecutive_subpage_stop(
+                    idx, is_existing, consecutive_subpage_count
+                )
+                if should_stop:
+                    early_stop_triggered = True
+                if data:
+                    results_dict[idx] = data
 
-                for idx in sorted(collected_results.keys()):
-                    is_existing, data = collected_results[idx]
-                    if is_existing:
-                        if self.max_consecutive_existing is not None:
-                            consecutive_subpage_count += 1
-                            if not self.quiet:
-                                print(f"[{idx}] 子页面级去重跳过: 连续已存在计数: {consecutive_subpage_count}/{self.max_consecutive_existing}")
-                            if consecutive_subpage_count >= self.max_consecutive_existing:
-                                early_stop_triggered = True
-                    if data:
-                        results_dict[idx] = data
-
-                print("[*] 正在向并发工作线程发送资源清理指令...")
-                cleanup_futures = [
-                    executor.submit(self.release_thread_resources)
-                    for _ in range(max_workers)
-                ]
-                for f in as_completed(cleanup_futures):
-                    try:
-                        f.result()
-                    except Exception as e:
-                        print(f"[-] 清理工作线程资源时发生异常: {e}")
+            logger.info("正在向并发工作线程发送资源清理指令...")
+            cleanup_futures = [
+                executor.submit(self.release_thread_resources)
+                for _ in range(max_workers)
+            ]
+            for f in as_completed(cleanup_futures):
+                try:
+                    f.result()
+                except Exception as e:
+                    logger.error("清理工作线程资源时发生异常: %s", e)
 
         if early_stop_triggered:
-            print(f"[!] 子页面级去重触发早停标记，已完成的结果将继续入库。")
+            logger.warning("子页面级去重触发早停标记，已完成的结果将继续入库。")
 
         return results_dict, consecutive_subpage_count, early_stop_triggered
 
@@ -389,11 +382,11 @@ class BaseCrawler:
                 if title and is_japanese(title):
                     jp_skipped += 1
                     if not self.quiet:
-                        print(f"[*] 结果标题检测为日语，过滤: {title[:40]}")
+                        logger.info("[*] 结果标题检测为日语，过滤: %s", title[:40])
                 else:
                     filtered_jp.append(d)
             if jp_skipped > 0:
-                print(f"[*] 日语标题后置过滤掉 {jp_skipped} 条")
+                logger.info("[*] 日语标题后置过滤掉 %s 条", jp_skipped)
             results = filtered_jp
 
         # 磁力链接二次去重
@@ -407,14 +400,14 @@ class BaseCrawler:
                 if link and link in existing_links:
                     resource_link_skipped += 1
                     if not self.quiet:
-                        print(f"[*] 磁力链接已存在数据库中，跳过: {link[:60]}...")
+                        logger.info("[*] 磁力链接已存在数据库中，跳过: %s...", link[:60])
                 else:
                     filtered_results.append(d)
             if resource_link_skipped > 0:
-                print(f"[*] 磁力链接去重过滤掉 {resource_link_skipped} 条")
+                logger.info("[*] 磁力链接去重过滤掉 %s 条", resource_link_skipped)
             results = filtered_results
 
-        print(f"[*] 正在写入 {len(results)} 条新纪录到数据库...")
+        logger.info("[*] 正在写入 %s 条新纪录到数据库...", len(results))
         for data in results:
             success = self.db_manager.insert_resource(data)
             if success:
@@ -425,13 +418,13 @@ class BaseCrawler:
                 if self.max_consecutive_existing is not None:
                     consecutive_count += 1
                     if not self.quiet:
-                        print(f"[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: {consecutive_count}/{self.max_consecutive_existing}")
+                        logger.info("[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: %s/%s", consecutive_count, self.max_consecutive_existing)
                     if consecutive_count >= self.max_consecutive_existing:
                         early_stop_triggered = True
                         break
                 else:
                     if not self.quiet:
-                        print(f"[*] 写入失败或重复 (DB IGNORE)")
+                        logger.info("[*] 写入失败或重复 (DB IGNORE)")
 
         return inserted_count, skipped_count, consecutive_count, early_stop_triggered
 
@@ -456,21 +449,21 @@ class BaseCrawler:
             if is_gha:
                 print(f"::group::正在抓取第 {page_num}/{end_page} 页", flush=True)
             else:
-                print(f"\n================ 正在抓取第 {page_num}/{end_page} 页 ================")
+                logger.info("\n================ 正在抓取第 %s/%s 页 ================", page_num, end_page)
 
             try:
                 list_content = self.fetch_list_page(page_num)
                 if not list_content:
-                    print(f"[-] 页面 {page_num} 抓取失败或无内容，跳过。")
+                    logger.error("页面 %s 抓取失败或无内容，跳过。", page_num)
                     continue
 
                 raw_items = self.parse_list_page(list_content, page_num)
                 if not raw_items:
-                    print(f"[-] 页面 {page_num} 未提取到有效项。")
+                    logger.error("页面 %s 未提取到有效项。", page_num)
                     time.sleep(random.uniform(1.0, 2.0))
                     continue
 
-                print(f"[+] 本页共解析到 {len(raw_items)} 条记录。")
+                logger.info("本页共解析到 %s 条记录。", len(raw_items))
 
                 # === 步骤 1: URL 级去重过滤 ===
                 urls_to_check = [raw_item if isinstance(raw_item, str) else raw_item.get('url') for raw_item in raw_items]
@@ -486,7 +479,7 @@ class BaseCrawler:
                         if self.max_consecutive_duplicate_pages is not None:
                             consecutive_duplicate_pages += 1
                             if not self.quiet:
-                                print(f"[*] 当前页所有数据均已重复。连续重复页数: {consecutive_duplicate_pages}/{self.max_consecutive_duplicate_pages}")
+                                logger.info("[*] 当前页所有数据均已重复。连续重复页数: %s/%s", consecutive_duplicate_pages, self.max_consecutive_duplicate_pages)
                             if consecutive_duplicate_pages >= self.max_consecutive_duplicate_pages:
                                 early_stop_triggered = True
                     else:
@@ -495,20 +488,20 @@ class BaseCrawler:
                 # === 步骤 3: 早停或无待处理项 ===
                 if not items_to_process or early_stop_triggered:
                     if not items_to_process:
-                        print(f"[+] 页面 {page_num} 所有项均已被跳过。")
+                        logger.info("页面 %s 所有项均已被跳过。", page_num)
                     else:
-                        print(f"[+] 页面 {page_num} 触发早停，跳过 {len(items_to_process)} 条待处理项。")
+                        logger.info("页面 %s 触发早停，跳过 %s 条待处理项。", page_num, len(items_to_process))
                     if class_name is not None:
                         self._save_page_state(class_name, page_num + 1)
                     if early_stop_triggered or (self.max_consecutive_existing is not None and max(consecutive_count, consecutive_subpage_count) >= self.max_consecutive_existing):
-                        print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
+                        logger.info("\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                         early_break = True
                         break
                     self._sleep_between_pages(self.no_pdf)
                     continue
 
                 # === 步骤 4: 并发处理子页面 ===
-                print(f"[*] 开始并发处理 {len(items_to_process)} 条新纪录 (并发线程数: {max_workers})...")
+                logger.info("[*] 开始并发处理 %s 条新纪录 (并发线程数: %s)...", len(items_to_process), max_workers)
                 results_dict, consecutive_subpage_count, subpage_early_stop = self._process_items_concurrently(
                     items_to_process, max_workers, consecutive_subpage_count
                 )
@@ -525,14 +518,14 @@ class BaseCrawler:
                     inserted_count = 0
                     db_skipped = 0
 
-                print(f"[+] 页面 {page_num} 处理完成：写入 {inserted_count} 条，跳过 {skipped_count + db_skipped} 条。")
+                logger.info("页面 %s 处理完成：写入 %s 条，跳过 %s 条。", page_num, inserted_count, skipped_count + db_skipped)
                 self.db_manager.commit()
 
                 if class_name is not None:
                     self._save_page_state(class_name, page_num + 1)
 
                 if early_stop_triggered or (self.max_consecutive_existing is not None and max(consecutive_count, consecutive_subpage_count) >= self.max_consecutive_existing):
-                    print(f"\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
+                    logger.info("\n[任务结束] 爬虫已追溯到历史抓取位置，安全退出翻页循环。")
                     early_break = True
                     break
 
@@ -563,16 +556,16 @@ class BaseCrawler:
         self.no_pdf = kwargs.get('no_pdf', False)
         
         if resume:
-            print(f"[*] 启用断点续爬模式，将自动跳过已完成的板块/页面")
+            logger.info("[*] 启用断点续爬模式，将自动跳过已完成的板块/页面")
         if self.no_pdf:
-            print("[*] 启用无 PDF 渲染模式，将跳过 PDF 生成与图片下载")
+            logger.info("[*] 启用无 PDF 渲染模式，将跳过 PDF 生成与图片下载")
         
-        print(f"[*] 启动 {self.source_name} 爬虫流程...")
+        logger.info("[*] 启动 %s 爬虫流程...", self.source_name)
         self.on_start()
 
         no_early_stop = kwargs.get('no_early_stop', False)
         if no_early_stop:
-            print("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
+            logger.info("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
             self.max_consecutive_existing = None
             self.max_consecutive_duplicate_pages = None
 
@@ -595,9 +588,9 @@ class BaseCrawler:
             self._crawl_pages(start_page, end_page, max_workers)
 
         except KeyboardInterrupt:
-            print("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
+            logger.warning("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
         except Exception as e:
-            print(f"\n[致命错误] 运行中发生未捕获的异常: {e}")
+            logger.error("\n[致命错误] 运行中发生未捕获的异常: %s", e)
         finally:
             self.on_finish()
 
@@ -634,18 +627,18 @@ class PlaywrightBaseCrawler(BaseCrawler):
         self.pdf_generator = PDFGenerator(self.r2_uploader)
         if not self.quiet:
             if self.r2_uploader:
-                print(f"[*] Cloudflare R2 上传器已启用 ({self.source_name})", flush=True)
+                logger.info("[*] Cloudflare R2 上传器已启用 (%s)", self.source_name)
             else:
                 if is_local_mode():
-                    print(f"[*] 本地模式已激活，PDF 将保存到本地目录 ({self.source_name})", flush=True)
+                    logger.info("[*] 本地模式已激活，PDF 将保存到本地目录 (%s)", self.source_name)
                 else:
-                    print(f"[*] 未配置 R2 环境变量，PDF 将保存到本地目录 ({self.source_name})", flush=True)
+                    logger.info("[*] 未配置 R2 环境变量，PDF 将保存到本地目录 (%s)", self.source_name)
         
         # 初始化代理管理器
         from config import is_proxy_manager_enabled
         if is_proxy_manager_enabled():
             if not self.quiet:
-                print(f"[*] 代理管理器已启用，正在获取和验证代理IP...", flush=True)
+                logger.info("[*] 代理管理器已启用，正在获取和验证代理IP...")
             from utils.proxy_manager import get_proxy_manager
             from config import get_proxy_verify_workers
             try:
@@ -662,10 +655,10 @@ class PlaywrightBaseCrawler(BaseCrawler):
                     )
                     stats = manager.get_stats()
                     if not self.quiet:
-                        print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个", flush=True)
+                        logger.info("[*] 代理管理器就绪: 总计 %s 个，可用 %s 个", stats['total'], stats['working'])
             except Exception as e:
                 if not self.quiet:
-                    print(f"[-] 初始化代理管理器时发生异常: {e}", flush=True)
+                    logger.error("初始化代理管理器时发生异常: %s", e)
 
     def release_thread_resources(self):
         """
@@ -690,14 +683,14 @@ class PlaywrightBaseCrawler(BaseCrawler):
 
     def on_finish(self):
         """释放 Playwright 渲染资源"""
-        print(f"[*] 正在释放主线程 Playwright 资源 ({self.source_name})...")
+        logger.info("[*] 正在释放主线程 Playwright 资源 (%s)...", self.source_name)
         # 1. 优先清理主线程自身的资源
         self.release_thread_resources()
         
         # 2. 残留资源兜底关闭
         with self._resources_lock:
             if self._active_resources:
-                print(f"[!] 发现 {len(self._active_resources)} 个未被工作线程自主清理的残留资源，执行主线程兜底关闭...")
+                logger.warning("[!] 发现 %s 个未被工作线程自主清理的残留资源，执行主线程兜底关闭...", len(self._active_resources))
                 for item in self._active_resources:
                     p, browser, context, profile_dir = item
                     try:
@@ -788,7 +781,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
                         timezone_id="Asia/Shanghai"
                     )
                 except Exception as e:
-                    print(f"[*] 启动真实 Chrome 失败，回退到内置 Chromium: {e}")
+                    logger.info("[*] 启动真实 Chrome 失败，回退到内置 Chromium: %s", e)
                     try:
                         context = p.chromium.launch_persistent_context(
                             user_data_dir=profile_dir,
@@ -801,9 +794,9 @@ class PlaywrightBaseCrawler(BaseCrawler):
                             locale="zh-CN",
                             timezone_id="Asia/Shanghai"
                         )
-                        print(f"[+] 线程 {threading.get_ident()} 成功启动内置 Chromium 持久化上下文")
+                        logger.info("[+] 线程 %s 成功启动内置 Chromium 持久化上下文", threading.get_ident())
                     except Exception as e2:
-                        print(f"[-] 启动持久化上下文均失败: {e2}。尝试普通方式启动。")
+                        logger.error("启动持久化上下文均失败: %s。尝试普通方式启动。", e2)
                 
                 if context:
                     browser = context.browser
@@ -966,7 +959,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
             try:
                 no_proxy = no_proxy_last and (attempt == max_retries)
                 if no_proxy:
-                    print(f"[-] [PDF-SAVE] 标题: {title} 前{max_retries - 1}次代理均失败，第{max_retries}次尝试直连...")
+                    logger.error("[PDF-SAVE] 标题: %s 前%s次代理均失败，第%s次尝试直连...", title, max_retries - 1, max_retries)
                     try:
                         self._destroy_thread_resources()
                     except Exception:
@@ -977,24 +970,24 @@ class PlaywrightBaseCrawler(BaseCrawler):
 
                 saved_path = self._save_pdf(url_or_page, publish_date, title, no_proxy=no_proxy)
                 if saved_path:
-                    print(f"[PDF-SAVE] 标题: {title} -> PDF 路径: {saved_path}")
+                    logger.info("[PDF-SAVE] 标题: %s -> PDF 路径: %s", title, saved_path)
                     return saved_path
                 else:
                     last_error = f"第 {attempt}/{max_retries} 次尝试返回空"
-                    print(f"[-] [PDF-SAVE] 标题: {title} 生成 PDF 失败，进行第 {attempt}/{max_retries} 次尝试")
+                    logger.error("[PDF-SAVE] 标题: %s 生成 PDF 失败，进行第 %s/%s 次尝试", title, attempt, max_retries)
             except Exception as e:
                 last_error = f"第 {attempt}/{max_retries} 次尝试异常: {e}"
-                print(f"[-] [PDF-SAVE] 标题: {title} {last_error}")
+                logger.error("[PDF-SAVE] 标题: %s %s", title, last_error)
 
             if attempt < max_retries:
                 if destroy_on_retry and not no_proxy:
                     try:
                         self._destroy_thread_resources()
                     except Exception as recreate_err:
-                        print(f"[!] 重构 Playwright 资源失败: {recreate_err}")
+                        logger.warning("[!] 重构 Playwright 资源失败: %s", recreate_err)
                 time.sleep(random.uniform(1.5, 3.0))
 
-        print(f"[-] [PDF-SAVE] 标题: {title} 生成 PDF 失败 (已达最大重试次数): {last_error}")
+        logger.error("[PDF-SAVE] 标题: %s 生成 PDF 失败 (已达最大重试次数): %s", title, last_error)
         return ""
 
 
@@ -1035,12 +1028,12 @@ class DomainRotationMixin:
                             else:
                                 self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
                             self._domain_cooldown.clear()
-                        print(f"[+] {self.source_name.upper()} 从缓存加载 {len(unique_domains)} 个域名:")
+                        logger.info("[+] %s 从缓存加载 %s 个域名:", self.source_name.upper(), len(unique_domains))
                         for d in unique_domains:
-                            print(f"    - {d}")
+                            logger.info("    - %s", d)
                         return True
         except Exception as e:
-            print(f"[!] {self.source_name.upper()} 读取域名缓存失败: {e}")
+            logger.warning("[!] %s 读取域名缓存失败: %s", self.source_name.upper(), e)
         return False
 
     def _save_domains_to_cache(self):
@@ -1051,9 +1044,9 @@ class DomainRotationMixin:
                 to_save = list(dict.fromkeys(self.domains))  # 去重保序
             with open(cache_path, "w", encoding="utf-8") as f:
                 json.dump(to_save, f, ensure_ascii=False, indent=2)
-            print(f"[+] {self.source_name.upper()} 域名已缓存至: {cache_path}")
+            logger.info("[+] %s 域名已缓存至: %s", self.source_name.upper(), cache_path)
         except Exception as e:
-            print(f"[!] {self.source_name.upper()} 保存域名缓存失败: {e}")
+            logger.warning("[!] %s 保存域名缓存失败: %s", self.source_name.upper(), e)
 
     def _rotate_domain(self):
         """轮换至下一个可用域名（带冷却机制），线程安全"""
@@ -1074,7 +1067,7 @@ class DomainRotationMixin:
                         self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
                     else:
                         self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
-                    print(f"[!] {self.source_name.upper()} 域名切换至: {self.base_domain}")
+                    logger.warning("[!] %s 域名切换至: %s", self.source_name.upper(), self.base_domain)
                     return
             
             # 所有域名都在冷却中
@@ -1084,7 +1077,7 @@ class DomainRotationMixin:
                     for d in self.domains
                 ))
                 wait_time = max(min_wait, 10) + random.uniform(2, 5)
-                print(f"[!] 所有域名均在冷却中，等待 {wait_time:.1f} 秒...")
+                logger.warning("[!] 所有域名均在冷却中，等待 %.1f 秒...", wait_time)
                 time.sleep(wait_time)
             else:
                 wait_time = random.uniform(2, 5)
@@ -1098,7 +1091,7 @@ class DomainRotationMixin:
             else:
                 self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
             self._domain_cooldown.pop(self.domains[self.current_domain_idx], None)
-            print(f"[!] 冷却结束，{self.source_name.upper()} 域名切换至: {self.base_domain}")
+            logger.warning("[!] 冷却结束，%s 域名切换至: %s", self.source_name.upper(), self.base_domain)
 
     def _update_domains_from_redirect(self, content):
         """从'正在检测最新可用线路'跳转页面中提取最新域名并更新域名列表
@@ -1120,7 +1113,7 @@ class DomainRotationMixin:
         pattern = getattr(self, "domain_pattern", r'([a-z]{2,5}\.\d{5,7}\.xyz)')
         new_domains = re.findall(pattern, content)
         if not new_domains:
-            print(f"[!] 检测到跳转页面但未能提取到域名")
+            logger.warning("[!] 检测到跳转页面但未能提取到域名")
             return False
         
         # 去重并保留顺序
@@ -1151,12 +1144,12 @@ class DomainRotationMixin:
             
             added = new_set - old_set
             removed = old_set - new_set
-            print(f"[+] {self.source_name.upper()} 检测到域名变更！提取到 {len(unique_domains)} 个最新域名:")
+            logger.info("[+] %s 检测到域名变更！提取到 %s 个最新域名:", self.source_name.upper(), len(unique_domains))
             for i, d in enumerate(unique_domains, 1):
                 tag = " [新]" if d in added else ""
-                print(f"    域名{i}: {d}{tag}")
+                logger.info("    域名%s: %s%s", i, d, tag)
             if removed:
-                print(f"    已失效: {', '.join(removed)}")
+                logger.info("    已失效: %s", ', '.join(removed))
         
         # 自动持久化到本地缓存
         self._save_domains_to_cache()
@@ -1168,7 +1161,7 @@ class DomainRotationMixin:
         if not getattr(self, "main_domain", None):
             return False
         
-        print(f"[*] {self.source_name.upper()} 开始从主站 {self.main_domain} 动态获取最新域名列表...", flush=True)
+        logger.info("[*] %s 开始从主站 %s 动态获取最新域名列表...", self.source_name.upper(), self.main_domain)
         headers = self._build_headers(referer=self.main_domain)
         
         # 1. 优先获取代理
@@ -1189,7 +1182,7 @@ class DomainRotationMixin:
                 if resp.status_code == 200:
                     return resp.text
             except Exception as e:
-                print(f"[-] curl_cffi 请求主站 {self.main_domain} 失败: {e}", flush=True)
+                logger.error("[-] curl_cffi 请求主站 %s 失败: %s", self.main_domain, e)
                 if proxies and is_proxy_manager_enabled():
                     from utils.proxy_manager import get_proxy_manager
                     manager = get_proxy_manager()
@@ -1201,7 +1194,7 @@ class DomainRotationMixin:
             nonlocal html
             if not hasattr(self, "_get_thread_resources"):
                 return None
-            print(f"[*] Playwright 并发访问主站: {self.main_domain}", flush=True)
+            logger.info("[*] Playwright 并发访问主站: %s", self.main_domain)
             page = None
             try:
                 _, _, context = self._get_thread_resources()
@@ -1211,7 +1204,7 @@ class DomainRotationMixin:
                 time.sleep(3.0)
                 return page.content()
             except Exception as e:
-                print(f"[-] Playwright 访问主站 {self.main_domain} 异常: {e}", flush=True)
+                logger.error("[-] Playwright 访问主站 %s 异常: %s", self.main_domain, e)
                 self._destroy_thread_resources()
                 return None
             finally:
@@ -1235,7 +1228,7 @@ class DomainRotationMixin:
                             break
         
         if not html:
-            print(f"[!] 无法从主站 {self.main_domain} 获取到页面内容", flush=True)
+            logger.warning("[!] 无法从主站 %s 获取到页面内容", self.main_domain)
             return False
             
         # 4. 尝试解密 HTML
@@ -1250,7 +1243,7 @@ class DomainRotationMixin:
         pattern = getattr(self, "domain_pattern", r'([a-z]{2,5}\.\d{5,7}\.xyz)')
         new_domains = re.findall(pattern, content_to_parse)
         if not new_domains:
-            print(f"[!] 未能在主站内容中匹配提取到镜像域名 (正则: {pattern})", flush=True)
+            logger.warning("[!] 未能在主站内容中匹配提取到镜像域名 (正则: %s)", pattern)
             return False
             
         # 去重并保留顺序，排除主站本身
@@ -1264,7 +1257,7 @@ class DomainRotationMixin:
                 unique_domains.append(d)
                 
         if not unique_domains:
-            print(f"[!] 解析出的镜像域名列表为空", flush=True)
+            logger.warning("[!] 解析出的镜像域名列表为空")
             return False
             
         with self._domain_lock:
@@ -1278,9 +1271,9 @@ class DomainRotationMixin:
                 self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
             self._domain_cooldown.clear()
             
-        print(f"[+] 成功从主站拉取并更新了 {len(unique_domains)} 个最新域名:")
+        logger.info("[+] 成功从主站拉取并更新了 %s 个最新域名:", len(unique_domains))
         for i, d in enumerate(unique_domains, 1):
-            print(f"    域名{i}: {d}")
+            logger.info("    域名%s: %s", i, d)
             
         # 持久化到缓存
         self._save_domains_to_cache()
@@ -1302,7 +1295,7 @@ class DecryptMixin:
         try:
             return base64.b64decode(normal_b64).decode('utf-8')
         except Exception as e:
-            print(f"[-] HTML 解密失败: {e}")
+            logger.error("[-] HTML 解密失败: %s", e)
             return None
 
     def decrypt_title(self, encrypted_title_b64):
@@ -1311,7 +1304,7 @@ class DecryptMixin:
         try:
             return base64.b64decode(encrypted_title_b64).decode('utf-8')
         except Exception as e:
-            print(f"[-] 标题解密失败: {e}")
+            logger.error("[-] 标题解密失败: %s", e)
             return ""
 
 
@@ -1363,7 +1356,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
         """请求列表页并解密 HTML，支持域名轮换重试和自动域名发现"""
         if not self.domains:
             if not getattr(self, '_fetch_domains_from_main_station', None) or not self._fetch_domains_from_main_station():
-                print("[!] 域名列表为空且从主站获取失败，无法继续抓取", flush=True)
+                logger.warning("[!] 域名列表为空且从主站获取失败，无法继续抓取")
                 return None
 
         for _ in range(len(self.domains)):
@@ -1388,7 +1381,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         elif "正在检测最新可用线路" in response.text:
                             redirect_content = response.text
                     elif response.status_code == 403:
-                        print(f"[!] 列表页返回 403，疑似触发反爬: {url}")
+                        logger.warning("[!] 列表页返回 403，疑似触发反爬: %s", url)
                         if proxies and is_proxy_manager_enabled():
                             from utils.proxy_manager import get_proxy_manager
                             manager = get_proxy_manager()
@@ -1404,7 +1397,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 time.sleep(random.uniform(2.0, 4.0))
 
             # Playwright 兜底
-            print(f"[*] 使用 Playwright 兜底访问列表页: {url}")
+            logger.info("[*] 使用 Playwright 兜底访问列表页: %s", url)
             try:
                 _, _, context = self._get_thread_resources()
                 page = context.new_page()
@@ -1422,7 +1415,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 elif "正在检测最新可用线路" in html:
                     redirect_content = html
             except Exception as e:
-                print(f"[-] Playwright 兜底抓取列表页异常: {e}")
+                logger.error("[-] Playwright 兜底抓取列表页异常: %s", e)
                 if is_proxy_manager_enabled():
                     from utils.proxy_manager import get_proxy_manager
                     manager = get_proxy_manager()
@@ -1433,17 +1426,17 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 self._destroy_thread_resources()
 
             if redirect_content and self._update_domains_from_redirect(redirect_content):
-                print(f"[+] 域名列表已更新，使用新域名重试...")
+                logger.info("[+] 域名列表已更新，使用新域名重试...")
                 continue
 
-            print(f"[!] 当前域名疑似被封，冷却等待后切换...")
+            logger.warning("[!] 当前域名疑似被封，冷却等待后切换...")
             time.sleep(random.uniform(8.0, 15.0))
             self._rotate_domain()
 
         if getattr(self, 'main_domain', None) and retry_with_main:
-            print(f"[!] {self.source_name.upper()} 所有现有镜像域名均尝试失败，尝试从主站更新域名列表...")
+            logger.warning("[!] %s 所有现有镜像域名均尝试失败，尝试从主站更新域名列表...", self.source_name.upper())
             if self._fetch_domains_from_main_station():
-                print(f"[+] 成功从主站拉取到新域名，开始重新尝试请求列表页...")
+                logger.info("[+] 成功从主站拉取到新域名，开始重新尝试请求列表页...")
                 return self.fetch_list_page(page_num, retry_with_main=False)
         return None
 
@@ -1489,7 +1482,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         elif "正在检测最新可用线路" in response.text:
                             redirect_content = response.text
                     elif response.status_code == 403:
-                        print(f"[!] 详情页返回 403: {final_url}")
+                        logger.warning("[!] 详情页返回 403: %s", final_url)
                         break
                 except Exception:
                     pass
@@ -1515,12 +1508,12 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
         if not classes:
             classes = ["guochan"]
 
-        print(f"[*] 启动 {self.source_name} 爬虫流程...")
+        logger.info("[*] 启动 %s 爬虫流程...", self.source_name)
         self.on_start()
 
         no_early_stop = kwargs.get('no_early_stop', False)
         if no_early_stop:
-            print("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
+            logger.info("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
             self.max_consecutive_existing = None
             self.max_consecutive_duplicate_pages = None
         elif not resume:
@@ -1540,9 +1533,9 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             all_states = self.db_manager.load_crawl_state(self.source_name)
             if all_states:
                 if "__all__" in all_states and all_states["__all__"].get("completed", False):
-                    print(f"[*] 检测到 {self.source_name} 已完成全部爬取，跳过所有板块")
+                    logger.info("[*] 检测到 %s 已完成全部爬取，跳过所有板块", self.source_name)
                     self.db_manager.clear_crawl_state(self.source_name)
-                    print(f"[+] 已清除完成标记，下次运行将重新爬取")
+                    logger.info("[+] 已清除完成标记，下次运行将重新爬取")
                     try:
                         if is_test:
                             self._run_test_mode(start_page)
@@ -1558,16 +1551,16 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         if saved_page <= end_page:
                             resume_class = cls
                             resume_page = saved_page
-                            print(f"[*] 检测到板块 {cls} 爬取断点，从第 {resume_page} 页继续")
+                            logger.info("[*] 检测到板块 %s 爬取断点，从第 %s 页继续", cls, resume_page)
                             break
-                        print(f"[断点续爬] 板块 {cls} 已完成，跳过")
+                        logger.info("[断点续爬] 板块 %s 已完成，跳过", cls)
                     else:
                         resume_class = cls
                         resume_page = start_page
-                        print(f"[*] 板块 {cls} 无历史记录，从头开始爬取")
+                        logger.info("[*] 板块 %s 无历史记录，从头开始爬取", cls)
                         break
                 else:
-                    print(f"[*] 所有板块已完成，无需爬取")
+                    logger.info("[*] 所有板块已完成，无需爬取")
                     try:
                         if is_test:
                             self._run_test_mode(start_page)
@@ -1576,7 +1569,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         self.on_finish()
                     return
             else:
-                print(f"[*] 未检测到历史断点，从头开始爬取")
+                logger.info("[*] 未检测到历史断点，从头开始爬取")
 
         try:
             if is_test:
@@ -1588,14 +1581,14 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                     cls_index = classes.index(cls)
                     resume_index = classes.index(resume_class)
                     if cls_index < resume_index:
-                        print(f"\n[断点续爬] 板块 {cls} 已完成，跳过")
+                        logger.info("\n[断点续爬] 板块 %s 已完成，跳过", cls)
                         continue
                     actual_start = resume_page if cls == resume_class else start_page
                 else:
                     actual_start = start_page
 
                 self.current_class = cls
-                print(f"\n[*] ================= 开始爬取 {self.source_name} 板块: {cls} (起始页码: {actual_start}) =================")
+                logger.info("\n[*] ================= 开始爬取 %s 板块: %s (起始页码: %s) =================", self.source_name, cls, actual_start)
                 self._crawl_pages(actual_start, end_page, max_workers, class_name=cls)
 
                 if resume and cls == resume_class:
@@ -1603,12 +1596,12 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
 
             if not is_test and resume:
                 self.db_manager.mark_source_completed(self.source_name)
-                print(f"[+] {self.source_name} 所有板块爬取完成，已标记完成状态")
+                logger.info("[+] %s 所有板块爬取完成，已标记完成状态", self.source_name)
 
         except KeyboardInterrupt:
-            print("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
+            logger.warning("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
         except Exception as e:
-            print(f"\n[致命错误] 运行中发生未捕获的异常: {e}")
+            logger.error("\n[致命错误] 运行中发生未捕获的异常: %s", e)
         finally:
             self.on_finish()
 
@@ -1711,7 +1704,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         elif "正在检测最新可用线路" in response.text:
                             redirect_content = response.text
                     elif response.status_code == 403:
-                        print(f"[!] 详情页返回 403，疑似触发反爬: {url}")
+                        logger.warning("[!] 详情页返回 403，疑似触发反爬: %s", url)
                         break
                 except Exception:
                     pass
@@ -1742,7 +1735,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         elif "正在检测最新可用线路" in html:
                             redirect_content = html
                 except Exception as e:
-                    print(f"[-] Playwright 兜底抓取详情页异常 ({url}): {e}")
+                    logger.error("[-] Playwright 兜底抓取详情页异常 (%s): %s", url, e)
 
             if detail_html:
                 break
@@ -1756,7 +1749,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             self._rotate_domain()
 
         if not detail_html:
-            print(f"[-] 详情页 {original_url} 抓取失败（最终尝试 URL: {url}）")
+            logger.error("[-] 详情页 %s 抓取失败（最终尝试 URL: %s）", original_url, url)
             return False, None
 
         # 提取磁力链接
@@ -1770,7 +1763,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 magnet_link = magnet_match.group(0)
 
         if not magnet_link:
-            print(f"[-] 在详情页中未找到磁力链接: {original_url}")
+            logger.error("[-] 在详情页中未找到磁力链接: %s", original_url)
             return False, None
 
         date_str, size_val, res_format = self._extract_detail_metadata(detail_html, raw_item)
@@ -1797,13 +1790,13 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
         if self.check_resource_link and magnet_link:
             existing_links = self.db_manager.filter_existing_resource_links([magnet_link])
             if magnet_link in existing_links:
-                print(f"[{idx}] 磁力链接已存在，跳过 PDF 生成: {magnet_link[:60]}...")
+                logger.info("[%s] 磁力链接已存在，跳过 PDF 生成: %s...", idx, magnet_link[:60])
                 data['source'] = self.source_name
                 return True, data
 
         # 处理 PDF 文件生成
         if self.is_test:
-            print("-> 测试模式下跳过保存 PDF 以节省时间")
+            logger.info("-> 测试模式下跳过保存 PDF 以节省时间")
         else:
             data['pdf_path'] = self.retry_generate_pdf(
                 url, date_str, raw_item['title'],

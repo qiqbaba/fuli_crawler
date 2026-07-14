@@ -1,6 +1,9 @@
 import os
 import boto3
 from botocore.exceptions import ClientError
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class R2Uploader:
@@ -20,7 +23,7 @@ class R2Uploader:
             region_name="auto",  # R2 固定使用 auto
             config=Config(s3={'addressing_style': 'path'}),
         )
-        print(f"[*] R2Uploader 已初始化，Bucket: {bucket_name}")
+        logger.info("R2Uploader 已初始化，Bucket: %s", bucket_name)
 
     def upload_pdf(self, local_path: str, remote_key: str) -> str:
         """
@@ -34,7 +37,7 @@ class R2Uploader:
             上传成功时返回 remote_key；失败时返回空字符串。
         """
         if not os.path.exists(local_path):
-            print(f"[-] R2 上传失败：本地文件不存在: {local_path}")
+            logger.error("[-] R2 上传失败：本地文件不存在: %s", local_path)
             return ""
 
         try:
@@ -44,20 +47,20 @@ class R2Uploader:
                 remote_key,
                 ExtraArgs={"ContentType": "application/pdf"},
             )
-            print(f"[+] PDF 已上传至 R2: {remote_key}")
+            logger.info("[+] PDF 已上传至 R2: %s", remote_key)
 
             try:
                 os.remove(local_path)
             except OSError as e:
-                print(f"[-] 删除本地临时文件失败（不影响主流程）: {e}")
+                logger.warning("[-] 删除本地临时文件失败（不影响主流程）: %s", e)
 
             return remote_key
 
         except ClientError as e:
-            print(f"[-] R2 上传失败: {e}")
+            logger.error("[-] R2 上传失败: %s", e)
             return ""
         except Exception as e:
-            print(f"[-] R2 上传时发生未知错误: {e}")
+            logger.error("[-] R2 上传时发生未知错误: %s", e)
             return ""
 
 

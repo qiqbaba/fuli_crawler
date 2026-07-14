@@ -1,5 +1,8 @@
 import sqlite3
 import threading
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class SqlitePersistenceService:
     """本地 SQLite 数据持久化服务"""
@@ -129,7 +132,7 @@ class SqlitePersistenceService:
                 try:
                     self.conn.commit()
                 except Exception as e:
-                    print(f"[-] 关闭连接时提交事务失败: {e}")
+                    logger.error("关闭连接时提交事务失败: %s", e)
                 self.conn.close()
 
 
@@ -170,7 +173,7 @@ class SupabasePersistenceService:
                 return True
             return False
         except Exception as e:
-            print(f"[-] Supabase insert_resource 失败 (网络/API 错误): {e}")
+            logger.error("[-] Supabase insert_resource 失败 (网络/API 错误): %s", e)
             raise
 
     def commit(self):

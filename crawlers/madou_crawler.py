@@ -7,6 +7,8 @@ from crawlers.base_crawler import DecryptSiteBaseCrawler, CrawlConfig
 
 class MadouCrawler(DecryptSiteBaseCrawler):
     CATEGORIES = ["guochan", "oumei"]
+    default_end_page = 60
+    default_workers = 8
 
     def __init__(self, db_manager):
         config = CrawlConfig(

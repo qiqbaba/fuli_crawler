@@ -2,6 +2,9 @@ import re
 import time
 import requests
 from urllib.parse import urlparse, parse_qs
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 def get_pikpak_link(keepshare_url, timeout=30, poll_interval=2, quiet=False):
     """
@@ -19,13 +22,13 @@ def get_pikpak_link(keepshare_url, timeout=30, poll_interval=2, quiet=False):
     """
     def log(msg):
         if not quiet:
-            print(msg)
+            logger.info(msg)
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
     
-    log(f"[*] 开始请求 KeepShare 链接: {keepshare_url}")
+    log(f"开始请求 KeepShare 链接: {keepshare_url}")
     
     # 获取全局代理配置以规避网络异常
     proxies = None

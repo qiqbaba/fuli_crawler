@@ -4,6 +4,9 @@ from abc import ABC, abstractmethod
 from utils.deduplication import DynamoDBDeduplicationService
 from utils.persistence import SqlitePersistenceService, SupabasePersistenceService
 from utils.crawl_state import SqliteCrawlStateService, SupabaseCrawlStateService
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class BaseDBManager(ABC):
@@ -71,10 +74,10 @@ class DBManager(BaseDBManager):
         # 初始化去重服务
         try:
             self.aws_helper = DynamoDBDeduplicationService()
-            print("[*] 本地 DBManager 已成功集成 AWS DynamoDB 比对源")
+            logger.info("本地 DBManager 已成功集成 AWS DynamoDB 比对源")
         except Exception as e:
-            print(f"[-] 初始化 AWS DynamoDB 失败: {e}")
-            print("[!] 请检查 AWS 凭证环境变量配置！")
+            logger.error("初始化 AWS DynamoDB 失败: %s", e)
+            logger.warning("请检查 AWS 凭证环境变量配置！")
             raise e
 
     @staticmethod
@@ -110,7 +113,7 @@ class SupabaseDBManager(BaseDBManager):
         clean_url = f"{parsed.scheme}://{parsed.netloc}"
         
         self.client = create_client(clean_url, supabase_key)
-        print(f"[*] 已连接 Supabase: {clean_url}")
+        logger.info("已连接 Supabase: %s", clean_url)
         
         # 初始化持久化与爬虫状态服务
         self.persistence = SupabasePersistenceService(self.client)
@@ -119,10 +122,10 @@ class SupabaseDBManager(BaseDBManager):
         # 初始化去重服务
         try:
             self.aws_helper = DynamoDBDeduplicationService()
-            print("[*] 云端 SupabaseDBManager 已成功集成 AWS DynamoDB 比对源")
+            logger.info("[*] 云端 SupabaseDBManager 已成功集成 AWS DynamoDB 比对源")
         except Exception as e:
-            print(f"[-] 初始化 AWS DynamoDB 失败: {e}")
-            print("[!] 请检查 AWS 凭证环境变量配置！")
+            logger.error("[-] 初始化 AWS DynamoDB 失败: %s", e)
+            logger.warning("[!] 请检查 AWS 凭证环境变量配置！")
             raise e
 
     def insert_resource(self, data):

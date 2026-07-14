@@ -13,6 +13,9 @@ from config import is_local_mode
 # 本地导入
 from utils.proxy_fetcher import ProxyFetcher
 from utils.proxy_verifier import ProxyVerifier
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 _PROXY_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "temp_profiles")
 _PROXY_CACHE_DB = os.path.join(_PROXY_CACHE_DIR, "proxy_cache.db")
@@ -37,6 +40,11 @@ class ProxyPool:
         self._current_proxy_idx = 0
         self._thread_proxy_map: Dict[int, str] = {}  # thread_id -> proxy_url
         self._is_replenishing = False
+
+        # 延迟写入缓存相关（优化：避免高频写入 SQLite）
+        self._pending_save = False
+        self._last_save_time = time.time()
+        self._save_interval = 5.0  # 最小写入间隔（秒）
         
         # 初始化获取器与验证器
         self.fetcher = ProxyFetcher()
@@ -66,11 +74,11 @@ class ProxyPool:
                     fpath = os.path.join(bak_dir, fname)
                     try:
                         os.remove(fpath)
-                        print(f"[ProxyPool] 清理过期备份文件: {fname}")
+                        logger.info("清理过期备份文件: %s", fname)
                     except Exception as e:
-                        print(f"[ProxyPool] 清理备份文件失败 {fname}: {e}")
+                        logger.warning("清理备份文件失败 %s: %s", fname, e)
         except Exception as e:
-            print(f"[ProxyPool] 扫描备份文件时出错: {e}")
+            logger.warning("扫描备份文件时出错: %s", e)
 
     def _init_cache_db(self):
         """初始化 SQLite 缓存数据库表结构，启用 WAL 模式以提升并发读写性能"""
@@ -99,7 +107,7 @@ class ProxyPool:
             conn.commit()
             conn.close()
         except Exception as e:
-            print(f"[ProxyPool] 初始化缓存数据库失败: {e}")
+            logger.warning("初始化缓存数据库失败: %s", e)
 
     def _migrate_from_json_cache(self):
         """从旧的 JSON 缓存文件迁移数据到 SQLite"""
@@ -127,7 +135,7 @@ class ProxyPool:
                 for k, v in meta.items():
                     conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)", (k, str(v)))
                 conn.commit()
-                print(f"[ProxyPool] 已将 {len(proxies)} 个代理从 JSON 缓存迁移到 SQLite")
+                logger.info("已将 %s 个代理从 JSON 缓存迁移到 SQLite", len(proxies))
             except Exception:
                 conn.rollback()
             finally:
@@ -135,7 +143,7 @@ class ProxyPool:
             # 重命名旧 JSON 文件以防重复迁移
             os.rename(old_json, old_json + ".bak")
         except Exception as e:
-            print(f"[ProxyPool] 迁移 JSON 缓存失败: {e}")
+            logger.warning("迁移 JSON 缓存失败: %s", e)
 
     def _load_cache(self):
         """从 SQLite 缓存加载代理列表"""
@@ -171,14 +179,22 @@ class ProxyPool:
                     self._working_proxies.append(p.copy())
 
             conn.close()
-            print(f"[ProxyPool] 从缓存加载了 {len(self._proxies)} 个代理 (其中已验证可用 {len(self._working_proxies)} 个)")
+            logger.info("从缓存加载了 %s 个代理 (其中已验证可用 %s 个)", len(self._proxies), len(self._working_proxies))
         except Exception as e:
-            print(f"[ProxyPool] 加载缓存失败: {e}")
+            logger.warning("加载缓存失败: %s", e)
             self._proxies = []
             self._working_proxies = []
 
     def _save_cache(self):
-        """保存代理列表及验证结果到 SQLite 缓存"""
+        """立即保存代理列表及验证结果到 SQLite 缓存（用于 fetch/verify 等同步点）"""
+        # 执行前先刷新所有挂起的延迟写入
+        self._flush_pending_save()
+        self._do_save_cache()
+        with self._lock:
+            self._last_save_time = time.time()
+
+    def _do_save_cache(self):
+        """实际执行 SQLite 写入"""
         try:
             conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
             cursor = conn.cursor()
@@ -219,11 +235,21 @@ class ProxyPool:
             conn.commit()
             conn.close()
         except Exception as e:
-            print(f"[ProxyPool] 保存缓存失败: {e}")
+            logger.warning("保存缓存失败: %s", e)
             try:
                 conn.rollback()
             except Exception:
                 pass
+
+    def _flush_pending_save(self):
+        """在合适的同步点强制执行所有挂起的延迟写入"""
+        with self._lock:
+            if not self._pending_save:
+                return
+            self._pending_save = False
+        self._do_save_cache()
+        with self._lock:
+            self._last_save_time = time.time()
 
     def fetch_proxies(self, force: bool = False) -> int:
         """
@@ -237,7 +263,7 @@ class ProxyPool:
         """
         now = time.time()
         if not force and (now - self._last_fetch_time) < self.cache_ttl and self._proxies:
-            print(f"[ProxyPool] 使用缓存的代理列表（{len(self._proxies)} 个）")
+            logger.info("使用缓存的代理列表（%s 个）", len(self._proxies))
             return len(self._proxies)
 
         # 1. 提取当前已存在代理的历史数据映射以供继承
@@ -274,7 +300,7 @@ class ProxyPool:
             self._proxies = list(all_proxies.values())
             self._last_fetch_time = now
 
-        print(f"[ProxyPool] 共合并去重得到 {len(self._proxies)} 个代理IP")
+        logger.info("共合并去重得到 %s 个代理IP", len(self._proxies))
         
         # 保存缓存
         self._save_cache()
@@ -305,14 +331,14 @@ class ProxyPool:
         now = time.time()
         # 如果不是强制验证，且上次验证结果在 6 小时以内，直接使用
         if not force and (now - self._last_verify_time) < 21600 and self._working_proxies:
-            print(f"[ProxyPool] 使用缓存的验证代理列表（{len(self._working_proxies)} 个，上次验证于 {int((now - self._last_verify_time)/60)} 分钟前）")
+            logger.info("使用缓存的验证代理列表（%s 个，上次验证于 %s 分钟前）", len(self._working_proxies), int((now - self._last_verify_time)/60))
             return len(self._working_proxies)
 
         if not self._proxies:
             self.fetch_proxies()
 
         if not self._proxies:
-            print("[ProxyPool] 没有可验证的代理")
+            logger.warning("没有可验证的代理")
             return 0
 
         # 调用 verifier 执行高并发检验
@@ -337,6 +363,7 @@ class ProxyPool:
     def report_failure(self, proxy_url: str):
         """
         当使用代理发生网络失败或连接超时等异常时，安全剔除并扣分
+        （使用延迟批量写入缓存，降低高并发下的 SQLite 写入压力）
         """
         if not proxy_url:
             return
@@ -370,13 +397,13 @@ class ProxyPool:
 
                 if len(self._working_proxies) < initial_len or updated_history:
                     if len(self._working_proxies) < initial_len:
-                        print(f"[ProxyPool] 剔除失效代理: {proxy_url}，当前剩余可用: {len(self._working_proxies)} 个")
-                    should_save = True  # 标记需要保存，在锁外执行以防阻塞高并发
+                        logger.info("剔除失效代理: %s，当前剩余可用: %s 个", proxy_url, len(self._working_proxies))
+                    should_save = True  # 标记需要保存，合并高频写入
             except Exception as e:
-                print(f"[ProxyPool] 剔除代理失败: {e}")
+                logger.warning("剔除代理失败: %s", e)
 
         if should_save:
-            self._save_cache()
+            self._save_cache_delayed()  # 改为延迟写入，不直接写 SQLite
 
     def check_and_replenish(self, threshold: int = 200, target_count: int = 300):
         """
@@ -402,12 +429,12 @@ class ProxyPool:
 
         # 同步执行代理补充（阻塞），确保调用方拿到代理后再继续
         try:
-            print(f"[ProxyPool] 可用代理数仅剩 {len(self._working_proxies)}，低于阈值 {threshold}，正在同步补充...")
+            logger.info("可用代理数仅剩 %s，低于阈值 %s，正在同步补充...", len(self._working_proxies), threshold)
             self.fetch_proxies(force=True)
             self.verify_proxies(force=True, target_count=target_count)
-            print(f"[ProxyPool] 代理补充完成: 可用 {len(self._working_proxies)} 个")
+            logger.info("代理补充完成: 可用 %s 个", len(self._working_proxies))
         except Exception as e:
-            print(f"[ProxyPool] 补充代理出现异常: {e}")
+            logger.warning("补充代理出现异常: %s", e)
         finally:
             with self._lock:
                 self._is_replenishing = False

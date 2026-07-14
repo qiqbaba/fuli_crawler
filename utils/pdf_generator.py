@@ -4,9 +4,12 @@ import time
 import random
 import threading
 import urllib.parse
-import requests
+import aiohttp
 
 from config import PDF_BASE_DIR
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class PDFRenderConfig:
     """PDF 渲染配置类，控制每个站点在生成 PDF 时的特异化行为"""
@@ -84,7 +87,7 @@ class PDFGenerator:
     def _setup_image_proxy(self, page):
         """在网络层添加图片代理请求拦截器，在 Python 后台下载图片喂给浏览器以绕过防盗链和 GFW"""
         try:
-            def img_router(route):
+            async def img_router(route):
                 req_url = route.request.url
                 if "plugin/img_layer/data/" in req_url and "?src=" in req_url:
                     try:
@@ -98,21 +101,24 @@ class PDFGenerator:
                             "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
                         }
                         
-                        r = requests.get(real_url, headers=headers, proxies=p_dict, timeout=15)
-                        if r.status_code == 200:
-                            route.fulfill(
-                                status=200,
-                                content_type=r.headers.get("Content-Type", "image/jpeg"),
-                                body=r.content
-                            )
-                            return
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                                if r.status == 200:
+                                    content = await r.read()
+                                    content_type = r.headers.get("Content-Type", "image/jpeg")
+                                    await route.fulfill(
+                                        status=200,
+                                        content_type=content_type,
+                                        body=content
+                                    )
+                                    return
                     except Exception as route_err:
-                        print(f"[!] 路由代理图片下载失败: {route_err}")
-                route.continue_()
+                        logger.warning("路由代理图片下载失败: %s", route_err)
+                await route.continue_()
 
             page.route("**/*", img_router)
         except Exception as route_setup_err:
-            print(f"[!] 配置网络拦截路由异常: {route_setup_err}")
+            logger.warning("配置网络拦截路由异常: %s", route_setup_err)
 
     def _setup_ad_blocking_route(self, page, config: PDFRenderConfig):
         """
@@ -135,7 +141,7 @@ class PDFGenerator:
             # 注册在已有路由之后——非广告请求会 continue_ 到后面的处理器
             page.route("**/*", ad_blocker)
         except Exception as e:
-            print(f"[!] 注册广告拦截路由异常: {e}")
+            logger.warning("注册广告拦截路由异常: %s", e)
 
     def _trigger_lazy_load(self, page):
         """滚动触发页面图片懒加载"""
@@ -189,7 +195,7 @@ class PDFGenerator:
                 }
             """)
         except Exception as e:
-            print(f"[!] 执行懒加载滚动 JS 异常: {e}")
+            logger.warning("执行懒加载滚动 JS 异常: %s", e)
 
     def _apply_ad_blocking(self, page, config: PDFRenderConfig):
         """屏蔽页面广告"""
@@ -207,7 +213,7 @@ class PDFGenerator:
                 js_code += "}"
                 page.evaluate(js_code)
             except Exception as ad_err:
-                print(f"[-] 屏蔽广告脚本执行失败: {ad_err}")
+                logger.warning("屏蔽广告脚本执行失败: %s", ad_err)
 
     def generate_pdf(self, page_or_context, target_url_or_page, publish_date, title, source_name, config: PDFRenderConfig):
         """
@@ -277,7 +283,7 @@ class PDFGenerator:
                         page.goto(config.pre_access_url, timeout=20000, wait_until="networkidle")
                         time.sleep(1.5)
                     except Exception as e_home:
-                        print(f"[!] 前置访问异常: {e_home}")
+                        logger.warning("前置访问异常: %s", e_home)
 
                 # 加载真正的详情页
                 goto_args = {"timeout": 30000, "wait_until": "networkidle"}
@@ -312,7 +318,7 @@ class PDFGenerator:
                 page.close()
                 page = None
         except Exception as e:
-            print(f"[-] PDF 生成失败: {e}")
+            logger.error("PDF 生成失败: %s", e)
             if page and not is_reuse_page:
                 try:
                     page.close()

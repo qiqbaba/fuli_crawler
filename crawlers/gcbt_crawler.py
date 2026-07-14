@@ -6,9 +6,15 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from config import is_local_mode
 from crawlers.base_crawler import PlaywrightBaseCrawler
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class GcbtCrawler(PlaywrightBaseCrawler):
+    default_end_page = 20
+    default_workers = 8
+
     def __init__(self, db_manager):
         super().__init__(db_manager, "gcbt")
         self.base_url = "https://gcbt.net/"
@@ -51,7 +57,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
     def fetch_list_page(self, page_num):
         """抓取列表页内容"""
         list_url = self.get_list_url(page_num)
-        print(f"[*] 正在访问列表页: {list_url}")
+        logger.info("正在访问列表页: %s", list_url)
         _, html_text = self._http_get(list_url, timeout=25)
         return html_text
 
@@ -85,7 +91,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         _, html_text = self._http_get(sub_url, timeout=25)
         
         if not html_text:
-            print(f"[-] 子页面 {sub_url} 抓取失败")
+            logger.error("[-] 子页面 %s 抓取失败", sub_url)
             return False, None
             
         soup = BeautifulSoup(html_text, 'html.parser')
@@ -160,7 +166,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         else:
             resource_link = "None"
             
-        print(f"[{idx}] 抓取成功: {title} | 发布时间: {pub_time} | 大小: {size} | 链接: {resource_link[:60]}...")
+        logger.info("[%s] 抓取成功: %s | 发布时间: %s | 大小: %s | 链接: %s...", idx, title, pub_time, size, resource_link[:60])
         
         # 6. 生成并渲染 PDF 文件（直接保存原网页，测试模式跳过）
         pdf_path = ''

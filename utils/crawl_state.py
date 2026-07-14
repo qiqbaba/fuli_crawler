@@ -1,6 +1,9 @@
 import sqlite3
 import requests
 from datetime import datetime, timezone
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class SqliteCrawlStateService:
     """基于本地 SQLite 的爬虫断点状态管理服务"""
@@ -111,13 +114,13 @@ class SupabaseCrawlStateService:
                     },
                     timeout=5
                 )
-                print("[+] 自动创建 crawl_state 表及重新加载架构成功")
+                logger.info("自动创建 crawl_state 表及重新加载架构成功")
                 return True
         except Exception as e:
-            print(f"[-] 尝试自动创建 Supabase crawl_state 表失败: {e}")
+            logger.error("尝试自动创建 Supabase crawl_state 表失败: %s", e)
         
-        print("[!] 无法自动创建 crawl_state 表，请在 Supabase Dashboard -> SQL Editor 中执行：")
-        print(create_sql)
+        logger.warning("无法自动创建 crawl_state 表，请在 Supabase Dashboard -> SQL Editor 中执行：")
+        logger.warning(create_sql)
         return False
 
     def save_crawl_state(self, source, class_name, page_num, completed=False):
@@ -134,17 +137,17 @@ class SupabaseCrawlStateService:
         except Exception as e:
             # 可能是表不存在，尝试自动创建
             if "relation \"crawl_state\" does not exist" in str(e):
-                print("[*] crawl_state 表不存在，正在尝试自动创建...")
+                logger.info("crawl_state 表不存在，正在尝试自动创建...")
                 self._ensure_crawl_state_table()
                 # 重试一次
                 try:
                     self.client.table("crawl_state").upsert(record, on_conflict="source,class_name").execute()
-                    print("[+] 自动创建 crawl_state 表成功，状态已保存")
+                    logger.info("自动创建 crawl_state 表成功，状态已保存")
                     return
                 except Exception as e2:
-                    print(f"[-] Supabase save_crawl_state 重试仍失败: {e2}")
+                    logger.error("Supabase save_crawl_state 重试仍失败: %s", e2)
             else:
-                print(f"[-] Supabase save_crawl_state 失败: {e}")
+                logger.error("Supabase save_crawl_state 失败: %s", e)
 
     def load_crawl_state(self, source):
         """
@@ -169,7 +172,7 @@ class SupabaseCrawlStateService:
                     }
             return result
         except Exception as e:
-            print(f"[-] Supabase load_crawl_state 失败: {e}")
+            logger.error("[-] Supabase load_crawl_state 失败: %s", e)
             return {}
 
     def clear_crawl_state(self, source):
@@ -177,7 +180,7 @@ class SupabaseCrawlStateService:
         try:
             self.client.table("crawl_state").delete().eq("source", source).execute()
         except Exception as e:
-            print(f"[-] Supabase clear_crawl_state 失败: {e}")
+            logger.error("[-] Supabase clear_crawl_state 失败: %s", e)
 
     def mark_source_completed(self, source):
         """将指定爬虫标记为完全完成"""
@@ -191,7 +194,7 @@ class SupabaseCrawlStateService:
             }
             self.client.table("crawl_state").upsert(record, on_conflict="source,class_name").execute()
         except Exception as e:
-            print(f"[-] Supabase mark_source_completed 失败: {e}")
+            logger.error("[-] Supabase mark_source_completed 失败: %s", e)
 
     def is_source_completed(self, source):
         """检查爬虫是否已全部完成"""
@@ -207,5 +210,5 @@ class SupabaseCrawlStateService:
             )
             return len(resp.data) > 0
         except Exception as e:
-            print(f"[-] Supabase is_source_completed 失败: {e}")
+            logger.error("[-] Supabase is_source_completed 失败: %s", e)
             return False

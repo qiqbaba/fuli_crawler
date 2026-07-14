@@ -3,9 +3,12 @@
 负责从多个免费代理源抓取原始IP列表
 """
 import re
-import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import asyncio
+import aiohttp
 from typing import List, Dict
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 # ========== 代理源配置 ==========
 PROXY_SOURCES = {
@@ -78,54 +81,62 @@ class ProxyFetcher:
     def __init__(self, sources: Dict[str, str] = None):
         self.sources = sources or PROXY_SOURCES
 
-def fetch_all(self, max_workers: int = 20) -> List[Dict[str, str]]:
+    # ---- 同步兼容接口 ----
+
+    def fetch_all(self, max_workers: int = 20) -> List[Dict[str, str]]:
         """
-        从所有配置的源并发获取代理IP并去重返回
+        从所有配置的源并发获取代理IP并去重返回（同步入口，内部以完全异步方式执行）
 
         Args:
-            max_workers: 并发线程数，默认 20
+            max_workers: 保留参数，已由异步并发替代
 
         Returns:
             获取到的代理元信息列表，格式例如:
             [{"protocol": "http", "address": "ip:port", "source": "..."}]
         """
-        print(f"[ProxyFetcher] 开始从 {len(self.sources)} 个源并发获取代理IP（并发数={max_workers}）...")
-        all_proxies = {}  # 使用字典去重
+        return asyncio.run(self._fetch_all_async())
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有任务
-            future_map = {
-                executor.submit(self._fetch_from_source, name, url): name
+    async def _fetch_all_async(self) -> List[Dict[str, str]]:
+        """
+        完全异步地从所有配置的源获取代理IP并去重返回
+        """
+        logger.info("开始从 %s 个源异步并发获取代理IP...", len(self.sources))
+        all_proxies = {}
+
+        connector = aiohttp.TCPConnector(limit_per_host=10, limit=100)
+        timeout = aiohttp.ClientTimeout(total=20)
+        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            tasks = {
+                self._fetch_from_source_async(session, name, url): name
                 for name, url in self.sources.items()
             }
 
-            # 逐个收集结果
-            for future in as_completed(future_map):
-                source_name = future_map[future]
+            for coro in asyncio.as_completed(tasks):
+                source_name = tasks[coro]
                 try:
-                    proxies = future.result()
+                    proxies = await coro
                     for proxy in proxies:
                         key = f"{proxy['protocol']}://{proxy['address']}"
                         if key not in all_proxies:
                             all_proxies[key] = proxy
-                    print(f"[ProxyFetcher]   {source_name}: 获取到 {len(proxies)} 个代理")
+                    logger.info("  %s: 获取到 %s 个代理", source_name, len(proxies))
                 except Exception as e:
-                    print(f"[ProxyFetcher]   {source_name}: 获取失败 - {e}")
+                    logger.warning("  %s: 获取失败 - %s", source_name, e)
 
-        print(f"[ProxyFetcher] 共获取到 {len(all_proxies)} 个唯一代理")
+        logger.info("共获取到 %s 个唯一代理", len(all_proxies))
         return list(all_proxies.values())
 
-    def _fetch_from_source(self, source_name: str, url: str) -> List[Dict[str, str]]:
-        """从单个源获取代理列表"""
+    async def _fetch_from_source_async(self, session: aiohttp.ClientSession, source_name: str, url: str) -> List[Dict[str, str]]:
+        """从单个源异步获取代理列表"""
         proxies = []
         try:
-            response = requests.get(url, timeout=15, headers={
+            headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-            })
-            response.raise_for_status()
+            }
+            async with session.get(url, headers=headers) as response:
+                response.raise_for_status()
+                text = await response.text()
 
-            # HTTP 源页面可能是纯文本或 HTML，需要特殊处理
-            text = response.text
             if source_name in ("free_proxy_list", "sslproxies_org"):
                 # 提取 HTML 中的 ip:port 列表
                 matches = re.findall(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5})", text)
@@ -180,6 +191,6 @@ def fetch_all(self, max_workers: int = 20) -> List[Dict[str, str]]:
                             "source": source_name
                         })
         except Exception as e:
-            print(f"[ProxyFetcher] 解析源 {source_name} 失败: {e}")
+            logger.warning("解析源 %s 失败: %s", source_name, e)
 
         return proxies

@@ -1,5 +1,8 @@
 import random
 from config import USER_AGENTS
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def create_browser_context(playwright, user_agent=None, viewport=None):
@@ -17,11 +20,11 @@ def create_browser_context(playwright, user_agent=None, viewport=None):
         if proxy_url:
             playwright_proxy = {"server": proxy_url}
     except Exception as ex:
-        print(f"[!] 获取自动代理失败: {ex}")
+        logger.warning("获取自动代理失败: %s", ex)
     if playwright_proxy:
-        print(f"[*] Playwright 启动代理: {playwright_proxy['server']}")
+        logger.info("Playwright 启动代理: %s", playwright_proxy['server'])
     else:
-        print("[*] Playwright 未启用代理")
+        logger.info("Playwright 未启用代理")
     browser = playwright.chromium.launch(headless=True, args=launch_args, proxy=playwright_proxy)
     ctx_args = {"locale": "zh-CN", "user_agent": user_agent or random.choice(USER_AGENTS)}
     ctx_args["viewport"] = viewport or {"width": 1920, "height": 1080}

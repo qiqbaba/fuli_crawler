@@ -3,6 +3,9 @@ import argparse
 from config import get_db_path, use_supabase, SUPABASE_URL, SUPABASE_KEY, is_local_mode
 from utils.db_manager import DBManager, SupabaseDBManager
 from utils import setup_console_utf8
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 from crawlers.seju_crawler import SejuCrawler
 from crawlers.u3c3_crawler import U3c3Crawler
 from crawlers.datang_crawler import DatangCrawler
@@ -14,14 +17,15 @@ from crawlers.jingpin_toupai_crawler import JingpinToupaiCrawler
 # Windows下控制台强制使用utf-8编码输出，防止中文乱码
 setup_console_utf8()
 
-# 爬虫注册表：集中管理所有爬虫的类、默认结束页码、默认并发数
+# 爬虫注册表：集中管理所有爬虫的类
+# 默认结束页码和并发数由爬虫类自身声明（default_end_page / default_workers）
 CRAWLER_REGISTRY = {
-    "seju":         (SejuCrawler,         4,  8),
-    "u3c3":         (U3c3Crawler,        20, 50),
-    "datang":       (DatangCrawler,       60, 8),
-    "gcbt":         (GcbtCrawler,         20, 8),
-    "madou":        (MadouCrawler,        60, 8),
-    "jingpin_toupai": (JingpinToupaiCrawler, 20, 8),
+    "seju":         SejuCrawler,
+    "u3c3":         U3c3Crawler,
+    "datang":       DatangCrawler,
+    "gcbt":         GcbtCrawler,
+    "madou":        MadouCrawler,
+    "jingpin_toupai": JingpinToupaiCrawler,
 }
 
 # 交互式爬虫选择菜单
@@ -33,6 +37,21 @@ CRAWLER_CHOICES = [
     ("madou", "madou"),
     ("jingpin_toupai", "jingpin_toupai"),
 ]
+
+
+def _prompt_page_number(prompt: str, default: int) -> int:
+    """交互式询问页码，支持非 TTY 环境自动使用默认值"""
+    if not sys.stdin.isatty():
+        return default
+    try:
+        val = input(f"[*] {prompt} (直接回车默认 {default}): ").strip()
+        return int(val) if val else default
+    except (KeyboardInterrupt, EOFError):
+        print("\n[-] 运行已取消")
+        sys.exit(0)
+    except ValueError:
+        print(f"[-] 输入无效，使用默认值: {default}")
+        return default
 
 
 def main():
@@ -187,84 +206,59 @@ def main():
     effective_proxy = get_crawler_proxy()
     proxy_manager_on = is_proxy_manager_enabled()
     if args.no_proxy:
-        print(f"[*] 代理已禁用 (--no-proxy)")
+        logger.info("[*] 代理已禁用 (--no-proxy)")
     elif effective_proxy:
-        print(f"[*] 使用固定代理: {effective_proxy}")
+        logger.info("[*] 使用固定代理: %s", effective_proxy)
     elif proxy_manager_on:
-        print(f"[*] 代理管理器已启用 (--proxy-manager)")
-        print(f"[*] 代理将在爬虫启动时自动获取和验证")
+        logger.info("[*] 代理管理器已启用 (--proxy-manager)")
+        logger.info("[*] 代理将在爬虫启动时自动获取和验证")
     else:
-        print(f"[*] 未配置代理，将直接连接目标网站")
+        logger.info("[*] 未配置代理，将直接连接目标网站")
     
     # 根据环境变量和模式自动选择数据库后端
     if use_supabase():
-        print(f"[*] 检测到 Supabase 配置，使用 Supabase PostgreSQL 数据库")
+        logger.info("[*] 检测到 Supabase 配置，使用 Supabase PostgreSQL 数据库")
         db_manager = SupabaseDBManager(SUPABASE_URL, SUPABASE_KEY)
     else:
         db_path = get_db_path()
         if is_local_mode():
-            print(f"[*] 本地模式已激活，使用本地 SQLite 数据库: {db_path}")
+            logger.info("[*] 本地模式已激活，使用本地 SQLite 数据库: %s", db_path)
         else:
-            print(f"[*] 未检测到 Supabase 配置，使用本地 SQLite 数据库: {db_path}")
+            logger.info("[*] 未检测到 Supabase 配置，使用本地 SQLite 数据库: %s", db_path)
         db_manager = DBManager(db_path)
     
     # 动态匹配爬虫
     crawler = None
     default_end = 1
-    
+    default_workers = 8
+
     if args.crawler in CRAWLER_REGISTRY:
-        crawler_cls, default_end, default_workers = CRAWLER_REGISTRY[args.crawler]
+        crawler_cls = CRAWLER_REGISTRY[args.crawler]
         crawler = crawler_cls(db_manager)
+        default_end = getattr(crawler_cls, "default_end_page", 1)
+        default_workers = getattr(crawler_cls, "default_workers", 8)
         if args.workers is None:
             args.workers = default_workers
-        
+
     if crawler is None:
-        print(f"[-] 找不到指定的爬虫: {args.crawler}")
+        logger.error("[-] 找不到指定的爬虫: %s", args.crawler)
         db_manager.close()
         sys.exit(1)
         
     start_page = args.start
     if start_page is None:
-        if sys.stdin.isatty():
-            try:
-                val = input("[*] 请输入起始页码 (直接回车默认 1): ").strip()
-                if val:
-                    start_page = int(val)
-                else:
-                    start_page = 1
-            except (KeyboardInterrupt, EOFError):
-                print("\n[-] 运行已取消")
-                sys.exit(0)
-            except ValueError:
-                print("[-] 输入无效，使用默认起始页码: 1")
-                start_page = 1
-        else:
-            start_page = 1
+        start_page = _prompt_page_number("请输入起始页码", 1)
 
     end_page = args.end
     if end_page is None:
-        if sys.stdin.isatty():
-            try:
-                val = input(f"[*] 请输入结束页码 (直接回车默认 {default_end}): ").strip()
-                if val:
-                    end_page = int(val)
-                else:
-                    end_page = default_end
-            except (KeyboardInterrupt, EOFError):
-                print("\n[-] 运行已取消")
-                sys.exit(0)
-            except ValueError:
-                print(f"[-] 输入无效，使用默认结束页码: {default_end}")
-                end_page = default_end
-        else:
-            end_page = default_end
+        end_page = _prompt_page_number("请输入结束页码", default_end)
 
     # 做基本的验证
     if start_page < 1:
-        print("[!] 起始页码不能小于 1，已自动设为 1")
+        logger.warning("[!] 起始页码不能小于 1，已自动设为 1")
         start_page = 1
     if end_page < start_page:
-        print(f"[!] 结束页码不能小于起始页码 ({start_page})，已自动设为 {start_page}")
+        logger.warning("[!] 结束页码不能小于起始页码 (%s)，已自动设为 %s", start_page, start_page)
         end_page = start_page
     
     # 交互式询问是否启用断点续爬（仅当未通过命令行指定时）
@@ -281,10 +275,10 @@ def main():
     if args.crawl:
         is_test = False
         
-    print(f"[*] 模式: {'【测试模式 (不入库)】' if is_test else '【正式爬取模式 (入库)】'}")
-    print(f"[*] 页码范围: {start_page} 到 {end_page}")
+    logger.info("[*] 模式: %s", '【测试模式 (不入库)】' if is_test else '【正式爬取模式 (入库)】')
+    logger.info("[*] 页码范围: %s 到 %s", start_page, end_page)
     if args.resume:
-        print(f"[*] 断点续爬模式已启用，将自动跳过已完成板块/页面")
+        logger.info("[*] 断点续爬模式已启用，将自动跳过已完成板块/页面")
     
     interrupted = False
     try:
@@ -300,14 +294,14 @@ def main():
         )
     except KeyboardInterrupt:
         interrupted = True
-        print("\n[-] 用户中断，跳过统计，正在释放资源...")
+        logger.warning("\n[-] 用户中断，跳过统计，正在释放资源...")
         raise
     finally:
         if not interrupted:
             # 输出三个平台的数据统计信息
-            print("\n" + "=" * 50)
-            print("📊 爬虫完成，正在输出平台数据统计...")
-            print("=" * 50)
+            logger.info("\n" + "=" * 50)
+            logger.info("📊 爬虫完成，正在输出平台数据统计...")
+            logger.info("=" * 50)
             try:
                 try:
                     from sync.stats import query_supabase, query_r2, query_dynamodb
@@ -315,18 +309,18 @@ def main():
                     query_r2()
                     query_dynamodb()
                 except ImportError as ie:
-                    print(f"[-] 统计模块导入失败（不影响爬虫结果）: {ie}")
+                    logger.error("[-] 统计模块导入失败（不影响爬虫结果）: %s", ie)
                 except Exception as e:
-                    print(f"[-] 统计查询失败: {e}")
+                    logger.error("[-] 统计查询失败: %s", e)
             finally:
-                print("[*] 正在释放数据库资源...")
+                logger.info("[*] 正在释放数据库资源...")
                 db_manager.close()
-                print("[+] 数据库已安全关闭！")
+                logger.info("[+] 数据库已安全关闭！")
         else:
             # 中断时仅释放资源，跳过统计
-            print("[*] 正在释放数据库资源...")
+            logger.info("[*] 正在释放数据库资源...")
             db_manager.close()
-            print("[+] 数据库已安全关闭！")
+            logger.info("[+] 数据库已安全关闭！")
 
 if __name__ == "__main__":
     main()

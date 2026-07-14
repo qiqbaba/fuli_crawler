@@ -2,6 +2,9 @@ import threading
 import time
 import boto3
 from botocore.exceptions import ClientError
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 class DynamoDBDeduplicationService:
     """AWS DynamoDB 数据库助手，用于比对重复项和保存资源"""
@@ -43,7 +46,7 @@ class DynamoDBDeduplicationService:
             if self.table_name in existing_tables:
                 return
 
-            print(f"[*] AWS DynamoDB 表 {self.table_name} 不存在，正在自动创建...")
+            logger.info("AWS DynamoDB 表 %s 不存在，正在自动创建...", self.table_name)
             self.client.create_table(
                 TableName=self.table_name,
                 AttributeDefinitions=[{"AttributeName": "url", "AttributeType": "S"}],
@@ -53,9 +56,9 @@ class DynamoDBDeduplicationService:
             # 等待表激活
             waiter = self.client.get_waiter("table_exists")
             waiter.wait(TableName=self.table_name)
-            print(f"[+] AWS DynamoDB 表 {self.table_name} 创建成功！")
+            logger.info("AWS DynamoDB 表 %s 创建成功！", self.table_name)
         except Exception as e:
-            print(f"[-] 创建 AWS DynamoDB 表失败: {e}")
+            logger.error("创建 AWS DynamoDB 表失败: %s", e)
             raise
 
     def check_url_exists(self, url):
@@ -74,7 +77,7 @@ class DynamoDBDeduplicationService:
             )
             return "Item" in response
         except Exception as e:
-            print(f"[-] AWS DynamoDB check_url_exists 失败: {e}")
+            logger.error("AWS DynamoDB check_url_exists 失败: %s", e)
             return False
 
     def filter_existing_urls(self, urls):
@@ -133,9 +136,9 @@ class DynamoDBDeduplicationService:
                             existing.add(url_val)
                     unprocessed = response.get("UnprocessedKeys", {}).get(self.table_name, {})
                 if unprocessed and "Keys" in unprocessed and unprocessed["Keys"]:
-                    print(f"[!] AWS DynamoDB filter_existing_urls 有 {len(unprocessed['Keys'])} 个未处理 Keys，已超过最大重试次数 {max_retries}")
+                    logger.warning("AWS DynamoDB filter_existing_urls 有 %s 个未处理 Keys，已超过最大重试次数 %s", len(unprocessed['Keys']), max_retries)
             except Exception as e:
-                print(f"[-] AWS DynamoDB filter_existing_urls 失败: {e}")
+                logger.error("AWS DynamoDB filter_existing_urls 失败: %s", e)
         return existing
 
     def filter_existing_resource_links(self, resource_links):
@@ -178,15 +181,15 @@ class DynamoDBDeduplicationService:
                 error_code = e.response.get("Error", {}).get("Code")
                 error_msg = e.response.get("Error", {}).get("Message", "")
                 if error_code == "ValidationException" and "index" in error_msg.lower():
-                    print("[!] 检测到 AWS DynamoDB 表中未创建 resource_link-index 索引。")
-                    print("[*] 正在回退到 Scan 缓存兼容模式。")
-                    print("[*] 为了更好的性能，建议您在 AWS DynamoDB 控制台中为表 fuli_resources 创建二级索引（分区键: resource_link, 索引名: resource_link-index）。")
+                    logger.warning("检测到 AWS DynamoDB 表中未创建 resource_link-index 索引。")
+                    logger.warning("正在回退到 Scan 缓存兼容模式。")
+                    logger.warning("为了更好的性能，建议您在 AWS DynamoDB 控制台中为表 fuli_resources 创建二级索引（分区键: resource_link, 索引名: resource_link-index）。")
                     self.use_gsi = False
                 else:
-                    print(f"[-] AWS DynamoDB query GSI 失败: {e}")
+                    logger.error("AWS DynamoDB query GSI 失败: %s", e)
                     return existing
             except Exception as e:
-                print(f"[-] AWS DynamoDB query GSI 失败: {e}")
+                logger.error("AWS DynamoDB query GSI 失败: %s", e)
                 return existing
 
         # 回退到 Scan 扫描缓存模式（仅首次扫描全表获取所有 resource_link，带 TTL 过期）
@@ -195,12 +198,12 @@ class DynamoDBDeduplicationService:
             if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
                 needs_scan = True
         if needs_scan:
-            print("[*] 正在执行 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
+            logger.info("正在执行 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
             with self._lock:
                 if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
                      self._scanned_resource_links = self.get_all_resource_links_by_scan()
                      self._scan_cache_time = time.time()
-                     print(f"[+] 扫描缓存同步完成，已加载 {len(self._scanned_resource_links)} 条磁力链接，缓存 TTL {self._scan_cache_ttl} 秒。")
+                     logger.info("扫描缓存同步完成，已加载 %s 条磁力链接，缓存 TTL %s 秒。", len(self._scanned_resource_links), self._scan_cache_ttl)
 
         with self._lock:
             for link in links_to_query:
@@ -230,13 +233,13 @@ class DynamoDBDeduplicationService:
                         existing_links.add(link_val["S"])
                 
                 if page_count % 5 == 0:
-                    print(f"[*] 扫描进度: 已处理 {page_count} 页数据，当前缓存 {len(existing_links)} 条磁力链接...")
+                    logger.info("扫描进度: 已处理 %s 页数据，当前缓存 %s 条磁力链接...", page_count, len(existing_links))
 
                 last_evaluated_key = response.get("LastEvaluatedKey")
                 if not last_evaluated_key:
                     break
             except Exception as e:
-                print(f"[-] AWS DynamoDB Scan 失败: {e}")
+                logger.error("AWS DynamoDB Scan 失败: %s", e)
                 break
         return existing_links
 
@@ -271,7 +274,7 @@ class DynamoDBDeduplicationService:
             )
         except Exception as e:
             # 异步写入失败不应影响主流程，记录即可
-            print(f"[-] AWS DynamoDB 异步写入记录失败 ({url}): {e}")
+            logger.error("AWS DynamoDB 异步写入记录失败 (%s): %s", url, e)
 
     def shutdown(self):
         """在爬虫关闭时清理后台线程池并关闭 DynamoDB 客户端连接"""
@@ -279,9 +282,9 @@ class DynamoDBDeduplicationService:
             try:
                 self._executor.shutdown(wait=True)
             except Exception as e:
-                print(f"[-] DynamoDBDeduplicationService shutdown executor 异常: {e}")
+                logger.error("DynamoDBDeduplicationService shutdown executor 异常: %s", e)
         if self.client:
             try:
                 self.client.close()
             except Exception as e:
-                print(f"[-] DynamoDBDeduplicationService shutdown client 异常: {e}")
+                logger.error("DynamoDBDeduplicationService shutdown client 异常: %s", e)

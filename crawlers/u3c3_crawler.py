@@ -6,15 +6,21 @@ from urllib.parse import urljoin
 from config import USER_AGENTS
 from crawlers.base_crawler import BaseCrawler
 from utils.proxy_manager import get_proxy_manager
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 try:
     from utils.pikpak_extractor import get_pikpak_link
 except ImportError:
-    print("[!] 警告: 无法导入 pikpak_extractor，PikPak 链接解析功能将不可用")
+    logger.warning("[!] 警告: 无法导入 pikpak_extractor，PikPak 链接解析功能将不可用")
     def get_pikpak_link(url, timeout=30, poll_interval=2, quiet=False):
         return url
 
 class U3c3Crawler(BaseCrawler):
+    default_end_page = 20
+    default_workers = 50
+
     def __init__(self, db_manager):
         super().__init__(db_manager, "u3c3")
         self.base_url = "https://u3c3.com/?p={}"
@@ -29,14 +35,14 @@ class U3c3Crawler(BaseCrawler):
         """初始化代理管理器"""
         from config import is_proxy_manager_enabled
         if is_proxy_manager_enabled():
-            print("[*] 代理管理器已启用，正在获取和验证代理IP...")
+            logger.info("[*] 代理管理器已启用，正在获取和验证代理IP...")
             from config import get_proxy_verify_workers
             manager = get_proxy_manager()
             if manager:
                 manager.fetch_proxies(force=False)
                 manager.verify_proxies(force=False, max_workers=get_proxy_verify_workers(), test_url="https://u3c3.com/")
                 stats = manager.get_stats()
-                print(f"[*] 代理管理器就绪: 总计 {stats['total']} 个，可用 {stats['working']} 个")
+                logger.info("[*] 代理管理器就绪: 总计 %s 个，可用 %s 个", stats['total'], stats['working'])
 
     def fetch_list_page(self, page_num):
         """抓取页面 HTML 内容，包含重试逻辑"""
@@ -55,13 +61,13 @@ class U3c3Crawler(BaseCrawler):
                 response = requests.get(url, headers=headers, timeout=20, proxies=proxies, impersonate="chrome120")
                 if response.status_code == 200:
                     return response.text
-                print(f"[*] 页面 {page_num} 抓取失败 (HTTP {response.status_code})，尝试重试 ({attempt + 1}/3)...")
+                logger.info("[*] 页面 %s 抓取失败 (HTTP %s)，尝试重试 (%s/3)...", page_num, response.status_code, attempt + 1)
                 if response.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
                     manager = get_proxy_manager()
                     if manager and "http" in proxies:
                         manager.report_failure(proxies["http"])
             except Exception as e:
-                print(f"[*] 页面 {page_num} 抓取异常 ({e})，尝试重试 ({attempt + 1}/3)...")
+                logger.info("[*] 页面 %s 抓取异常 (%s)，尝试重试 (%s/3)...", page_num, e, attempt + 1)
                 if proxies and is_proxy_manager_enabled():
                     manager = get_proxy_manager()
                     if manager and "http" in proxies:

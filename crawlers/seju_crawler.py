@@ -9,9 +9,15 @@ from config import USER_AGENTS
 from crawlers.base_crawler import PlaywrightBaseCrawler
 from utils.date_parser import parse_date
 from utils.proxy_manager import get_proxy_manager
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class SejuCrawler(PlaywrightBaseCrawler):
+    default_end_page = 4
+    default_workers = 8
+
     def __init__(self, db_manager):
         super().__init__(db_manager, "seju")
         self.base_url = "https://seju.life/page/{}/"
@@ -39,15 +45,15 @@ class SejuCrawler(PlaywrightBaseCrawler):
                 title = page.title()
                 url = page.url
                 if "Just a moment..." in title or "cloudflare" in url or "cloudflare" in title.lower():
-                    print(f"[*] 检测到 Cloudflare 盾页面，正在等待自动解盾... (当前 Title: '{title}')")
+                    logger.info("[*] 检测到 Cloudflare 盾页面，正在等待自动解盾... (当前 Title: '%s')", title)
                     if is_local_mode():
-                        print(f"[!] 【有头辅助提示】检测到验证码，若卡在此处，请在弹出的浏览器窗口中手动完成验证。")
+                        logger.warning("[!] 【有头辅助提示】检测到验证码，若卡在此处，请在弹出的浏览器窗口中手动完成验证。")
                     time.sleep(1.5)
                 else:
-                    print(f"[+] 疑似已绕过 Cloudflare。当前 Title: '{title}', URL: {url}")
+                    logger.info("[+] 疑似已绕过 Cloudflare。当前 Title: '%s', URL: %s", title, url)
                     return True
             except Exception as e:
-                print(f"[-] 检查 Cloudflare 状态时异常: {e}")
+                logger.error("[-] 检查 Cloudflare 状态时异常: %s", e)
                 time.sleep(1.5)
         
         try:
@@ -66,7 +72,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
     def fetch_list_page(self, page_num):
         """使用 Playwright 加载列表页并返回当前 HTML 文本"""
         list_url = self.get_list_url(page_num)
-        print(f"[*] 正在访问列表页: {list_url}")
+        logger.info("[*] 正在访问列表页: %s", list_url)
         try:
             _, _, context = self._get_thread_resources()
             if not hasattr(self.thread_local, "list_page") or self.thread_local.list_page.is_closed():
@@ -78,12 +84,12 @@ class SejuCrawler(PlaywrightBaseCrawler):
             # 检测并等待 Cloudflare 盾通过
             bypassed = self._wait_for_cloudflare_bypass(page)
             if not bypassed:
-                print(f"[!] Cloudflare 解盾超时，列表页 {list_url} 内容可能不完整")
+                logger.warning("[!] Cloudflare 解盾超时，列表页 %s 内容可能不完整", list_url)
             
             time.sleep(random.uniform(2, 4))
             return page.content()
         except Exception as e:
-            print(f"[-] Playwright 列表页 {list_url} 抓取异常: {e}")
+            logger.error("[-] Playwright 列表页 %s 抓取异常: %s", list_url, e)
             from config import is_proxy_manager_enabled
             if is_proxy_manager_enabled():
                 manager = get_proxy_manager()
@@ -104,9 +110,9 @@ class SejuCrawler(PlaywrightBaseCrawler):
         card_count = len(articles)
         
         if card_count == 0:
-            print(f"[!] 警告：页面 {page_num} 未找到任何卡片。")
+            logger.warning("[!] 警告：页面 %s 未找到任何卡片。", page_num)
             preview = list_page_html[:300].replace('\n', ' ')
-            print(f"[!] 页面 HTML 预览: {preview}")
+            logger.warning("[!] 页面 HTML 预览: %s", preview)
 
         sub_urls = []
         list_url = self.get_list_url(page_num)
@@ -120,7 +126,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
                     continue
                 sub_urls.append(urljoin(list_url, sub_url_path))
             except Exception as e:
-                print(f"[-] 解析第 {i+1} 个卡片链接时出错: {e}")
+                logger.error("[-] 解析第 %s 个卡片链接时出错: %s", i + 1, e)
         return sub_urls
 
     # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
@@ -140,25 +146,25 @@ class SejuCrawler(PlaywrightBaseCrawler):
             # 检测并等待 Cloudflare 盾通过
             bypassed = self._wait_for_cloudflare_bypass(sub_page)
             if not bypassed:
-                print(f"[!] Cloudflare 解盾超时，子页面 {sub_url} 内容可能不完整")
+                logger.warning("[!] Cloudflare 解盾超时，子页面 %s 内容可能不完整", sub_url)
             
             try:
                 sub_page.wait_for_load_state("load", timeout=15000)
             except Exception as wait_err:
-                print(f"[!] 等待 load 状态超时，继续处理: {wait_err}")
+                logger.warning("[!] 等待 load 状态超时，继续处理: %s", wait_err)
             
             # 等待网络静止让图片完全加载，对直接生成 PDF 至关重要
             try:
                 sub_page.wait_for_load_state("networkidle", timeout=15000)
             except Exception as wait_idle:
-                print(f"[*] 等待 networkidle 状态超时，继续处理: {wait_idle}")
+                logger.info("[*] 等待 networkidle 状态超时，继续处理: %s", wait_idle)
                 
             time.sleep(random.uniform(2.0, 4.0))
             
             current_url = sub_page.url
             html_text = sub_page.content()
         except Exception as err:
-            print(f"[-] 使用 Playwright 抓取子页面 {sub_url} 异常: {err}")
+            logger.error("[-] 使用 Playwright 抓取子页面 %s 异常: %s", sub_url, err)
             from config import is_proxy_manager_enabled
             if is_proxy_manager_enabled():
                 manager = get_proxy_manager()
@@ -174,7 +180,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
                     sub_page.close()
                 except Exception:
                     pass
-            print(f"[-] 子页面 {sub_url} 抓取失败")
+            logger.error("[-] 子页面 %s 抓取失败", sub_url)
             return False, None
 
         parsed_url = urlparse(current_url)
@@ -182,7 +188,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
 
         if current_url != sub_url:
             if self.db_manager.check_url_exists(current_url) and not self.is_test:
-                print(f"[{idx}] 重定向后的真实网址已存在，跳过抓取: {current_url}")
+                logger.info("[%s] 重定向后的真实网址已存在，跳过抓取: %s", idx, current_url)
                 if sub_page:
                     try:
                         sub_page.close()
@@ -192,7 +198,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
 
         try:
             if is_external:
-                print(f"检测到跳转至外部网站: {current_url}")
+                logger.info("检测到跳转至外部网站: %s", current_url)
                 soup = BeautifulSoup(html_text, 'html.parser')
                 title = soup.title.string.strip() if soup.title else "外部链接"
                 pub_time = ""
@@ -248,7 +254,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
                 res_link = "\n".join(cleaned_p_texts)
                 link_type = ""
 
-            print(f"[{idx}] 页面抓取成功: {title} | 分类: {category}")
+            logger.info("[%s] 页面抓取成功: %s | 分类: %s", idx, title, category)
 
             data = self.clean_common_metadata(
                 title=title,
@@ -263,18 +269,18 @@ class SejuCrawler(PlaywrightBaseCrawler):
             # 针对内部网页，使用当前的 Playwright 页面生成 PDF
             if not is_external:
                 if getattr(self, 'no_pdf', False):
-                    print("-> 启用了 no_pdf 模式，跳过 PDF 渲染和保存")
+                    logger.info("-> 启用了 no_pdf 模式，跳过 PDF 渲染和保存")
                 else:
                     pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"
                     saved_path = self.retry_generate_pdf(current_url, pdf_date, title, max_retries=3)
                     data['pdf_path'] = saved_path
             else:
-                print("-> 外部网站，已跳过 PDF 保存")
+                logger.info("-> 外部网站，已跳过 PDF 保存")
 
             return is_existing, data
 
         except Exception as e:
-            print(f"[-] 抓取子页面 {sub_url} 时发生错误: {e}")
+            logger.error("[-] 抓取子页面 %s 时发生错误: %s", sub_url, e)
             import traceback
             traceback.print_exc()
             return False, None
@@ -283,5 +289,5 @@ class SejuCrawler(PlaywrightBaseCrawler):
                 try:
                     sub_page.close()
                 except Exception as close_err:
-                    print(f"[-] 关闭子页面失败: {close_err}")
+                    logger.error("[-] 关闭子页面失败: %s", close_err)
             time.sleep(random.uniform(1, 2))

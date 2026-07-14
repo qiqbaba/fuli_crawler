@@ -9,9 +9,15 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 from crawlers.base_crawler import PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
+    default_end_page = 20
+    default_workers = 8
+
     def __init__(self, db_manager):
         super().__init__(db_manager, "jingpin_toupai")
         self.check_resource_link = True  # 启用磁力链接二次去重
@@ -84,7 +90,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     proxies = get_effective_proxy()
 
                 try:
-                    print(f"[*] 正在拉取列表页 (尝试 {attempt+1}/3): {url}")
+                    logger.info("[*] 正在拉取列表页 (尝试 %s/3): %s", attempt + 1, url)
                     r = requests.get(url, headers=headers, impersonate="chrome110", timeout=20, proxies=proxies)
                     r.encoding = 'utf-8'
                     if r.status_code == 200:
@@ -92,11 +98,11 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                         if decrypted:
                             return decrypted
                         else:
-                            print("[-] 列表页解密失败")
+                            logger.error("[-] 列表页解密失败")
                     else:
-                        print(f"[-] 列表页请求失败，状态码: {r.status_code}")
+                        logger.error("[-] 列表页请求失败，状态码: %s", r.status_code)
                 except Exception as e:
-                    print(f"[-] 请求列表页发生异常: {e}")
+                    logger.error("[-] 请求列表页发生异常: %s", e)
 
                 if attempt < 2:
                     time.sleep(random.uniform(1.0, 2.0))
@@ -115,13 +121,13 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         start_marker = "var j_b64 = '"
         start_idx = list_page_html.find(start_marker)
         if start_idx == -1:
-            print("[-] 未在解密的列表页中匹配到 'j_b64' 变量")
+            logger.error("[-] 未在解密的列表页中匹配到 'j_b64' 变量")
             return []
 
         val_start = start_idx + len(start_marker)
         end_idx = list_page_html.find("'", val_start)
         if end_idx == -1:
-            print("[-] 未在解密的列表页中匹配到 'j_b64' 变量结束符")
+            logger.error("[-] 未在解密的列表页中匹配到 'j_b64' 变量结束符")
             return []
 
         j_b64_str = list_page_html[val_start:end_idx]
@@ -138,7 +144,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     sub_urls.append(urljoin(self.base_domain, href))
             return sub_urls
         except Exception as e:
-            print(f"[-] 解析列表页 JSON 数据失败: {e}")
+            logger.error("[-] 解析列表页 JSON 数据失败: %s", e)
             return []
 
     def process_sub_page_if_needed(self, sub_url, idx):
@@ -166,20 +172,20 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                 time.sleep(random.uniform(0.5, 1.5))
 
         if not html_text:
-            print(f"[-] 抓取详情页并解密失败: {sub_url}")
+            logger.error("[-] 抓取详情页并解密失败: %s", sub_url)
             return False, None
 
         # 匹配其中的 JSON 密文
         start_marker = "var j_b64 = '"
         start_idx = html_text.find(start_marker)
         if start_idx == -1:
-            print(f"[-] 详情页中找不到 'j_b64' 变量: {sub_url}")
+            logger.error("[-] 详情页中找不到 'j_b64' 变量: %s", sub_url)
             return False, None
 
         val_start = start_idx + len(start_marker)
         end_idx = html_text.find("'", val_start)
         if end_idx == -1:
-            print(f"[-] 详情页中找不到 'j_b64' 变量结束符: {sub_url}")
+            logger.error("[-] 详情页中找不到 'j_b64' 变量结束符: %s", sub_url)
             return False, None
 
         j_b64_str = html_text[val_start:end_idx]
@@ -197,13 +203,13 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             res_format = data.get('tr', 'None').strip()
             category = self.category_map.get(self.current_class, '自拍')
 
-            print(f"[{idx}] 解析详情页成功: {title} | 大小: {size} | 链接: {resource_link[:50]}...")
+            logger.info("[%s] 解析详情页成功: %s | 大小: %s | 链接: %s...", idx, title, size, resource_link[:50])
 
             # === 提前去重：在 PDF 生成前检查磁力链接是否已存在 ===
             if self.check_resource_link and resource_link and resource_link != 'None':
                 existing_links = self.db_manager.filter_existing_resource_links([resource_link])
                 if resource_link in existing_links:
-                    print(f"[{idx}] 磁力链接已存在，跳过 PDF 生成: {resource_link[:60]}...")
+                    logger.info("[%s] 磁力链接已存在，跳过 PDF 生成: %s...", idx, resource_link[:60])
                     processed_data = self.clean_common_metadata(
                         title=title,
                         date_str=pub_time,
@@ -223,7 +229,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                 for attempt in range(1, 5):
                     no_proxy = (attempt == 4)
                     if no_proxy:
-                        print(f"[-] [PDF-SAVE] 详情页: {sub_url} 前3次代理均失败，第4次尝试直连...")
+                        logger.warning("[-] [PDF-SAVE] 详情页: %s 前3次代理均失败，第4次尝试直连...", sub_url)
                         try:
                             self._destroy_thread_resources()
                         except Exception:
@@ -233,12 +239,12 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     if pdf_path:
                         break
                     else:
-                        print(f"[-] [PDF-SAVE] 详情页: {sub_url} 生成 PDF 失败，第 {attempt}/4 次重试...")
+                        logger.warning("[-] [PDF-SAVE] 详情页: %s 生成 PDF 失败，第 %s/4 次重试...", sub_url, attempt)
                         if attempt < 4:
                             try:
                                 self._destroy_thread_resources()
                             except Exception as rec_err:
-                                print(f"[!] 重构 Playwright 资源失败: {rec_err}")
+                            logger.warning("[!] 重构 Playwright 资源失败: %s", rec_err)
                             time.sleep(random.uniform(1.5, 3.0))
 
             # 数据清洗入库
@@ -259,7 +265,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             return False, processed_data
 
         except Exception as e:
-            print(f"[-] 解析详情页 JSON 密文发生错误: {e}")
+            logger.error("[-] 解析详情页 JSON 密文发生错误: %s", e)
             return False, None
 
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
@@ -274,12 +280,12 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         classes = ["2935277", "2965277", "2975277"]
         self.category_map = {"2935277": "国产", "2965277": "欧美", "2975277": "国产"}
 
-        print(f"[*] 启动 {self.source_name} 爬虫流程...")
+        logger.info("[*] 启动 %s 爬虫流程...", self.source_name)
         self.on_start()
 
         no_early_stop = kwargs.get('no_early_stop', False)
         if no_early_stop:
-            print("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
+            logger.info("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
             self.max_consecutive_existing = None
             self.max_consecutive_duplicate_pages = None
         elif not resume:
@@ -300,9 +306,9 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             all_states = self.db_manager.load_crawl_state(self.source_name)
             if all_states:
                 if "__all__" in all_states and all_states["__all__"].get("completed", False):
-                    print(f"[*] 检测到 {self.source_name} 已完成全部爬取，跳过所有板块")
+                    logger.info("[*] 检测到 %s 已完成全部爬取，跳过所有板块", self.source_name)
                     self.db_manager.clear_crawl_state(self.source_name)
-                    print(f"[+] 已清除完成标记，下次运行将重新爬取")
+                    logger.info("[+] 已清除完成标记，下次运行将重新爬取")
                     try:
                         if is_test:
                             self._run_test_mode(start_page)
@@ -318,16 +324,16 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                         if saved_page <= end_page:
                             resume_class = cls
                             resume_page = saved_page
-                            print(f"[*] 检测到板块 {cls} 爬取断点，从第 {resume_page} 页继续")
+                            logger.info("[*] 检测到板块 %s 爬取断点，从第 %s 页继续", cls, resume_page)
                             break
-                        print(f"[断点续爬] 板块 {cls} 已完成，跳过")
+                        logger.info("[断点续爬] 板块 %s 已完成，跳过", cls)
                     else:
                         resume_class = cls
                         resume_page = start_page
-                        print(f"[*] 板块 {cls} 无历史记录，从头开始爬取")
+                        logger.info("[*] 板块 %s 无历史记录，从头开始爬取", cls)
                         break
                 else:
-                    print(f"[*] 所有板块已完成，无需爬取")
+                    logger.info("[*] 所有板块已完成，无需爬取")
                     try:
                         if is_test:
                             self._run_test_mode(start_page)
@@ -336,7 +342,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                         self.on_finish()
                     return
             else:
-                print(f"[*] 未检测到历史断点，从头开始爬取")
+                logger.info("[*] 未检测到历史断点，从头开始爬取")
 
         try:
             if is_test:
@@ -350,7 +356,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     cls_index = classes.index(cls)
                     resume_index = classes.index(resume_class)
                     if cls_index < resume_index:
-                        print(f"\n[断点续爬] 板块 {cls} 已完成，跳过")
+                        logger.info("\n[断点续爬] 板块 %s 已完成，跳过", cls)
                         continue
                     if cls == resume_class:
                         actual_start = resume_page
@@ -360,7 +366,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     actual_start = start_page
 
                 self.current_class = cls
-                print(f"\n[*] ================= 开始爬取自拍板块: {cls} (起始页码: {actual_start}) =================")
+                logger.info("\n[*] ================= 开始爬取自拍板块: %s (起始页码: %s) =================", cls, actual_start)
                 self._crawl_pages(actual_start, end_page, max_workers, class_name=cls)
                 
                 if resume and cls == resume_class:
@@ -368,11 +374,11 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             
             if not is_test and resume:
                 self.db_manager.mark_source_completed(self.source_name)
-                print(f"[+] {self.source_name} 所有板块爬取完成，已标记完成状态")
+                logger.info("[+] %s 所有板块爬取完成，已标记完成状态", self.source_name)
 
         except KeyboardInterrupt:
-            print("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
+            logger.warning("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
         except Exception as e:
-            print(f"\n[致命错误] 运行中发生未捕获的异常: {e}")
+            logger.error("\n[致命错误] 运行中发生未捕获的异常: %s", e)
         finally:
             self.on_finish()
