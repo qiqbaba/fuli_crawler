@@ -3,7 +3,7 @@
 向后兼容原 ProxyManager 的各种全局方法和常量
 """
 from typing import Optional, Dict
-from config import is_local_mode
+from config import is_local_mode, is_proxy_manager_enabled, PROXY_CACHE_TTL
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -13,25 +13,18 @@ from utils.proxy_fetcher import PROXY_SOURCES
 from utils.proxy_verifier import PROXY_TEST_URLS
 from utils.proxy_pool import ProxyPool
 
-# 兼容保留原类名
-class ProxyManager(ProxyPool):
-    """代理IP管理器 (兼容 ProxyPool 的代理子类)"""
-    pass
-
 # ========== 全局代理管理器实例 ==========
-_proxy_manager: Optional[ProxyManager] = None
+_proxy_manager: Optional[ProxyPool] = None
 
 
 def get_proxy_manager() -> Optional[ProxyManager]:
     """获取全局代理管理器实例"""
     global _proxy_manager
-    from config import is_proxy_manager_enabled
     local_on = is_local_mode()
     mgr_on = is_proxy_manager_enabled()
     if _proxy_manager is None:
         if local_on or mgr_on:
-            from config import PROXY_CACHE_TTL
-            _proxy_manager = ProxyManager(cache_ttl=PROXY_CACHE_TTL)
+            _proxy_manager = ProxyPool(cache_ttl=PROXY_CACHE_TTL)
         else:
             return None
     return _proxy_manager
@@ -109,7 +102,7 @@ if __name__ == "__main__":
     logger.info("代理IP管理器（兼容测试层）测试")
     logger.info("=" * 60)
     
-    manager = ProxyManager()
+    manager = ProxyPool()
     
     # 获取代理
     count = manager.fetch_proxies(force=True)

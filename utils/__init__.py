@@ -1,5 +1,6 @@
 # utils package
-from utils.proxy_manager import ProxyManager, get_proxy_manager, init_proxy_manager, get_proxy_string, get_proxy_dict
+from utils.proxy_pool import ProxyPool
+from utils.proxy_manager import get_proxy_manager, init_proxy_manager, get_proxy_string, get_proxy_dict
 
 
 def setup_console_utf8():
@@ -37,7 +38,7 @@ def ensure_project_root():
 
 
 __all__ = [
-    'ProxyManager', 'get_proxy_manager', 'init_proxy_manager',
+    'ProxyPool', 'get_proxy_manager', 'init_proxy_manager',
     'get_proxy_string', 'get_proxy_dict', 'setup_console_utf8',
     'ensure_project_root',
 ]

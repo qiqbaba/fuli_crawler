@@ -1,4 +1,5 @@
 import os
+import sys
 from functools import lru_cache
 from typing import Dict, Optional
 
@@ -154,7 +155,6 @@ def get_proxy_verify_workers():
 
 
 def _compute_auto_workers(base_multiplier=30, max_limit=300, min_limit=50):
-    import sys
     try:
         # 1. 获取 CPU 核心数
         cpu_count = os.cpu_count() or 1

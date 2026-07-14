@@ -6,12 +6,12 @@
   2. 删除匹配记录（同时删除对应 PDF 文件）
 
 用法:
-  python fixes/filter_fanhao_lang.py                        # 交互式模式（逐步询问）
-  python fixes/filter_fanhao_lang.py --interactive           # 显式进入交互式模式
-  python fixes/filter_fanhao_lang.py --mode export           # 导出日语记录到新库
-  python fixes/filter_fanhao_lang.py --mode delete           # 删除日语记录 (含 PDF)
-  python fixes/filter_fanhao_lang.py --mode export --dry-run # 预览导出
-  python fixes/filter_fanhao_lang.py --mode delete --dry-run # 预览删除
+  python fixes/filter_fanhao.py                        # 交互式模式（逐步询问）
+  python fixes/filter_fanhao.py --interactive           # 显式进入交互式模式
+  python fixes/filter_fanhao.py --mode export           # 导出日语记录到新库
+  python fixes/filter_fanhao.py --mode delete           # 删除日语记录 (含 PDF)
+  python fixes/filter_fanhao.py --mode export --dry-run # 预览导出
+  python fixes/filter_fanhao.py --mode delete --dry-run # 预览删除
 """
 
 import os
