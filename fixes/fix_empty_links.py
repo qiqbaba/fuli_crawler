@@ -1,17 +1,18 @@
 import os
 import re
-import sys
 import time
 import random
-import sqlite3
 from playwright.sync_api import sync_playwright
 
-# 将项目根目录加入 sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from fixes.db_utils import setup_fixes_module, get_connection
+
+setup_fixes_module()
 
 from config import get_db_path
-from utils import setup_console_utf8
 from utils.browser_manager import create_browser_context
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 resource_patterns = [
     r'^magnet:\?',
@@ -45,21 +46,21 @@ def parse_res_link(p_texts):
 
 def main():
     db_path = get_db_path()
-    print(f"正在读取数据库: {db_path}")
+    logger.info("正在读取数据库: %s", db_path)
     if not os.path.exists(db_path):
-        print("数据库文件不存在。")
+        logger.warning("数据库文件不存在。")
         return
         
-    conn = sqlite3.connect(db_path)
+    conn = get_connection(db_path)
     cursor = conn.cursor()
     
     # 查找 resource_link 为空的记录
     cursor.execute("SELECT id, url, title FROM resources WHERE resource_link = ''")
     records = cursor.fetchall()
-    print(f"找到数据库中共有 {len(records)} 条 resource_link 为空的记录。")
+    logger.info("找到数据库中共有 %s 条 resource_link 为空的记录。", len(records))
     
     if not records:
-        print("没有需要修复的记录。")
+        logger.info("没有需要修复的记录。")
         conn.close()
         return
 
@@ -74,7 +75,7 @@ def main():
                 if "seju.life" not in url:
                     continue
                     
-                print(f"[{idx}/{len(records)}] 正在处理: {title[:20]}... ID: {db_id}")
+                logger.info("[%s/%s] 正在处理: %s... ID: %s", idx, len(records), title[:20], db_id)
                 
                 try:
                     page.goto(url, timeout=60000, wait_until="domcontentloaded")
@@ -90,22 +91,22 @@ def main():
                         cursor.execute("UPDATE resources SET resource_link = ? WHERE id = ?", (res_link, db_id))
                         conn.commit()
                         success_count += 1
-                        print(f"  -> 成功修复链接: {res_link[:50]}...")
+                        logger.info("  -> 成功修复链接: %s...", res_link[:50])
                     else:
-                        print("  -> 提取结果仍为空（可能是纯文字教学页面或无资源）")
+                        logger.info("  -> 提取结果仍为空（可能是纯文字教学页面或无资源）")
                         
                 except Exception as page_e:
-                    print(f"  -> 访问页面出错: {page_e}")
+                    logger.warning("  -> 访问页面出错: %s", page_e)
                 
                 time.sleep(random.uniform(1.5, 3.0))
                 
             browser.close()
             
     except Exception as e:
-        print(f"运行过程中出错: {e}")
+        logger.error("运行过程中出错: %s", e)
     finally:
         conn.close()
-        print(f"修复完成！共成功回填了 {success_count} 条记录。")
+        logger.info("修复完成！共成功回填了 %s 条记录。", success_count)
 
 if __name__ == "__main__":
     setup_console_utf8()

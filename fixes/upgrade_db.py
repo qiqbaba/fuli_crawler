@@ -1,11 +1,9 @@
 import os
-import sys
-import sqlite3
 
-# 将项目根目录加入 sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from fixes.db_utils import setup_fixes_module, get_connection
 
-from utils import setup_console_utf8
+setup_fixes_module()
+
 from utils.metadata_parser import parse_title, parse_pikpak_link
 from utils.logger import get_logger
 from config import DB_PATHS
@@ -19,7 +17,7 @@ def upgrade_database(db_path):
         logger.warning(f"数据库文件不存在，跳过: {db_path}")
         return False
         
-    conn = sqlite3.connect(db_path)
+    conn = get_connection(db_path)
     cursor = conn.cursor()
     
     # 1. 检测表结构并升级

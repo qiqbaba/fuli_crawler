@@ -21,11 +21,11 @@ import sqlite3
 import argparse
 from datetime import datetime
 
-# 将项目根目录加入 sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from fixes.db_utils import setup_fixes_module, get_connection, get_columns, get_db_path
+
+setup_fixes_module()
 
 from config import get_db_path, PDF_BASE_DIR
-from utils import setup_console_utf8
 
 
 # ============================================================
@@ -38,13 +38,6 @@ from utils.lang_filter import is_japanese, _LINGUA_AVAILABLE
 # ============================================================
 # 2. 数据库操作
 # ============================================================
-
-def get_columns(cursor):
-    """获取 resources 表所有列名"""
-    cursor.execute("PRAGMA table_info(resources)")
-    cols = [row[1] for row in cursor.fetchall()]
-    return cols
-
 
 def scan_japanese_records(conn):
     """
