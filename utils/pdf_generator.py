@@ -38,24 +38,43 @@ class PDFRenderConfig:
         self.pre_access_url = pre_access_url
 
 class PDFGenerator:
-    """通用的 PDF 生成与存储归档服务"""
+    """通用的 PDF 生成与存储归档服务
+    
+    采用按需创建 aiohttp.ClientSession 的模式，避免在 __init__ 中长期持有 session，
+    以及复杂的异步关闭逻辑。每次需要 HTTP 请求时，通过 _get_http_session() 获取
+    或创建 session，并配合上下文管理器确保关闭。
+    """
     def __init__(self, r2_uploader=None):
         self.r2_uploader = r2_uploader
-        self.http_session = aiohttp.ClientSession()
+        self._http_session = None
+        self._http_session_lock = threading.Lock()
+    
+    def _get_http_session(self):
+        """获取或延迟创建 aiohttp.ClientSession（线程安全）"""
+        if self._http_session is None or self._http_session.closed:
+            with self._http_session_lock:
+                if self._http_session is None or self._http_session.closed:
+                    self._http_session = aiohttp.ClientSession()
+        return self._http_session
     
     def close(self):
         """关闭HTTP会话，释放资源"""
-        import asyncio
-        if self.http_session and not self.http_session.closed:
+        if self._http_session and not self._http_session.closed:
             try:
-                # 尝试获取当前事件循环
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 如果事件循环正在运行，创建任务关闭会话
-                    loop.create_task(self.http_session.close())
-                else:
-                    # 如果事件循环未运行，直接运行关闭会话
-                    loop.run_until_complete(self.http_session.close())
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    if loop.is_running():
+                        loop.create_task(self._http_session.close())
+                        return
+                except RuntimeError:
+                    pass
+                try:
+                    loop = asyncio.get_event_loop()
+                    if not loop.is_running():
+                        loop.run_until_complete(self._http_session.close())
+                except RuntimeError:
+                    pass
             except Exception as e:
                 logger.warning("关闭HTTP会话失败: %s", e)
     
@@ -122,7 +141,7 @@ class PDFGenerator:
                             "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
                         }
                         
-                        async with self.http_session.get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                        async with self._get_http_session().get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
                                 if r.status == 200:
                                     content = await r.read()
                                     content_type = r.headers.get("Content-Type", "image/jpeg")
