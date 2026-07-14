@@ -7,11 +7,12 @@ from curl_cffi import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
-from crawlers.base_crawler import PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin
-from utils.proxy_manager import get_proxy_dict
+from crawlers.base_crawler import DecryptSiteBaseCrawler
 
 
-class MadouCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
+class MadouCrawler(DecryptSiteBaseCrawler):
+    CATEGORIES = ["guochan", "oumei"]
+
     def __init__(self, db_manager):
         super().__init__(db_manager, "madou")
         self.check_resource_link = True  # 启用磁力链接二次去重
@@ -22,8 +23,6 @@ class MadouCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
         self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
         self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
         self.current_class = "guochan"
-        self.max_consecutive_existing = 15  # 连续抓到历史数据时早停
-        # 域名冷却机制
         self._domain_cooldown = {}
         self._cooldown_seconds = 60
         self._domain_lock = threading.Lock()
@@ -48,94 +47,9 @@ class MadouCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
 
 
 
-    # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
-
-
-
-    def fetch_list_page(self, page_num):
-        """请求列表页并解密 HTML，支持域名轮换重试和自动域名发现"""
-        for _ in range(len(self.domains)):
-            url = self.base_list_url.format(self.current_class, page_num)
-            headers = self._build_headers()
-            redirect_content = None  # 追踪跳转页面内容，用于提取最新域名
-
-            for attempt in range(3):
-                # 前两次尝试用代理，第三次降级为直连（避免代理异常导致误判网站不可达）
-                proxies = None
-                if attempt < 2:
-                    from config import get_crawler_proxy, is_proxy_manager_enabled
-                    crawler_proxy = get_crawler_proxy()
-                    if crawler_proxy:
-                        proxies = {"http": crawler_proxy, "https": crawler_proxy}
-                    elif is_proxy_manager_enabled():
-                        proxies = get_proxy_dict()
-                
-                try:
-                    response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
-                    if response.status_code == 200:
-                        decrypted = self.decrypt_html(response.text)
-                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
-                            return decrypted
-                        # 记录跳转页面内容，后续用于提取新域名
-                        if decrypted and "正在检测最新可用线路" in decrypted:
-                            redirect_content = decrypted
-                        elif "正在检测最新可用线路" in response.text:
-                            redirect_content = response.text
-                    elif response.status_code == 403:
-                        print(f"[!] 列表页返回 403，疑似触发反爬: {url}")
-                        if proxies and is_proxy_manager_enabled():
-                            from utils.proxy_manager import get_proxy_manager
-                            manager = get_proxy_manager()
-                            if manager and "http" in proxies:
-                                manager.report_failure(proxies["http"])
-                        break
-                except Exception:
-                    if proxies and is_proxy_manager_enabled():
-                        from utils.proxy_manager import get_proxy_manager
-                        manager = get_proxy_manager()
-                        if manager and "http" in proxies:
-                            manager.report_failure(proxies["http"])
-                time.sleep(random.uniform(2.0, 4.0))
-                
-            print(f"[*] 使用 Playwright 兜底访问列表页: {url}")
-            try:
-                _, _, context = self._get_thread_resources()
-                page = context.new_page()
-                page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                time.sleep(random.uniform(2.0, 4.0))
-                html = page.content()
-                page.close()
-                if "torrent-list" in html or "class=\"torrent-list\"" in html:
-                    return html
-                decrypted = self.decrypt_html(html)
-                if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
-                    return decrypted
-                # 记录跳转页面内容
-                if decrypted and "正在检测最新可用线路" in decrypted:
-                    redirect_content = decrypted
-                elif "正在检测最新可用线路" in html:
-                    redirect_content = html
-            except Exception as e:
-                print(f"[-] Playwright 兜底抓取列表页异常: {e}")
-                if is_proxy_manager_enabled():
-                    from utils.proxy_manager import get_proxy_manager
-                    manager = get_proxy_manager()
-                    if manager:
-                        proxy_url = manager._thread_proxy_map.get(threading.get_ident())
-                        if proxy_url:
-                            manager.report_failure(proxy_url)
-                self._destroy_thread_resources()
-            
-            # 尝试从跳转页面提取最新域名
-            if redirect_content and self._update_domains_from_redirect(redirect_content):
-                print(f"[+] 域名列表已更新，使用新域名重试...")
-                continue  # 直接用新域名重试，跳过冷却等待
-                
-            print(f"[!] 当前域名疑似被封，冷却等待后切换...")
-            time.sleep(random.uniform(5.0, 10.0))
-            self._rotate_domain()
-            
-        return None
+    def _is_valid_list_page(self, html):
+        """判断 Playwright 兜底时页面是否有效"""
+        return "torrent-list" in html or "class=\"torrent-list\"" in html
 
     def parse_list_page(self, list_page_content, page_num):
         """解析解密后的列表页，提取条目信息"""
@@ -361,140 +275,10 @@ class MadouCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
         if self.is_test:
             print("-> 测试模式下跳过保存 PDF 以节省时间")
         else:
-            # 最多重试 4 次（前3次代理，第4次直连），失败时重建 Playwright 资源
-            saved_pdf = ""
-            for attempt in range(1, 5):
-                no_proxy = (attempt == 4)
-                if no_proxy:
-                    print(f"[-] [PDF-SAVE] 标题: {raw_item['title']} 前3次代理均失败，第4次尝试直连...")
-                    try:
-                        self._destroy_thread_resources()
-                    except Exception:
-                        pass
-                    time.sleep(random.uniform(1.0, 2.0))
-                saved_pdf = self._save_pdf(url, date_str, raw_item['title'], no_proxy=no_proxy)
-                if saved_pdf:
-                    print(f"[PDF-SAVE] 标题: {raw_item['title']} -> PDF 路径: {saved_pdf}")
-                    break
-                else:
-                    print(f"[-] [PDF-SAVE] 标题: {raw_item['title']} 生成 PDF 失败，进行第 {attempt}/4 次尝试")
-                    if attempt < 4:
-                        try:
-                            self._destroy_thread_resources()
-                        except Exception as recreate_err:
-                            print(f"[!] 重构 Playwright 资源失败: {recreate_err}")
-                        time.sleep(random.uniform(1.5, 3.0))
-            data['pdf_path'] = saved_pdf
+            data['pdf_path'] = self.retry_generate_pdf(url, date_str, raw_item['title'], max_retries=4, no_proxy_last=True)
 
         return is_existing, data
 
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """麻豆爬虫入口，对两个板块依次进行爬取，支持断点续爬"""
-        self.is_test = is_test
-        self.quiet = kwargs.get('quiet', False)
-        resume = kwargs.get('resume', False)
-        self.resume = resume
-        self.no_pdf = kwargs.get('no_pdf', False)
-        
-        classes = ["guochan", "oumei"]
-
-        print(f"[*] 启动 {self.source_name} 爬虫流程...")
-        self.on_start()
-
-        no_early_stop = kwargs.get('no_early_stop', False)
-        if no_early_stop:
-            print("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
-            self.max_consecutive_existing = None
-            self.max_consecutive_duplicate_pages = None
-        elif not resume:
-            # 非断点续爬模式时，禁用早停（避免数据库已有历史数据时误触发提前退出）
-            self.max_consecutive_existing = None
-            self.max_consecutive_duplicate_pages = None
-
-        if max_workers is None:
-            if getattr(self, 'no_pdf', False):
-                max_workers = 30
-            else:
-                max_workers = 10
-
-        resume_class = None
-        resume_page = start_page
-
-        if resume:
-            all_states = self.db_manager.load_crawl_state(self.source_name)
-            if all_states:
-                if "__all__" in all_states and all_states["__all__"].get("completed", False):
-                    print(f"[*] 检测到 {self.source_name} 已完成全部爬取，跳过所有板块")
-                    self.db_manager.clear_crawl_state(self.source_name)
-                    print(f"[+] 已清除完成标记，下次运行将重新爬取")
-                    try:
-                        if is_test:
-                            self._run_test_mode(start_page)
-                        return
-                    finally:
-                        self.on_finish()
-                    return
-                
-                for cls in classes:
-                    state = all_states.get(cls)
-                    if state:
-                        saved_page = state["page_num"]
-                        if saved_page <= end_page:
-                            resume_class = cls
-                            resume_page = saved_page
-                            print(f"[*] 检测到板块 {cls} 爬取断点，从第 {resume_page} 页继续")
-                            break
-                        print(f"[断点续爬] 板块 {cls} 已完成，跳过")
-                    else:
-                        resume_class = cls
-                        resume_page = start_page
-                        print(f"[*] 板块 {cls} 无历史记录，从头开始爬取")
-                        break
-                else:
-                    print(f"[*] 所有板块已完成，无需爬取")
-                    try:
-                        if is_test:
-                            self._run_test_mode(start_page)
-                        return
-                    finally:
-                        self.on_finish()
-                    return
-            else:
-                print(f"[*] 未检测到历史断点，从头开始爬取")
-
-        try:
-            if is_test:
-                self._run_test_mode(start_page)
-                return
-
-            for cls in classes:
-                if resume and resume_class is not None:
-                    cls_index = classes.index(cls)
-                    resume_index = classes.index(resume_class)
-                    if cls_index < resume_index:
-                        print(f"\n[断点续爬] 板块 {cls} 已完成，跳过")
-                        continue
-                    if cls == resume_class:
-                        actual_start = resume_page
-                    else:
-                        actual_start = start_page
-                else:
-                    actual_start = start_page
-
-                self.current_class = cls
-                print(f"\n[*] ================= 开始爬取麻豆板块: {cls} (起始页码: {actual_start}) =================")
-                self._crawl_pages(actual_start, end_page, max_workers, class_name=cls)
-                
-                if resume and cls == resume_class:
-                    resume_class = None
-            
-            if not is_test and resume:
-                self.db_manager.mark_source_completed(self.source_name)
-                print(f"[+] {self.source_name} 所有板块爬取完成，已标记完成状态")
-
-        except KeyboardInterrupt:
-            print("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
-        except Exception as e:
-            print(f"\n[致命错误] 运行中发生未捕获的异常: {e}")
-        finally:
-            self.on_finish()
+        return super().run(is_test=is_test, start_page=start_page, end_page=end_page, max_workers=max_workers, **kwargs)

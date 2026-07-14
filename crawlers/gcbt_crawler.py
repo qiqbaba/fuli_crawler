@@ -1,5 +1,7 @@
 import os
 import re
+import time
+import random
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from config import is_local_mode
@@ -163,19 +165,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         # 6. 生成并渲染 PDF 文件（直接保存原网页，测试模式跳过）
         pdf_path = ''
         if not self.is_test and article:
-            for attempt in range(1, 4):
-                pdf_path = self._save_pdf(sub_url, pub_time, title)
-                if pdf_path:
-                    # print(f"[PDF-SAVE] 网页地址: {sub_url} -> PDF 路径: {pdf_path}")
-                    break
-                else:
-                    print(f"[-] [PDF-SAVE] 网页地址: {sub_url} 生成 PDF 失败，进行第 {attempt}/3 次尝试")
-                    if attempt < 3:
-                        try:
-                            self._destroy_thread_resources()
-                        except Exception as recreate_err:
-                            print(f"[!] 重构 Playwright 资源失败: {recreate_err}")
-                        time.sleep(random.uniform(1.5, 3.0))
+            pdf_path = self.retry_generate_pdf(sub_url, pub_time, title, max_retries=3)
             
         # 7. 调用通用清洗逻辑
         data = self.clean_common_metadata(

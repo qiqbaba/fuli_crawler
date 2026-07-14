@@ -266,23 +266,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
                     print("-> 启用了 no_pdf 模式，跳过 PDF 渲染和保存")
                 else:
                     pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"
-                    saved_path = ""
-                    for attempt in range(1, 4):
-                        saved_path = self._save_pdf(sub_page, pdf_date, title)
-                        if saved_path:
-                            print(f"[PDF-SAVE] 标题: {title} -> PDF 路径: {saved_path}")
-                            break
-                        else:
-                            print(f"[-] [PDF-SAVE] 标题: {title} 生成 PDF 失败，进行第 {attempt}/3 次尝试")
-                            if attempt < 3:
-                                try:
-                                    self._destroy_thread_resources()
-                                    _, _, context = self._get_thread_resources()
-                                    sub_page = context.new_page()
-                                    sub_page.goto(current_url, timeout=60000, wait_until="networkidle")
-                                except Exception as recreate_err:
-                                    print(f"[!] 重构 Playwright 资源或重载网页失败: {recreate_err}")
-                                time.sleep(random.uniform(1.5, 3.0))
+                    saved_path = self.retry_generate_pdf(current_url, pdf_date, title, max_retries=3)
                     data['pdf_path'] = saved_path
             else:
                 print("-> 外部网站，已跳过 PDF 保存")
