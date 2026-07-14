@@ -1,6 +1,7 @@
 import re
 import calendar
 from datetime import datetime, timedelta
+from dateutil.relativedelta import relativedelta
 
 def _safe_date(year, month, day):
     """校验年月日是否合法，非法时自动修正（day 超出该月范围时取最大值）"""
@@ -27,10 +28,10 @@ def parse_date(date_str):
     match_month_ago = re.search(r'(\d+)\s*个?月前(?:[（(]?(\d{1,2})[^\d]+(\d{1,2})[）)])?', date_str)
     if match_month_ago:
         months_ago = int(match_month_ago.group(1))
-        # 计算目标年份和月份，避免跨年错误
-        total_months = now.year * 12 + now.month - 1 - months_ago
-        target_year = total_months // 12
-        target_month = total_months % 12 + 1
+        # 使用 relativedelta 进行健壮的日期计算，避免跨年错误
+        target_date = now - relativedelta(months=months_ago)
+        target_year = target_date.year
+        target_month = target_date.month
         if match_month_ago.group(2) and match_month_ago.group(3):
             month = int(match_month_ago.group(2))
             day = int(match_month_ago.group(3))
