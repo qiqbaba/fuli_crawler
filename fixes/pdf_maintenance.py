@@ -14,36 +14,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_db_path, PDF_BASE_DIR
 from utils import setup_console_utf8
+from utils.browser_manager import create_browser_context
 from utils.metadata_parser import sanitize_filename
 from utils.pdf_utils import parse_filename, clean_title_suffix, to_relative_path, generate_unique_path
 
-
-def _create_browser_context(p, user_agent=None, viewport=None):
-    """创建 Playwright 浏览器上下文（内联版，替代已废弃的 create_browser_context）"""
-    from config import USER_AGENTS
-    from utils.stealth import get_browser_launch_args, apply_stealth
-    launch_args = get_browser_launch_args(browser_type='chromium', headless=True)
-    playwright_proxy = None
-    try:
-        from config import get_effective_proxy_string
-        proxy_url = get_effective_proxy_string(exclusive=True)
-        if proxy_url:
-            playwright_proxy = {"server": proxy_url}
-    except Exception as ex:
-        print(f"[!] 获取自动代理失败: {ex}")
-    if playwright_proxy:
-        print(f"[*] Playwright 启动代理: {playwright_proxy['server']}")
-    else:
-        print("[*] Playwright 未启用代理")
-    browser = p.chromium.launch(headless=True, args=launch_args, proxy=playwright_proxy)
-    ctx_args = {"locale": "zh-CN", "user_agent": user_agent or random.choice(USER_AGENTS)}
-    ctx_args["viewport"] = viewport or {"width": 1920, "height": 1080}
-    context = browser.new_context(**ctx_args)
-    
-    # 使用统一 stealth 模块注入伪装脚本
-    apply_stealth(context)
-    
-    return browser, context
 
 # =============================================================================
 # PDF 维护工具合集
@@ -656,7 +630,7 @@ def run_redownload_small_pdfs(args):
 
     try:
         with sync_playwright() as p:
-            browser, context = _create_browser_context(p, viewport={'width': 1280, 'height': 900})
+            browser, context = create_browser_context(p, viewport={'width': 1280, 'height': 900})
             for idx, (file_path, size_kb, r_id, title, url, publish_time) in enumerate(to_download, 1):
                 print(f"\n[*] [{idx}/{len(to_download)}] 正在请求: {url} (当前大小: {size_kb:.2f} KB)")
                 page = context.new_page()
@@ -890,7 +864,7 @@ def run_rebuild(args):
                 generator = PDFGenerator(r2_uploader=None)
 
                 with sync_playwright() as p:
-                    browser, context = _create_browser_context(p)
+                    browser, context = create_browser_context(p)
                     for idx, (r_id, title, url, publish_time, source) in enumerate(missing_records, 1):
                         try:
                             print(f"[*] [{idx}/{len(missing_records)}] 正在请求 URL: {url} (来源: {source})")
