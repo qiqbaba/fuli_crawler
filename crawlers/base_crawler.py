@@ -343,16 +343,8 @@ class BaseCrawler:
                 if data:
                     results_dict[idx] = data
 
-            logger.info("正在向并发工作线程发送资源清理指令...")
-            cleanup_futures = [
-                executor.submit(self.release_thread_resources)
-                for _ in range(max_workers)
-            ]
-            for f in as_completed(cleanup_futures):
-                try:
-                    f.result()
-                except Exception as e:
-                    logger.error("清理工作线程资源时发生异常: %s", e)
+            logger.info("正在关闭线程池并自动清理资源...")
+            executor.shutdown(wait=True)
 
         if early_stop_triggered:
             logger.warning("子页面级去重触发早停标记，已完成的结果将继续入库。")
@@ -435,9 +427,6 @@ class BaseCrawler:
         
         class_name: 可选，用于断点续爬时记录当前板块名称
         """
-        import time
-        import random
-
         consecutive_count = 0
         consecutive_subpage_count = 0
         consecutive_duplicate_pages = 0
@@ -539,15 +528,22 @@ class BaseCrawler:
 
     def _sleep_between_pages(self, no_pdf):
         """页面间延迟等待，降低被反爬检测的风险"""
-        import time, random
         if no_pdf:
             time.sleep(random.uniform(0.3, 0.8))
         else:
             time.sleep(random.uniform(1.5, 3.0))
 
+    def get_categories(self):
+        """钩子方法：返回要爬取的分类列表，子类可覆盖"""
+        return []
+
+    def before_category_crawl(self, category):
+        """钩子方法：爬取分类前的准备工作，子类可覆盖"""
+        pass
+
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """
-        统一的爬虫执行骨架
+        统一的爬虫执行骨架，支持多板块爬取
         """
         self.is_test = is_test
         self.quiet = kwargs.get('quiet', False)
@@ -568,6 +564,10 @@ class BaseCrawler:
             logger.info("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
             self.max_consecutive_existing = None
             self.max_consecutive_duplicate_pages = None
+        elif not resume:
+            # 非断点续爬模式时，禁用早停（避免数据库已有历史数据时误触发提前退出）
+            self.max_consecutive_existing = None
+            self.max_consecutive_duplicate_pages = None
 
         if max_workers is None:
             # Playwright 爬虫（datang, madou, gcbt, seju）每个线程启动一个浏览器，限制并发避免 OOM
@@ -585,7 +585,69 @@ class BaseCrawler:
                 self._run_test_mode(start_page)
                 return
 
-            self._crawl_pages(start_page, end_page, max_workers)
+            categories = self.get_categories()
+            if categories:
+                # 多板块爬取模式
+                resume_category = None
+                resume_page = start_page
+
+                if resume:
+                    all_states = self.db_manager.load_crawl_state(self.source_name)
+                    if all_states:
+                        if "__all__" in all_states and all_states["__all__"].get("completed", False):
+                            logger.info("[*] 检测到 %s 已完成全部爬取，跳过所有板块", self.source_name)
+                            self.db_manager.clear_crawl_state(self.source_name)
+                            logger.info("[+] 已清除完成标记，下次运行将重新爬取")
+                            return
+                        
+                        for category in categories:
+                            state = all_states.get(category)
+                            if state:
+                                saved_page = state["page_num"]
+                                if saved_page <= end_page:
+                                    resume_category = category
+                                    resume_page = saved_page
+                                    logger.info("[*] 检测到板块 %s 爬取断点，从第 %s 页继续", category, resume_page)
+                                    break
+                                logger.info("[断点续爬] 板块 %s 已完成，跳过", category)
+                            else:
+                                resume_category = category
+                                resume_page = start_page
+                                logger.info("[*] 板块 %s 无历史记录，从头开始爬取", category)
+                                break
+                        else:
+                            logger.info("[*] 所有板块已完成，无需爬取")
+                            return
+                    else:
+                        logger.info("[*] 未检测到历史断点，从头开始爬取")
+
+                for category in categories:
+                    if resume and resume_category is not None:
+                        category_index = categories.index(category)
+                        resume_index = categories.index(resume_category)
+                        if category_index < resume_index:
+                            logger.info("\n[断点续爬] 板块 %s 已完成，跳过", category)
+                            continue
+                        if category == resume_category:
+                            actual_start = resume_page
+                        else:
+                            actual_start = start_page
+                    else:
+                        actual_start = start_page
+
+                    self.before_category_crawl(category)
+                    logger.info("\n[*] ================= 开始爬取板块: %s (起始页码: %s) =================", category, actual_start)
+                    self._crawl_pages(actual_start, end_page, max_workers, class_name=category)
+                    
+                    if resume and category == resume_category:
+                        resume_category = None
+                
+                if not is_test and resume:
+                    self.db_manager.mark_source_completed(self.source_name)
+                    logger.info("[+] %s 所有板块爬取完成，已标记完成状态", self.source_name)
+            else:
+                # 单板块爬取模式
+                self._crawl_pages(start_page, end_page, max_workers)
 
         except KeyboardInterrupt:
             logger.warning("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
@@ -595,12 +657,11 @@ class BaseCrawler:
             self.on_finish()
 
 
+from utils.browser_factory import browser_factory
+
 class PlaywrightBaseCrawler(BaseCrawler):
     def __init__(self, db_manager, source_name):
         super().__init__(db_manager, source_name)
-        self.thread_local = threading.local()
-        self._active_resources = []
-        self._resources_lock = threading.Lock()
         self.r2_uploader = None
         self.pdf_generator = None
         self.use_persistent_context = False
@@ -669,17 +730,21 @@ class PlaywrightBaseCrawler(BaseCrawler):
         """
         if not self._reuse_browser:
             # 旧行为：每页销毁并重建浏览器
-            if hasattr(self.thread_local, "playwright"):
-                self._destroy_thread_resources()
+            self._destroy_thread_resources()
         else:
             # Perf 1: 仅清理页面级资源，保留浏览器供下一页复用
             try:
-                page = getattr(self.thread_local, "page", None)
+                from utils.browser_factory import browser_factory
+                # 检查线程本地是否有 page 对象
+                import threading
+                thread_local = threading.local()
+                page = getattr(thread_local, "page", None)
                 if page:
                     page.close()
-                    del self.thread_local.page
-            except Exception:
-                pass
+                    del thread_local.page
+                    logger.info("[+] 已关闭页面资源，保留浏览器供复用")
+            except Exception as e:
+                logger.warning("关闭页面资源失败: %s", e)
 
     def on_finish(self):
         """释放 Playwright 渲染资源"""
@@ -687,35 +752,6 @@ class PlaywrightBaseCrawler(BaseCrawler):
         # 1. 优先清理主线程自身的资源
         self.release_thread_resources()
         
-        # 2. 残留资源兜底关闭
-        with self._resources_lock:
-            if self._active_resources:
-                logger.warning("[!] 发现 %s 个未被工作线程自主清理的残留资源，执行主线程兜底关闭...", len(self._active_resources))
-                for item in self._active_resources:
-                    p, browser, context, profile_dir = item
-                    try:
-                        if context:
-                            context.close()
-                    except Exception:
-                        pass
-                    try:
-                        if browser:
-                            browser.close()
-                    except Exception:
-                        pass
-                    try:
-                        if p:
-                            p.stop()
-                    except Exception:
-                        pass
-                    if profile_dir and os.path.exists(profile_dir):
-                        try:
-                            import shutil
-                            shutil.rmtree(profile_dir)
-                        except Exception:
-                            pass
-                self._active_resources.clear()
-            
         self.db_manager.commit()
 
     def _get_thread_resources(self, no_proxy=False):
@@ -724,189 +760,31 @@ class PlaywrightBaseCrawler(BaseCrawler):
         Args:
             no_proxy: 若为 True，则 Playwright 启动时跳过代理配置（直连）
         """
-        if not hasattr(self.thread_local, "playwright"):
-            from playwright.sync_api import sync_playwright
-            p = sync_playwright().start()
+        from config import is_local_mode
+        local_mode = is_local_mode()
+        
+        # 根据配置决定 headless/headful
+        if self._force_headless:
+            headless = True
+        elif local_mode and self.headful_local:
+            headless = False
+        elif not local_mode and self.headful_cloud:
+            # 云端模式启用 headful（需要图形界面支持如 xvfb）
+            headless = False
+        else:
+            headless = True
             
-            from config import USER_AGENTS, is_local_mode
-            from utils.stealth import get_browser_launch_args, apply_stealth
-            
-            ua = random.choice(USER_AGENTS)
-            local_mode = is_local_mode()
-            
-            # 根据配置决定 headful/headless
-            if self._force_headless:
-                headless = True
-            elif local_mode and self.headful_local:
-                headless = False
-            elif not local_mode and self.headful_cloud:
-                # 云端模式启用 headful（需要图形界面支持如 xvfb）
-                headless = False
-            else:
-                headless = True
-                
-            launch_args = get_browser_launch_args(
-                browser_type=self.browser_type,
-                headless=headless,
-            )
-            
-            playwright_proxy = None
-            if not no_proxy:
-                from config import get_effective_proxy_string
-                proxy_url = get_effective_proxy_string(exclusive=True)
-                if proxy_url:
-                    playwright_proxy = {"server": proxy_url}
-                
-            if getattr(self, "use_persistent_context", False):
-                profile_dir = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                    "temp_profiles",
-                    f"profile_{self.source_name}_{threading.get_ident()}_{random.randint(1000, 9999)}_{int(time.time())}"
-                )
-                os.makedirs(profile_dir, exist_ok=True)
-                
-                context = None
-                browser = None
-                try:
-                    context = p.chromium.launch_persistent_context(
-                        user_data_dir=profile_dir,
-                        headless=headless,
-                        channel="chrome",
-                        args=launch_args,
-                        user_agent=ua,
-                        viewport={'width': 1280, 'height': 900},
-                        bypass_csp=True,
-                        proxy=playwright_proxy,
-                        locale="zh-CN",
-                        timezone_id="Asia/Shanghai"
-                    )
-                except Exception as e:
-                    logger.info("[*] 启动真实 Chrome 失败，回退到内置 Chromium: %s", e)
-                    try:
-                        context = p.chromium.launch_persistent_context(
-                            user_data_dir=profile_dir,
-                            headless=headless,
-                            args=launch_args,
-                            user_agent=ua,
-                            viewport={'width': 1280, 'height': 900},
-                            bypass_csp=True,
-                            proxy=playwright_proxy,
-                            locale="zh-CN",
-                            timezone_id="Asia/Shanghai"
-                        )
-                        logger.info("[+] 线程 %s 成功启动内置 Chromium 持久化上下文", threading.get_ident())
-                    except Exception as e2:
-                        logger.error("启动持久化上下文均失败: %s。尝试普通方式启动。", e2)
-                
-                if context:
-                    browser = context.browser
-                else:
-                    browser = p.chromium.launch(headless=headless, args=launch_args)
-                    context = browser.new_context(
-                        user_agent=ua,
-                        viewport={'width': 1280, 'height': 900},
-                        proxy=playwright_proxy,
-                        locale="zh-CN",
-                        timezone_id="Asia/Shanghai"
-                    )
-                
-                # 注入高级 stealth 脚本（替换旧 playwright_stealth + 内联 JS）
-                if self.enable_stealth:
-                    apply_stealth(context, browser_type=self.browser_type)
-                    
-                self.thread_local.profile_dir = profile_dir
-            else:
-                browser = p.chromium.launch(headless=headless, args=launch_args, proxy=playwright_proxy)
-                context = browser.new_context(
-                    viewport={'width': 1280, 'height': 900},
-                    locale="zh-CN",
-                    timezone_id="Asia/Shanghai",
-                    user_agent=ua,
-                )
-                profile_dir = None
-                # 非持久化上下文模式下注入 stealth
-                if self.enable_stealth:
-                    apply_stealth(context, browser_type=self.browser_type)
-                
-            self.thread_local.playwright = p
-            self.thread_local.browser = browser
-            self.thread_local.context = context
-            
-            with self._resources_lock:
-                self._active_resources.append((p, browser, context, profile_dir))
-                
-        return self.thread_local.playwright, self.thread_local.browser, self.thread_local.context
+        return browser_factory.create_browser_context(
+            headless=headless,
+            browser_type=self.browser_type,
+            enable_stealth=self.enable_stealth,
+            use_persistent_context=self.use_persistent_context,
+            no_proxy=no_proxy
+        )
 
     def _destroy_thread_resources(self):
         """清理当前线程的 Playwright 资源，以便下一次重新创建"""
-        p = getattr(self.thread_local, "playwright", None)
-        browser = getattr(self.thread_local, "browser", None)
-        context = getattr(self.thread_local, "context", None)
-        profile_dir = getattr(self.thread_local, "profile_dir", None)
-        
-        try:
-            if context:
-                context.close()
-        except Exception:
-            pass
-        try:
-            if browser:
-                browser.close()
-        except Exception:
-            pass
-        try:
-            if p:
-                p.stop()
-        except Exception:
-            pass
-            
-        with self._resources_lock:
-            self._active_resources = [
-                item for item in self._active_resources
-                if item[0] != p
-            ]
-            
-        if profile_dir and os.path.exists(profile_dir):
-            try:
-                import shutil
-                shutil.rmtree(profile_dir)
-            except Exception:
-                pass
-                
-        if hasattr(self.thread_local, "playwright"):
-            del self.thread_local.playwright
-        if hasattr(self.thread_local, "browser"):
-            del self.thread_local.browser
-        if hasattr(self.thread_local, "context"):
-            del self.thread_local.context
-        if hasattr(self.thread_local, "profile_dir"):
-            del self.thread_local.profile_dir
-
-        # 清除当前线程的代理绑定，使下次创建时分配到新代理
-        try:
-            from utils.proxy_manager import get_proxy_manager
-            from config import is_proxy_manager_enabled
-            if is_proxy_manager_enabled():
-                mgr = get_proxy_manager()
-                if mgr:
-                    tid = threading.get_ident()
-                    with mgr._lock:
-                        if tid in mgr._thread_proxy_map:
-                            del mgr._thread_proxy_map[tid]
-        except Exception:
-            pass
-
-    def _get_pdf_local_tmp_path(self, publish_date, title):
-        """获取 PDF 本地临时/持久化保存路径"""
-        if not self.pdf_generator:
-            self.pdf_generator = PDFGenerator(self.r2_uploader)
-        return self.pdf_generator._get_pdf_local_tmp_path(publish_date, title, self.source_name)
-
-    def _upload_or_return_pdf_path(self, local_path, publish_date):
-        """统一的 PDF R2 上传与相对路径返回逻辑"""
-        if not self.pdf_generator:
-            self.pdf_generator = PDFGenerator(self.r2_uploader)
-        return self.pdf_generator._upload_or_return_pdf_path(local_path, publish_date, self.source_name)
+        browser_factory.destroy_thread_resources()
 
     def _save_pdf(self, page_or_url, publish_date, title, no_proxy=False):
         """Playwright 统一保存 PDF 的向后兼容包装方法
@@ -1444,58 +1322,6 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
         """子类覆盖：判断 Playwright 兜底时页面是否有效"""
         return bool(html)
 
-    def fetch_detail_page(self, url, headers=None):
-        """请求详情页并解密 HTML，支持域名轮换重试
-        
-        返回 (detail_html, final_url)
-        """
-        redirect_content = None
-        final_url = url
-
-        for _ in range(len(self.domains)):
-            from urllib.parse import urlparse, urlunparse
-            parsed_url = urlparse(url)
-            with self._domain_lock:
-                current_base = self.base_domain
-            parsed_base = urlparse(current_base)
-            if any(d in parsed_url.netloc for d in self.domains):
-                parsed_url = parsed_url._replace(netloc=parsed_base.netloc, scheme=parsed_base.scheme)
-                final_url = urlunparse(parsed_url)
-
-            req_headers = headers or self._build_headers()
-            redirect_content = None
-
-            for attempt in range(3):
-                proxies = None
-                if attempt < 2:
-                    from config import get_effective_proxy
-                    proxies = get_effective_proxy()
-
-                try:
-                    response = requests.get(final_url, headers=req_headers, timeout=15, proxies=proxies, impersonate="chrome120")
-                    if response.status_code == 200:
-                        decrypted = self.decrypt_html(response.text)
-                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
-                            return decrypted, final_url
-                        if decrypted and "正在检测最新可用线路" in decrypted:
-                            redirect_content = decrypted
-                        elif "正在检测最新可用线路" in response.text:
-                            redirect_content = response.text
-                    elif response.status_code == 403:
-                        logger.warning("[!] 详情页返回 403: %s", final_url)
-                        break
-                except Exception:
-                    pass
-                time.sleep(random.uniform(2.0, 4.0))
-
-            if redirect_content and self._update_domains_from_redirect(redirect_content):
-                continue
-
-            time.sleep(random.uniform(5.0, 10.0))
-            self._rotate_domain()
-
-        return None, final_url
-
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """带多分类板块遍历的 run() 方法"""
         self.is_test = is_test
@@ -1804,4 +1630,3 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             )
 
         return is_existing, data
-

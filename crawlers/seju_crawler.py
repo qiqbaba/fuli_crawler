@@ -131,9 +131,8 @@ class SejuCrawler(PlaywrightBaseCrawler):
 
     # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
-    def process_sub_page_if_needed(self, sub_url, idx):
-        """处理单个子网页，提取信息并保存 PDF (纯 Playwright 实现)"""
-        is_existing = False
+    def _fetch_sub_page(self, sub_url):
+        """获取子页面内容"""
         html_text = None
         current_url = sub_url
         sub_page = None
@@ -163,6 +162,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
             
             current_url = sub_page.url
             html_text = sub_page.content()
+            return html_text, current_url, sub_page
         except Exception as err:
             logger.error("[-] 使用 Playwright 抓取子页面 %s 异常: %s", sub_url, err)
             from config import is_proxy_manager_enabled
@@ -173,6 +173,98 @@ class SejuCrawler(PlaywrightBaseCrawler):
                     if proxy_url:
                         manager.report_failure(proxy_url)
             self._destroy_thread_resources()
+            return None, None, None
+
+    def _parse_sub_page(self, html_text, current_url):
+        """解析子页面元数据"""
+        parsed_url = urlparse(current_url)
+        is_external = self.target_domain not in parsed_url.netloc
+
+        if is_external:
+            logger.info("检测到跳转至外部网站: %s", current_url)
+            soup = BeautifulSoup(html_text, 'html.parser')
+            title = soup.title.string.strip() if soup.title else "外部链接"
+            pub_time = ""
+            category = "外部跳转"
+            res_link = current_url
+            link_type = "外链"
+        else:
+            soup = BeautifulSoup(html_text, 'html.parser')
+            title_node = soup.select_one('h1.article-title a') or soup.select_one('h1.article-title')
+            title = title_node.get_text().strip() if title_node else "无标题"
+
+            time_node = soup.select_one('header.article-header div.meta time')
+            pub_time_raw = time_node.get_text().strip() if time_node else ""
+            if not pub_time_raw and time_node and time_node.get('datetime'):
+                pub_time_raw = time_node.get('datetime').strip()
+            
+            pub_time_cleaned = pub_time_raw.replace('С', '小').replace('ʱ', '时').replace('ǰ', '前')
+            _, pub_time = parse_date(pub_time_cleaned)
+
+            category = "Video"
+            meta_spans = soup.select('header.article-header div.meta span')
+            if meta_spans:
+                for span in meta_spans:
+                    text = span.get_text().strip()
+                    if text and not text.isdigit() and "小时" not in text and "天" not in text and "Сʱ" not in text:
+                        category = text
+                        break
+
+            content_div = soup.select_one('article.article-content')
+            p_texts = []
+            if content_div:
+                for p in content_div.find_all('p'):
+                    p_t = p.get_text().strip()
+                    if p_t:
+                        p_texts.append(p_t)
+            
+            cleaned_p_texts = [t for t in p_texts if t]
+            if len(cleaned_p_texts) > 1:
+                resource_patterns = [
+                    r'^magnet:\?',
+                    r'^ed2k://',
+                    r'^thunder://',
+                    r'^https?://',
+                    r'提取码',
+                    r'解压密码',
+                    r'天翼'
+                ]
+                last_line = cleaned_p_texts[-1].lower()
+                is_res = any(re.search(pat, last_line) for pat in resource_patterns)
+                if not is_res:
+                    cleaned_p_texts = cleaned_p_texts[:-1]
+
+            res_link = "\n".join(cleaned_p_texts)
+            link_type = ""
+
+        data = self.clean_common_metadata(
+            title=title,
+            date_str=pub_time,
+            resource_link=res_link,
+            category=category,
+            url=current_url,
+            pdf_path=''
+        )
+        data['link_type'] = link_type
+        data['is_external'] = is_external
+        data['pub_time'] = pub_time
+        
+        return data
+
+    def _generate_pdf_for_sub_page(self, current_url, pub_time, title):
+        """为子页面生成 PDF"""
+        if getattr(self, 'no_pdf', False):
+            logger.info("-> 启用了 no_pdf 模式，跳过 PDF 渲染和保存")
+            return ""
+        
+        pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"
+        saved_path = self.retry_generate_pdf(current_url, pdf_date, title, max_retries=3)
+        return saved_path
+
+    def process_sub_page_if_needed(self, sub_url, idx):
+        """处理单个子网页，提取信息并保存 PDF (纯 Playwright 实现)"""
+        is_existing = False
+        html_text, current_url, sub_page = self._fetch_sub_page(sub_url)
 
         if not html_text:
             if sub_page:
@@ -197,83 +289,13 @@ class SejuCrawler(PlaywrightBaseCrawler):
                 return True, None
 
         try:
-            if is_external:
-                logger.info("检测到跳转至外部网站: %s", current_url)
-                soup = BeautifulSoup(html_text, 'html.parser')
-                title = soup.title.string.strip() if soup.title else "外部链接"
-                pub_time = ""
-                category = "外部跳转"
-                res_link = current_url
-                link_type = "外链"
-            else:
-                soup = BeautifulSoup(html_text, 'html.parser')
-                title_node = soup.select_one('h1.article-title a') or soup.select_one('h1.article-title')
-                title = title_node.get_text().strip() if title_node else "无标题"
-
-                time_node = soup.select_one('header.article-header div.meta time')
-                pub_time_raw = time_node.get_text().strip() if time_node else ""
-                if not pub_time_raw and time_node and time_node.get('datetime'):
-                    pub_time_raw = time_node.get('datetime').strip()
-                
-                pub_time_cleaned = pub_time_raw.replace('С', '小').replace('ʱ', '时').replace('ǰ', '前')
-                _, pub_time = parse_date(pub_time_cleaned)
-
-                category = "Video"
-                meta_spans = soup.select('header.article-header div.meta span')
-                if meta_spans:
-                    for span in meta_spans:
-                        text = span.get_text().strip()
-                        if text and not text.isdigit() and "小时" not in text and "天" not in text and "Сʱ" not in text:
-                            category = text
-                            break
-
-                content_div = soup.select_one('article.article-content')
-                p_texts = []
-                if content_div:
-                    for p in content_div.find_all('p'):
-                        p_t = p.get_text().strip()
-                        if p_t:
-                            p_texts.append(p_t)
-                
-                cleaned_p_texts = [t for t in p_texts if t]
-                if len(cleaned_p_texts) > 1:
-                    resource_patterns = [
-                        r'^magnet:\?',
-                        r'^ed2k://',
-                        r'^thunder://',
-                        r'^https?://',
-                        r'提取码',
-                        r'解压密码',
-                        r'天翼'
-                    ]
-                    last_line = cleaned_p_texts[-1].lower()
-                    is_res = any(re.search(pat, last_line) for pat in resource_patterns)
-                    if not is_res:
-                        cleaned_p_texts = cleaned_p_texts[:-1]
-
-                res_link = "\n".join(cleaned_p_texts)
-                link_type = ""
-
-            logger.info("[%s] 页面抓取成功: %s | 分类: %s", idx, title, category)
-
-            data = self.clean_common_metadata(
-                title=title,
-                date_str=pub_time,
-                resource_link=res_link,
-                category=category,
-                url=current_url,
-                pdf_path=''
-            )
-            data['link_type'] = link_type
+            data = self._parse_sub_page(html_text, current_url)
+            logger.info("[%s] 页面抓取成功: %s | 分类: %s", idx, data['title'], data['category'])
 
             # 针对内部网页，使用当前的 Playwright 页面生成 PDF
-            if not is_external:
-                if getattr(self, 'no_pdf', False):
-                    logger.info("-> 启用了 no_pdf 模式，跳过 PDF 渲染和保存")
-                else:
-                    pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"
-                    saved_path = self.retry_generate_pdf(current_url, pdf_date, title, max_retries=3)
-                    data['pdf_path'] = saved_path
+            if not data['is_external']:
+                saved_path = self._generate_pdf_for_sub_page(current_url, data['pub_time'], data['title'])
+                data['pdf_path'] = saved_path
             else:
                 logger.info("-> 外部网站，已跳过 PDF 保存")
 

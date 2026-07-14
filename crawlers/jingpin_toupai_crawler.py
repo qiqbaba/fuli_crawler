@@ -4,6 +4,7 @@ import base64
 import random
 import time
 import threading
+import json
 from curl_cffi import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -29,6 +30,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         self.base_list_url = f"{self.base_domain}/list/{{}}-{{}}.html"
         self.current_class = "2935277"
         self.max_consecutive_existing = 15  # 连续抓到历史数据时早停
+        self.category_map = {}  # 初始化分类映射
         
         # 域名冷却机制
         self._domain_cooldown = {}
@@ -244,7 +246,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                             try:
                                 self._destroy_thread_resources()
                             except Exception as rec_err:
-                            logger.warning("[!] 重构 Playwright 资源失败: %s", rec_err)
+                                logger.warning("[!] 重构 Playwright 资源失败: %s", rec_err)
                             time.sleep(random.uniform(1.5, 3.0))
 
             # 数据清洗入库
@@ -268,117 +270,26 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             logger.error("[-] 解析详情页 JSON 密文发生错误: %s", e)
             return False, None
 
+    def get_categories(self):
+        """返回要爬取的分类列表"""
+        return ["2935277", "2965277", "2975277"]
+
+    def before_category_crawl(self, category):
+        """爬取分类前的准备工作"""
+        self.current_class = category
+        self.category_map = {
+            "2935277": "国产", 
+            "2965277": "欧美", 
+            "2975277": "国产"
+        }
+
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
-        """爬虫流程入口，对多个精品自拍板块依次爬取并支持断点续爬"""
-        self.is_test = is_test
-        self.quiet = kwargs.get('quiet', False)
-        resume = kwargs.get('resume', False)
-        self.resume = resume
-        self.no_pdf = kwargs.get('no_pdf', False)
-        
-        # 爬取的三个分类/板块板块
-        classes = ["2935277", "2965277", "2975277"]
-        self.category_map = {"2935277": "国产", "2965277": "欧美", "2975277": "国产"}
-
-        logger.info("[*] 启动 %s 爬虫流程...", self.source_name)
-        self.on_start()
-
-        no_early_stop = kwargs.get('no_early_stop', False)
-        if no_early_stop:
-            logger.info("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
-            self.max_consecutive_existing = None
-            self.max_consecutive_duplicate_pages = None
-        elif not resume:
-            # 非断点续爬模式时，禁用早停（避免数据库已有历史数据时误触发提前退出）
-            self.max_consecutive_existing = None
-            self.max_consecutive_duplicate_pages = None
-
+        """爬虫流程入口，使用基类的多板块爬取逻辑"""
         if max_workers is None:
             if getattr(self, 'no_pdf', False):
                 max_workers = 30
             else:
                 max_workers = 5  # 合理线程数，Playwright 不易卡死
-
-        resume_class = None
-        resume_page = start_page
-
-        if resume:
-            all_states = self.db_manager.load_crawl_state(self.source_name)
-            if all_states:
-                if "__all__" in all_states and all_states["__all__"].get("completed", False):
-                    logger.info("[*] 检测到 %s 已完成全部爬取，跳过所有板块", self.source_name)
-                    self.db_manager.clear_crawl_state(self.source_name)
-                    logger.info("[+] 已清除完成标记，下次运行将重新爬取")
-                    try:
-                        if is_test:
-                            self._run_test_mode(start_page)
-                        return
-                    finally:
-                        self.on_finish()
-                    return
-                
-                for cls in classes:
-                    state = all_states.get(cls)
-                    if state:
-                        saved_page = state["page_num"]
-                        if saved_page <= end_page:
-                            resume_class = cls
-                            resume_page = saved_page
-                            logger.info("[*] 检测到板块 %s 爬取断点，从第 %s 页继续", cls, resume_page)
-                            break
-                        logger.info("[断点续爬] 板块 %s 已完成，跳过", cls)
-                    else:
-                        resume_class = cls
-                        resume_page = start_page
-                        logger.info("[*] 板块 %s 无历史记录，从头开始爬取", cls)
-                        break
-                else:
-                    logger.info("[*] 所有板块已完成，无需爬取")
-                    try:
-                        if is_test:
-                            self._run_test_mode(start_page)
-                        return
-                    finally:
-                        self.on_finish()
-                    return
-            else:
-                logger.info("[*] 未检测到历史断点，从头开始爬取")
-
-        try:
-            if is_test:
-                # 在测试模式下，强制对第一个分类的第一页运行测试即可
-                self.current_class = classes[0]
-                self._run_test_mode(start_page)
-                return
-
-            for cls in classes:
-                if resume and resume_class is not None:
-                    cls_index = classes.index(cls)
-                    resume_index = classes.index(resume_class)
-                    if cls_index < resume_index:
-                        logger.info("\n[断点续爬] 板块 %s 已完成，跳过", cls)
-                        continue
-                    if cls == resume_class:
-                        actual_start = resume_page
-                    else:
-                        actual_start = start_page
-                else:
-                    actual_start = start_page
-
-                self.current_class = cls
-                logger.info("\n[*] ================= 开始爬取自拍板块: %s (起始页码: %s) =================", cls, actual_start)
-                self._crawl_pages(actual_start, end_page, max_workers, class_name=cls)
-                
-                if resume and cls == resume_class:
-                    resume_class = None
-            
-            if not is_test and resume:
-                self.db_manager.mark_source_completed(self.source_name)
-                logger.info("[+] %s 所有板块爬取完成，已标记完成状态", self.source_name)
-
-        except KeyboardInterrupt:
-            logger.warning("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
-        except Exception as e:
-            logger.error("\n[致命错误] 运行中发生未捕获的异常: %s", e)
-        finally:
-            self.on_finish()
+        
+        super().run(is_test=is_test, start_page=start_page, end_page=end_page, 
+                   max_workers=max_workers, **kwargs)

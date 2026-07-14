@@ -129,7 +129,3 @@ class MadouCrawler(DecryptSiteBaseCrawler):
         return {"guochan": "国产", "oumei": "欧美"}
 
     # process_sub_page_if_needed 继承自 DecryptSiteBaseCrawler
-
-    def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
-        """麻豆爬虫入口，对两个板块依次进行爬取，支持断点续爬"""
-        return super().run(is_test=is_test, start_page=start_page, end_page=end_page, max_workers=max_workers, **kwargs)
