@@ -6,7 +6,7 @@ import random
 import asyncio
 import aiohttp
 import time
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 from aiohttp_socks import ProxyConnector
 from utils.logger import get_logger
 
@@ -51,7 +51,8 @@ class ProxyVerifier:
         max_workers: Optional[int] = None,
         target_count: int = 300,
         test_url: Optional[str] = None,
-        expected_content: Optional[str] = None
+        expected_content: Optional[str] = None,
+        on_proxy_valid: Optional[Callable] = None
     ) -> List[Dict[str, str]]:
         """
         异步验证代理IP是否可用
@@ -164,6 +165,11 @@ class ProxyVerifier:
                                                 proxy["success_count"] = proxy.get("success_count", 0) + 1
                                                 proxy["score"] = proxy["success_count"] - 3 * proxy.get("fail_count", 0)
                                                 working.append(proxy)
+                                                if on_proxy_valid:
+                                                    try:
+                                                        on_proxy_valid(proxy)
+                                                    except Exception as e:
+                                                        logger.warning("on_proxy_valid 回调发生异常: %s", e)
                                                 if len(working) >= target_count:
                                                     stop_event.set()
                                         else:
@@ -187,7 +193,7 @@ class ProxyVerifier:
                         if not stop_event.is_set():
                             verified_count[0] += 1
                             curr_count = verified_count[0]
-                            if curr_count % 1000 == 0 or curr_count == total:
+                            if curr_count % 10000 == 0 or curr_count == total:
                                 elapsed = time.time() - start_time
                                 current_working_count = len(working)
                                 logger.info("  进度: %s/%s（已找到 %s 个可用，耗时 %.1fs）", curr_count, total, current_working_count, elapsed)

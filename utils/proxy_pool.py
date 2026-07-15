@@ -42,6 +42,7 @@ class ProxyPool:
         self._current_proxy_idx = 0
         self._thread_proxy_map: Dict[int, str] = {}  # thread_id -> proxy_url
         self._is_replenishing = False
+        self._is_verifying = False
 
         # 延迟写入缓存相关（优化：避免高频写入 SQLite）
         self._pending_save = False
@@ -379,6 +380,7 @@ class ProxyPool:
         force: bool = False,
         max_workers: Optional[int] = None,
         target_count: int = 300,
+        start_threshold: Optional[int] = None,
         test_url: Optional[str] = None,
         expected_content: Optional[str] = None
     ) -> int:
@@ -389,6 +391,7 @@ class ProxyPool:
             force: 是否强制校验
             max_workers: 最大并发校验协程数
             target_count: 目标数量
+            start_threshold: 可用代理达到此数量时，主线程提前返回（启动爬虫）。若为 None，则等同于 target_count（即同步阻塞直到完成）
             test_url: 测试网页 URL
             expected_content: 期望包含的网页文本
             
@@ -408,27 +411,100 @@ class ProxyPool:
             logger.warning("没有可验证的代理")
             return 0
 
-        # 调用 verifier 执行高并发检验
-        working = self.verifier.verify_proxies(
-            proxies=self._proxies,
-            force=force,
-            max_workers=max_workers,
-            target_count=target_count,
-            test_url=test_url,
-            expected_content=expected_content
-        )
+        # 如果未指定启动阈值，或者启动阈值大于目标数，则将其设为 target_count，表现为完全同步阻塞
+        actual_start_threshold = start_threshold if start_threshold is not None else target_count
+        if actual_start_threshold > target_count:
+            actual_start_threshold = target_count
 
-        with self._lock:
-            now_ts = time.time()
-            for p in working:
-                p["last_verified"] = now_ts
-            self._working_proxies = working
-            self._last_verify_time = now_ts
+        # 判断是否进行异步后台校验
+        # 只有在 actual_start_threshold < target_count 时才使用后台异步校验，否则直接用原同步逻辑以确保安全性
+        if actual_start_threshold < target_count:
+            with self._lock:
+                # 检查是否已经在校验中
+                if self._is_verifying:
+                    logger.info("已有代理校验线程在运行中，主线程进入等待...")
+                else:
+                    self._working_proxies = []
+                    self._last_verify_time = time.time()
+                    self._is_verifying = True
 
-        # 将验证成功后的 working_proxies 保存到磁盘缓存
-        self._save_cache()
+                    def bg_verify():
+                        try:
+                            def on_proxy_valid(proxy):
+                                with self._lock:
+                                    now_ts = time.time()
+                                    proxy["last_verified"] = now_ts
+                                    proxy_url = f"{proxy['protocol']}://{proxy['address']}"
+                                    existing_urls = {f"{p['protocol']}://{p['address']}" for p in self._working_proxies}
+                                    if proxy_url not in existing_urls:
+                                        self._working_proxies.append(proxy)
+                            
+                            logger.info("[*] 启动后台代理验证线程，目标数量: %s 个", target_count)
+                            working = self.verifier.verify_proxies(
+                                proxies=self._proxies,
+                                force=force,
+                                max_workers=max_workers,
+                                target_count=target_count,
+                                test_url=test_url,
+                                expected_content=expected_content,
+                                on_proxy_valid=on_proxy_valid
+                            )
+                            self._save_cache()
+                            logger.info("[+] 后台代理验证完成，当前可用代理: %s 个", len(self._working_proxies))
+                        except Exception as ex:
+                            logger.error("后台代理验证遇到错误: %s", ex)
+                        finally:
+                            with self._lock:
+                                self._is_verifying = False
 
-        return len(working)
+                    t = threading.Thread(target=bg_verify, name="ProxyVerifier-BgThread", daemon=True)
+                    t.start()
+
+            # 主线程循环等待直到可用代理达到 actual_start_threshold，或后台线程结束
+            start_wait = time.time()
+            max_wait_seconds = 120.0  # 最多等待 2 分钟以防止代理源极其糟糕或失效
+            while True:
+                with self._lock:
+                    current_count = len(self._working_proxies)
+                    verifying = self._is_verifying
+                
+                if current_count >= actual_start_threshold:
+                    logger.info("[*] 可用代理数已达到启动阈值 (%s/%s 个)，允许爬虫提前启动！", current_count, actual_start_threshold)
+                    break
+                if not verifying:
+                    logger.info("[*] 代理验证后台线程已结束，停止等待。可用代理: %s 个", current_count)
+                    break
+                if time.time() - start_wait > max_wait_seconds:
+                    logger.warning("[!] 等待可用代理超时（当前 %s 个），强制启动爬虫！", current_count)
+                    break
+                time.sleep(0.5)
+
+            with self._lock:
+                return len(self._working_proxies)
+        else:
+            # 兼容原有的同步阻塞验证逻辑
+            with self._lock:
+                self._is_verifying = True
+            try:
+                working = self.verifier.verify_proxies(
+                    proxies=self._proxies,
+                    force=force,
+                    max_workers=max_workers,
+                    target_count=target_count,
+                    test_url=test_url,
+                    expected_content=expected_content
+                )
+                with self._lock:
+                    now_ts = time.time()
+                    for p in working:
+                        p["last_verified"] = now_ts
+                    self._working_proxies = working
+                    self._last_verify_time = now_ts
+                self._save_cache()
+                return len(working)
+            finally:
+                with self._lock:
+                    self._is_verifying = False
 
     def report_failure(self, proxy_url: str):
         """

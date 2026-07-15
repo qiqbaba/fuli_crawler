@@ -39,7 +39,13 @@ class U3c3Crawler(BaseCrawler):
             manager = get_proxy_manager()
             if manager:
                 manager.fetch_proxies(force=False)
-                manager.verify_proxies(force=False, max_workers=get_proxy_verify_workers(), test_url="https://u3c3.com/")
+                manager.verify_proxies(
+                    force=False, 
+                    max_workers=get_proxy_verify_workers(), 
+                    target_count=300,
+                    start_threshold=100,
+                    test_url="https://u3c3.com/"
+                )
                 stats = manager.get_stats()
                 logger.info("[*] 代理管理器就绪: 总计 %s 个，可用 %s 个", stats['total'], stats['working'])
 

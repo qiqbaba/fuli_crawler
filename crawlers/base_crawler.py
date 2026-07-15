@@ -766,6 +766,8 @@ class PlaywrightBaseCrawler(BaseCrawler):
                     manager.verify_proxies(
                         force=False, 
                         max_workers=get_proxy_verify_workers(), 
+                        target_count=300,
+                        start_threshold=100,
                         test_url=test_url, 
                         expected_content=expected_content
                     )
