@@ -85,8 +85,8 @@ jobs:
       - name: 恢复/缓存代理 IP 列表
         uses: actions/cache@v4
         with:
-          path: temp_profiles/
-          key: ${{ runner.os }}-proxy-cache-v1
+          path: temp_profiles/proxy_cache.db
+          key: ${{ runner.os }}-proxy-cache-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ runner.os }}-proxy-cache-
 
