@@ -201,7 +201,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
         if is_external:
             logger.info("检测到跳转至外部网站: %s", current_url)
             soup = BeautifulSoup(html_text, 'html.parser')
-            title = soup.title.string.strip() if soup.title else "外部链接"
+            title = soup.title.string.strip() if soup.title and soup.title.string else "外部链接"
             pub_time = ""
             category = "外部跳转"
             res_link = current_url

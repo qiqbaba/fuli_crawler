@@ -74,12 +74,28 @@ def query_supabase():
         logger.error("[-] 查询记录数失败: %s", e)
         return
 
-    # 2. 按 source 分组统计（服务端聚合，避免全量传输）
+    # 2. 按 source 分组统计（获取所有 source 后在客户端计数）
     logger.info("[*] 正在按来源分组统计...")
     try:
-        # 使用 PostgREST 的 count() 聚合函数进行服务端分组
-        resp = client.table("resources").select("source, count()").not_.is_("source", "null").execute()
-        sources = {row["source"]: row["count"] for row in resp.data}
+        # PostgREST 不支持在 select 中使用 count() 聚合函数，
+        # 改为获取所有 source 后在 Python 中计数
+        from collections import Counter
+
+        page_size = 1000
+        all_sources = []
+        offset = 0
+
+        while True:
+            resp = client.table("resources").select("source").not_.is_("source", "null").range(offset, offset + page_size - 1).execute()
+            batch = resp.data
+            if not batch:
+                break
+            all_sources.extend([row["source"] for row in batch if row.get("source")])
+            if len(batch) < page_size:
+                break
+            offset += page_size
+
+        sources = dict(Counter(all_sources))
 
         logger.info("  按来源分布:")
         for src, cnt in sorted(sources.items(), key=lambda x: -x[1]):

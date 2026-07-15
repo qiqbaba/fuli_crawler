@@ -116,19 +116,22 @@ class ProxyFetcher:
                 for task, name in zip(task_list, self.sources.keys())
             }
 
-            for done_task in asyncio.as_completed(task_source_map):
-                source_name = task_source_map[done_task]
-                try:
-                    proxies = await done_task
-                    for proxy in proxies:
-                        key = f"{proxy['protocol']}://{proxy['address']}"
-                        if key not in all_proxies:
-                            all_proxies[key] = proxy
-                    logger.info("  %s: 获取到 %s 个代理", source_name, len(proxies))
-                except asyncio.CancelledError:
-                    logger.warning("  %s: 请求被取消", source_name)
-                except Exception as e:
-                    logger.warning("  %s: 获取失败 - %s", source_name, e)
+            pending = set(task_list)
+            while pending:
+                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for done_task in done:
+                    source_name = task_source_map[done_task]
+                    try:
+                        proxies = done_task.result()
+                        for proxy in proxies:
+                            key = f"{proxy['protocol']}://{proxy['address']}"
+                            if key not in all_proxies:
+                                all_proxies[key] = proxy
+                        logger.info("  %s: 获取到 %s 个代理", source_name, len(proxies))
+                    except asyncio.CancelledError:
+                        logger.warning("  %s: 请求被取消", source_name)
+                    except Exception as e:
+                        logger.warning("  %s: 获取失败 - %s", source_name, e)
 
         logger.info("共获取到 %s 个唯一代理", len(all_proxies))
         return list(all_proxies.values())

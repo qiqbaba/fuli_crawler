@@ -93,7 +93,7 @@ class BrowserFactory:
                         timezone_id=timezone_id
                     )
                     browser = context.browser
-                    logger.info("[+] 线程 %s 成功启动真实 Chrome 持久化上下文", threading.get_ident())
+                    logger.debug("[+] 线程 %s 成功启动真实 Chrome 持久化上下文", threading.get_ident())
                 except Exception as e:
                     logger.info("[*] 启动真实 Chrome 失败，回退到内置 Chromium: %s", e)
                     context = p.chromium.launch_persistent_context(
@@ -124,7 +124,7 @@ class BrowserFactory:
             # 注入 stealth 伪装
             if enable_stealth:
                 apply_stealth(context, browser_type=browser_type)
-                logger.info("[+] 已注入 stealth 伪装脚本")
+                logger.debug("[+] 已注入 stealth 伪装脚本")
                 
             # 保存线程本地资源
             self._thread_local.playwright = p
