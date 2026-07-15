@@ -123,12 +123,12 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         article = soup.find('article')
         article_text = article.text if article else ""
         
-        size = "None"
+        size = ""
         size_match = re.search(r'【影片大小】\s*[:：]\s*([a-zA-Z0-9\.\s]+)', article_text)
         if size_match:
             size = size_match.group(1).strip()
             
-        fmt = "None"
+        fmt = ""
         fmt_match = re.search(r'【影片格式】\s*[:：]\s*([a-zA-Z0-9]+)', article_text)
         if fmt_match:
             fmt = fmt_match.group(1).strip()
@@ -179,7 +179,8 @@ class GcbtCrawler(PlaywrightBaseCrawler):
             else:
                 resource_link = download_links[0]
         else:
-            resource_link = "None"
+            resource_link = ""
+            logger.warning("[%s] 未找到下载链接，resource_link 置空", idx)
             
         logger.info("[%s] 抓取成功: %s | 发布时间: %s | 大小: %s | 链接: %s...", idx, title, pub_time, size, resource_link[:60])
         

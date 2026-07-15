@@ -200,15 +200,15 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             pub_time = "Unknown_Date" # 原始数据未直接暴露发布时间，留空
             
             # 该网站的 "tm" 字段就是其解密出来的磁力链接
-            resource_link = data.get('tm', 'None').strip()
-            size = data.get('ts', 'None').strip()
-            res_format = data.get('tr', 'None').strip()
+            resource_link = data.get('tm', '').strip()
+            size = data.get('ts', '').strip()
+            res_format = data.get('tr', '').strip()
             category = self.category_map.get(self.current_class, '自拍')
 
             logger.info("[%s] 解析详情页成功: %s | 大小: %s | 链接: %s...", idx, title, size, resource_link[:50])
 
             # === 提前去重：在 PDF 生成前检查磁力链接是否已存在 ===
-            if self.check_resource_link and resource_link and resource_link != 'None':
+            if self.check_resource_link and resource_link:
                 existing_links = self.db_manager.filter_existing_resource_links([resource_link])
                 if resource_link in existing_links:
                     logger.info("[%s] 磁力链接已存在，跳过 PDF 生成: %s...", idx, resource_link[:60])
