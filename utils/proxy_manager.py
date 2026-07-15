@@ -3,7 +3,6 @@
 向后兼容原 ProxyManager 的各种全局方法和常量
 """
 from typing import Optional, Dict
-from config import is_local_mode, is_proxy_manager_enabled, PROXY_CACHE_TTL
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -20,6 +19,7 @@ _proxy_manager: Optional[ProxyPool] = None
 def get_proxy_manager() -> Optional[ProxyPool]:
     """获取全局代理管理器实例"""
     global _proxy_manager
+    from config import is_local_mode, is_proxy_manager_enabled, PROXY_CACHE_TTL
     local_on = is_local_mode()
     mgr_on = is_proxy_manager_enabled()
     if _proxy_manager is None:

@@ -9,7 +9,6 @@ import time
 import threading
 from typing import List, Dict, Optional
 from aiohttp_socks import ProxyConnector
-from config import PROXY_VERIFY_TIMEOUT, PROXY_VERIFY_SSL, get_proxy_verify_workers
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -73,9 +72,11 @@ class ProxyVerifier:
             return []
 
         if max_workers is None:
+            from config import get_proxy_verify_workers
             max_workers = get_proxy_verify_workers()
 
         # 验证超时取配置值，但不超过 5 秒以加速验证
+        from config import PROXY_VERIFY_TIMEOUT, PROXY_VERIFY_SSL
         verify_timeout = min(PROXY_VERIFY_TIMEOUT, 5)
 
         current_test_url = test_url or self.test_url
