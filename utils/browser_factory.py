@@ -139,7 +139,7 @@ class BrowserFactory:
                     timezone_id=timezone_id,
                     user_agent=ua
                 )
-                logger.info("[+] 线程 %s 成功启动临时浏览器上下文", threading.get_ident())
+                logger.debug("[+] 线程 %s 成功启动临时浏览器上下文", threading.get_ident())
                 
             # 注入 stealth 伪装
             if enable_stealth:
