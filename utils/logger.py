@@ -9,6 +9,11 @@
     logger.info("消息")    # 替代 print("[+] ...") 或 print("[*] ...")
     logger.warning("消息") # 替代 print("[!] ...")
     logger.error("消息")   # 替代 print("[-] ...")
+
+    带 source_name 的爬虫实例日志:
+    from utils.logger import get_source_logger
+    log = get_source_logger(__name__, "madou")
+    log.info("消息")       # 输出: [INFO] [madou] 消息
 """
 
 import logging
@@ -91,3 +96,38 @@ def get_logger(name: str) -> logging.Logger:
 
     # 返回子 logger: fuli_crawler.<name>
     return logging.getLogger(f"{_ROOT_LOGGER_NAME}.{name}")
+
+
+class SourceLoggerAdapter(logging.LoggerAdapter):
+    """
+    为日志消息添加 [source_name] 前缀的适配器，用于区分不同爬虫实例的日志输出。
+
+    用法:
+        from utils.logger import SourceLoggerAdapter, get_logger
+        logger = get_logger(__name__)
+        log = SourceLoggerAdapter(logger, {"source_name": "madou"})
+        log.info("消息")  # 输出: [INFO] crawlers.base_crawler [madou]: 消息
+    """
+
+    def process(self, msg, kwargs):
+        source_name = self.extra.get("source_name", "")
+        return f"[{source_name}] {msg}", kwargs
+
+
+def get_source_logger(name: str, source_name: str) -> SourceLoggerAdapter:
+    """
+    获取带 source_name 标识的日志适配器，用于爬虫实例区分日志来源。
+
+    用法:
+        log = get_source_logger(__name__, "madou")
+        log.info("消息")  # 输出: [INFO] crawlers.base_crawler [madou]: 消息
+
+    Args:
+        name: logger 名称，通常传入 __name__
+        source_name: 爬虫标识名称，如 "madou"、"datang" 等
+
+    Returns:
+        SourceLoggerAdapter 实例
+    """
+    logger = get_logger(name)
+    return SourceLoggerAdapter(logger, {"source_name": source_name})
