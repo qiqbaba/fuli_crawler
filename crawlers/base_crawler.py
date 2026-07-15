@@ -62,6 +62,7 @@ class BaseCrawler:
         self.skip_japanese = True  # 是否跳过日语标题
         self.is_test = False
         self.quiet = False  # 静音模式，在 run() 中可被覆盖
+        self.no_pdf = False  # 无 PDF 模式，在 run() 中可被覆盖
 
     def _build_headers(self, referer=None):
         """构造完整的浏览器请求头，模拟真实浏览器行为"""
@@ -366,7 +367,6 @@ class BaseCrawler:
                         results_dict[idx] = data
 
                 logger.info("正在关闭线程池并自动清理资源...")
-                executor.shutdown(wait=True)
         finally:
             try:
                 from utils.browser_factory import browser_factory
@@ -1118,7 +1118,7 @@ class DomainRotationMixin:
         headers = self._build_headers(referer=self.main_domain)
         
         # 1. 优先获取代理
-        from config import get_effective_proxy
+        from config import get_effective_proxy, is_proxy_manager_enabled
         proxies = get_effective_proxy()
             
         html = None
@@ -1327,7 +1327,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             for attempt in range(3):
                 proxies = None
                 if attempt < 2:
-                    from config import get_effective_proxy
+                    from config import get_effective_proxy, is_proxy_manager_enabled
                     proxies = get_effective_proxy()
 
                 try:
@@ -1450,7 +1450,6 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         return
                     finally:
                         self.on_finish()
-                    return
 
                 for cls in classes:
                     state = all_states.get(cls)
@@ -1475,7 +1474,6 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         return
                     finally:
                         self.on_finish()
-                    return
             else:
                 logger.info("[*] 未检测到历史断点，从头开始爬取")
 

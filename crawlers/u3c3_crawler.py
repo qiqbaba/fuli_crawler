@@ -3,7 +3,7 @@ import random
 from curl_cffi import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
-from config import USER_AGENTS
+from config import USER_AGENTS, is_proxy_manager_enabled
 from crawlers.base_crawler import BaseCrawler
 from utils.proxy_manager import get_proxy_manager
 from utils.logger import get_logger
@@ -33,7 +33,6 @@ class U3c3Crawler(BaseCrawler):
 
     def on_start(self):
         """初始化代理管理器"""
-        from config import is_proxy_manager_enabled
         if is_proxy_manager_enabled():
             logger.info("[*] 代理管理器已启用，正在获取和验证代理IP...")
             from config import get_proxy_verify_workers

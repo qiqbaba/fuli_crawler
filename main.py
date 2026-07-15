@@ -60,7 +60,7 @@ def main():
         "--crawler", "-c",
         required=False,
         choices=["seju", "u3c3", "datang", "gcbt", "madou", "jingpin_toupai"],
-        help="指定运行哪一个网站的爬虫 (seju, u3c3, datang 或 gcbt)"
+        help="指定运行哪一个网站的爬虫 (seju, u3c3, datang, gcbt, madou, jingpin_toupai)"
     )
     
     # 互斥参数：测试模式或正式爬取模式
