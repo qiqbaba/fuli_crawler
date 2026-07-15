@@ -3,6 +3,7 @@ import time
 import hashlib
 import boto3
 from botocore.exceptions import ClientError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -233,25 +234,28 @@ class DynamoDBDeduplicationService:
 
         if self.use_gsi:
             try:
-                # 使用 IN 操作符批量查询，每批最多 100 个值（DynamoDB 限制）
-                for i in range(0, len(links_to_query), 100):
-                    chunk = links_to_query[i:i+100]
-                    # 构建 IN 表达式: resource_link IN (:v0, :v1, ...)
-                    placeholders = [f":v{j}" for j in range(len(chunk))]
-                    in_expr = "resource_link IN (" + ", ".join(placeholders) + ")"
-                    attr_values = {f":v{j}": {"S": link} for j, link in enumerate(chunk)}
-
+                # DynamoDB Query 的 KeyConditionExpression 不支持 IN 操作符
+                # 改为逐个查询，使用线程池并发执行以提升性能
+                def _query_single_link(link):
+                    """查询单个 resource_link 是否存在"""
                     response = self.client.query(
                         TableName=self.table_name,
                         IndexName="resource_link-index",
-                        KeyConditionExpression=in_expr,
-                        ExpressionAttributeValues=attr_values,
+                        KeyConditionExpression="resource_link = :v",
+                        ExpressionAttributeValues={":v": {"S": link}},
                         ProjectionExpression="resource_link"
                     )
-                    for item in response.get("Items", []):
-                        link_val = item.get("resource_link", {}).get("S")
-                        if link_val:
-                            existing.add(link_val)
+                    return link if response.get("Count", 0) > 0 else None
+
+                # 使用线程池并发查询，每批最多 100 个并发任务
+                max_workers = min(100, len(links_to_query))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(_query_single_link, link): link
+                               for link in links_to_query}
+                    for future in as_completed(futures):
+                        result = future.result()
+                        if result:
+                            existing.add(result)
                 return existing
             except ClientError as e:
                 error_code = e.response.get("Error", {}).get("Code")
