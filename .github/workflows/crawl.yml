@@ -169,22 +169,22 @@ jobs:
           else
             echo "定时触发，执行默认日常爬取..."
             echo "=== 开始爬取 seju ==="
-            python main.py --crawler seju --crawl
+            python main.py --crawler seju --crawl -q
             echo "=== seju 完成 ==="
             echo "=== 开始爬取 u3c3 ==="
-            python main.py --crawler u3c3 --crawl
+            python main.py --crawler u3c3 --crawl -q
             echo "=== u3c3 完成 ==="
             echo "=== 开始爬取 datang ==="
-            python main.py --crawler datang --crawl --resume
+            python main.py --crawler datang --crawl --resume -q
             echo "=== datang 完成 ==="
             echo "=== 开始爬取 gcbt ==="
-            python main.py --crawler gcbt --crawl
+            python main.py --crawler gcbt --crawl -q
             echo "=== gcbt 完成 ==="
             echo "=== 开始爬取 madou ==="
-            python main.py --crawler madou --crawl
+            python main.py --crawler madou --crawl -q
             echo "=== madou 完成 ==="
             echo "=== 开始爬取 jingpin_toupai ==="
-            python main.py --crawler jingpin_toupai --crawl
+            python main.py --crawler jingpin_toupai --crawl -q
             echo "=== jingpin_toupai 完成 ==="
           fi
 
