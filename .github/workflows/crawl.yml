@@ -90,8 +90,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: temp_profiles/proxy_cache.db
-          key: ${{ runner.os }}-proxy-cache-${{ steps.get-date.outputs.date }}
+          key: ${{ runner.os }}-proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            ${{ runner.os }}-proxy-cache-${{ steps.get-date.outputs.date }}-
             ${{ runner.os }}-proxy-cache-
 
       - name: 安装 Python 依赖

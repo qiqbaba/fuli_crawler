@@ -168,7 +168,7 @@ class ProxyPool:
 
             # 只读取已验证可用的代理
             cursor.execute(
-                "SELECT protocol, address, source, success_count, fail_count, score "
+                "SELECT protocol, address, source, success_count, fail_count, score, last_verified "
                 "FROM proxy_cache WHERE last_verified > 0"
             )
             self._proxies = []
@@ -181,6 +181,7 @@ class ProxyPool:
                     "success_count": row["success_count"],
                     "fail_count": row["fail_count"],
                     "score": row["score"],
+                    "last_verified": row["last_verified"],
                 }
                 self._proxies.append(p)
                 self._working_proxies.append(p.copy())
@@ -246,7 +247,18 @@ class ProxyPool:
 
             # 使用 UPSERT 增量更新所有代理，不清除未验证的代理
             for p in self._proxies:
-                last_verified = 1.0 if (p["protocol"], p["address"]) in working_set else 0.0
+                old_last_verified = p.get("last_verified", 0.0)
+                if (p["protocol"], p["address"]) in working_set:
+                    # 如果在本次验证的可用列表中，使用最新的验证时间
+                    last_verified = p.get("last_verified", time.time())
+                else:
+                    # 如果分数极低，或者根本没有过往的有效验证时间，则归零
+                    if p.get("score", 0.0) < -10 or not old_last_verified:
+                        last_verified = 0.0
+                    else:
+                        # 否则，保留原有的有效验证通过时间戳，防止被其他爬虫的特定 test_url 抹杀
+                        last_verified = old_last_verified
+
                 cursor.execute(
                     """INSERT INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified)
                        VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -326,13 +338,14 @@ class ProxyPool:
                 existing_history[key] = {
                     "success_count": p.get("success_count", 0),
                     "fail_count": p.get("fail_count", 0),
-                    "score": p.get("score", 0.0)
+                    "score": p.get("score", 0.0),
+                    "last_verified": p.get("last_verified", 0.0)
                 }
 
         # 调用 fetcher 获取新抓取的代理
         fetched_list = self.fetcher.fetch_all()
         
-        # 2. 对抓取出的代理继承原有历史积分状态
+        # 2. 对抓取出的代理继承原有历史积分状态与验证时间
         all_proxies = {}
         for proxy in fetched_list:
             key = f"{proxy['protocol']}://{proxy['address']}"
@@ -342,10 +355,12 @@ class ProxyPool:
                     proxy["success_count"] = history["success_count"]
                     proxy["fail_count"] = history["fail_count"]
                     proxy["score"] = history["score"]
+                    proxy["last_verified"] = history["last_verified"]
                 else:
                     proxy["success_count"] = 0
                     proxy["fail_count"] = 0
                     proxy["score"] = 0.0
+                    proxy["last_verified"] = 0.0
                 all_proxies[key] = proxy
 
         with self._lock:
@@ -404,8 +419,11 @@ class ProxyPool:
         )
 
         with self._lock:
+            now_ts = time.time()
+            for p in working:
+                p["last_verified"] = now_ts
             self._working_proxies = working
-            self._last_verify_time = time.time()
+            self._last_verify_time = now_ts
 
         # 将验证成功后的 working_proxies 保存到磁盘缓存
         self._save_cache()
