@@ -33,6 +33,10 @@ class BaseDBManager(ABC):
         """提交事务（不同后端实现不同）"""
         self.persistence.commit()
 
+    def rollback(self):
+        """回滚未提交的事务"""
+        self.persistence.rollback()
+
     def close(self):
         """关闭连接，清理去重服务后台线程池"""
         if hasattr(self, 'aws_helper'):

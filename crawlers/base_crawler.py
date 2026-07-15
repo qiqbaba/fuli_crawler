@@ -88,7 +88,6 @@ class BaseCrawler:
 
     def _http_get(self, url, timeout=20, impersonate="chrome120"):
         """通用 HTTP GET 请求，最多重试 3 次，支持代理自动切换和失败上报"""
-        from curl_cffi import requests
         from config import get_effective_proxy, is_proxy_manager_enabled
         from utils.proxy_manager import get_proxy_manager
 
@@ -556,6 +555,12 @@ class BaseCrawler:
                     break
 
                 self._sleep_between_pages(self.no_pdf)
+            except Exception as e:
+                logger.error("页面 %s 处理异常，已回滚未提交事务: %s", page_num, e)
+                try:
+                    self.db_manager.rollback()
+                except Exception as rb_e:
+                    logger.warning("回滚事务时出错: %s", rb_e)
             finally:
                 if is_gha:
                     print("::endgroup::", flush=True)

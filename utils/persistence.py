@@ -125,6 +125,11 @@ class SqlitePersistenceService:
         with self.lock:
             self.conn.commit()
 
+    def rollback(self):
+        """手动回滚未提交的事务"""
+        with self.lock:
+            self.conn.rollback()
+
     def close(self):
         """关闭数据库连接"""
         with self.lock:
@@ -178,6 +183,10 @@ class SupabasePersistenceService:
 
     def commit(self):
         """Supabase 自动提交，此处为空操作"""
+        pass
+
+    def rollback(self):
+        """Supabase 自动提交，无需显式回滚"""
         pass
 
     def close(self):
