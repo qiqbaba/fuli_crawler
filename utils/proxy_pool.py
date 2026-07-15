@@ -3,10 +3,13 @@
 负责管理代理缓存、状态分发、评分机制以及按需补给
 """
 import os
+import sys
 import time
 import random
 import sqlite3
 import threading
+import atexit
+import signal
 from typing import List, Dict, Optional
 
 # 本地导入
@@ -63,6 +66,10 @@ class ProxyPool:
         
         # 加载缓存
         self._load_cache()
+        
+        # 注册退出钩子，确保程序终止前刷新缓存
+        atexit.register(self._save_cache)
+        self._register_signal_handlers()
 
     def _cleanup_bak_files(self):
         """清理 temp_profiles 目录下过期的 .bak 备份文件"""
@@ -145,7 +152,7 @@ class ProxyPool:
             logger.warning("迁移 JSON 缓存失败: %s", e)
 
     def _load_cache(self):
-        """从 SQLite 缓存加载代理列表"""
+        """从 SQLite 缓存加载已验证可用的代理列表"""
         if not os.path.exists(_PROXY_CACHE_DB):
             return
         try:
@@ -159,8 +166,11 @@ class ProxyPool:
             self._last_fetch_time = int(meta.get("last_fetch_time", 0))
             self._last_verify_time = int(meta.get("last_verify_time", 0))
 
-            # 读取代理列表
-            cursor.execute("SELECT protocol, address, source, success_count, fail_count, score, last_verified FROM proxy_cache")
+            # 只读取已验证可用的代理
+            cursor.execute(
+                "SELECT protocol, address, source, success_count, fail_count, score "
+                "FROM proxy_cache WHERE last_verified > 0"
+            )
             self._proxies = []
             self._working_proxies = []
             for row in cursor.fetchall():
@@ -173,16 +183,27 @@ class ProxyPool:
                     "score": row["score"],
                 }
                 self._proxies.append(p)
-                # 如果 last_verified 非零，说明已验证通过，加入 working 列表
-                if row["last_verified"] > 0:
-                    self._working_proxies.append(p.copy())
+                self._working_proxies.append(p.copy())
 
             conn.close()
-            logger.info("从缓存加载了 %s 个代理 (其中已验证可用 %s 个)", len(self._proxies), len(self._working_proxies))
+            logger.info("从缓存加载了 %s 个已验证可用的代理", len(self._working_proxies))
         except Exception as e:
             logger.warning("加载缓存失败: %s", e)
             self._proxies = []
             self._working_proxies = []
+
+    def _register_signal_handlers(self):
+        """注册信号处理器，确保 Ctrl+C / SIGTERM 时保存缓存"""
+        def _handler(signum, frame):
+            logger.info("收到信号 %s，保存代理缓存...", signum)
+            self._save_cache()
+            sys.exit(0)
+        try:
+            signal.signal(signal.SIGINT, _handler)
+            signal.signal(signal.SIGTERM, _handler)
+        except (OSError, ValueError):
+            # Windows 不支持 SIGTERM，或主线程外调用 signal 会报错
+            pass
 
     def _save_cache(self):
         """立即保存代理列表及验证结果到 SQLite 缓存（用于 fetch/verify 等同步点）
@@ -196,13 +217,13 @@ class ProxyPool:
             self._last_save_time = time.time()
 
     def _do_save_cache(self):
-        """实际执行 SQLite 写入 — 使用 UPSERT 增量更新，避免全量重写"""
+        """实际执行 SQLite 写入 — 只保存已验证可用的代理，大幅减少数据库体积"""
         conn = None
         try:
             conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
             cursor = conn.cursor()
 
-            # 使用事务批量 UPSERT
+            # 使用事务批量写入
             cursor.execute("BEGIN TRANSACTION")
 
             # 写入元数据（始终更新）
@@ -215,21 +236,14 @@ class ProxyPool:
                 ("last_verify_time", str(int(self._last_verify_time)))
             )
 
-            # 增量 UPSERT 代理记录
-            for p in self._proxies:
-                last_verified = 1.0 if any(
-                    w["address"] == p["address"] and w["protocol"] == p["protocol"]
-                    for w in self._working_proxies
-                ) else 0.0
+            # 清空旧记录，只保留已验证可用的代理
+            cursor.execute("DELETE FROM proxy_cache")
+
+            # 只保存已验证可用的代理
+            for p in self._working_proxies:
                 cursor.execute(
                     """INSERT INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(protocol, address) DO UPDATE SET
-                           source = EXCLUDED.source,
-                           success_count = EXCLUDED.success_count,
-                           fail_count = EXCLUDED.fail_count,
-                           score = EXCLUDED.score,
-                           last_verified = EXCLUDED.last_verified""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         p["protocol"],
                         p["address"],
@@ -237,7 +251,7 @@ class ProxyPool:
                         p.get("success_count", 0),
                         p.get("fail_count", 0),
                         p.get("score", 0.0),
-                        last_verified
+                        1.0
                     )
                 )
 
