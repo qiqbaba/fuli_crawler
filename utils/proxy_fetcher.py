@@ -103,23 +103,30 @@ class ProxyFetcher:
         logger.info("开始从 %s 个源异步并发获取代理IP...", len(self.sources))
         all_proxies = {}
 
-        connector = aiohttp.TCPConnector(limit_per_host=10, limit=100)
-        timeout = aiohttp.ClientTimeout(total=20)
-        async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-            tasks = {
-                self._fetch_from_source_async(session, name, url): name
+        # 使用独立的连接器和较长的超时，避免共享连接池导致"Session is closed"
+        timeout = aiohttp.ClientTimeout(total=45)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            # 先创建 Task，再用 Task 对象作为字典键，避免 as_completed 返回内部包装对象导致 KeyError
+            task_list = [
+                asyncio.create_task(self._fetch_from_source_async(session, name, url))
                 for name, url in self.sources.items()
+            ]
+            task_source_map = {
+                task: name
+                for task, name in zip(task_list, self.sources.keys())
             }
 
-            for coro in asyncio.as_completed(tasks):
-                source_name = tasks[coro]
+            for done_task in asyncio.as_completed(task_source_map):
+                source_name = task_source_map[done_task]
                 try:
-                    proxies = await coro
+                    proxies = await done_task
                     for proxy in proxies:
                         key = f"{proxy['protocol']}://{proxy['address']}"
                         if key not in all_proxies:
                             all_proxies[key] = proxy
                     logger.info("  %s: 获取到 %s 个代理", source_name, len(proxies))
+                except asyncio.CancelledError:
+                    logger.warning("  %s: 请求被取消", source_name)
                 except Exception as e:
                     logger.warning("  %s: 获取失败 - %s", source_name, e)
 
@@ -133,7 +140,9 @@ class ProxyFetcher:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
             }
-            async with session.get(url, headers=headers) as response:
+            # 使用独立的请求超时，避免单个慢源拖垮整个 session
+            request_timeout = aiohttp.ClientTimeout(total=25)
+            async with session.get(url, headers=headers, timeout=request_timeout) as response:
                 response.raise_for_status()
                 text = await response.text()
 
