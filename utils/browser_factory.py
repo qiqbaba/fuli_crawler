@@ -40,6 +40,27 @@ class BrowserFactory:
         from playwright.sync_api import sync_playwright
         p = sync_playwright().start()
         
+        # 针对 Python 3.11+ 的 Playwright CancelledError 异常静默
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            
+            def playwright_exception_handler(loop, context):
+                exc = context.get("exception")
+                if isinstance(exc, asyncio.CancelledError):
+                    # 静默 CancelledError
+                    return
+                message = context.get("message", "")
+                if "Connection.dispatch" in message or "_done_callback" in message:
+                    # 静默 Connection 调度回调中的错误
+                    return
+                # 使用默认异常处理器
+                loop.default_exception_handler(context)
+                
+            loop.set_exception_handler(playwright_exception_handler)
+        except Exception as handler_err:
+            logger.debug("设置事件循环异常处理器失败: %s", handler_err)
+        
         # 确定 headless 模式
         if headless is None:
             local_mode = is_local_mode()
@@ -147,13 +168,8 @@ class BrowserFactory:
                 p.stop()
             raise
             
-    def destroy_thread_resources(self):
-        """清理当前线程的浏览器资源"""
-        p = getattr(self._thread_local, "playwright", None)
-        browser = getattr(self._thread_local, "browser", None)
-        context = getattr(self._thread_local, "context", None)
-        profile_dir = getattr(self._thread_local, "profile_dir", None)
-        
+    def _cleanup_resources(self, p, browser, context, profile_dir):
+        """通用资源清理方法"""
         try:
             if context:
                 context.close()
@@ -172,20 +188,28 @@ class BrowserFactory:
         except Exception as e:
             logger.warning("停止 Playwright 实例失败: %s", e)
             
-        # 从活跃资源列表中移除
-        with self._resources_lock:
-            self._active_resources = [
-                item for item in self._active_resources
-                if item[0] != p
-            ]
-            
-        # 删除临时目录
         if profile_dir and os.path.exists(profile_dir):
             try:
                 import shutil
                 shutil.rmtree(profile_dir)
             except Exception as e:
                 logger.warning("删除临时用户数据目录失败: %s", e)
+
+    def destroy_thread_resources(self):
+        """清理当前线程的浏览器资源"""
+        p = getattr(self._thread_local, "playwright", None)
+        browser = getattr(self._thread_local, "browser", None)
+        context = getattr(self._thread_local, "context", None)
+        profile_dir = getattr(self._thread_local, "profile_dir", None)
+        
+        self._cleanup_resources(p, browser, context, profile_dir)
+        
+        # 从活跃资源列表中移除
+        with self._resources_lock:
+            self._active_resources = [
+                item for item in self._active_resources
+                if item[0] != p
+            ]
                 
         # 清除线程本地属性
         for attr in ["playwright", "browser", "context", "profile_dir"]:
@@ -205,6 +229,51 @@ class BrowserFactory:
                             del mgr._thread_proxy_map[tid]
         except Exception as e:
             logger.warning("清除线程代理绑定失败: %s", e)
+
+    def destroy_other_threads_resources(self):
+        """清理除当前线程外其他所有线程的浏览器资源"""
+        current_p = getattr(self._thread_local, "playwright", None)
+        
+        with self._resources_lock:
+            # 找出其他线程的资源
+            other_resources = [
+                item for item in self._active_resources
+                if item[0] != current_p
+            ]
+            # 保留当前线程的资源
+            self._active_resources = [
+                item for item in self._active_resources
+                if item[0] == current_p
+            ]
+            
+        for p, browser, context, profile_dir in other_resources:
+            self._cleanup_resources(p, browser, context, profile_dir)
+
+    def destroy_all_resources(self):
+        """清理所有线程的浏览器资源"""
+        with self._resources_lock:
+            resources = list(self._active_resources)
+            self._active_resources.clear()
+            
+        for p, browser, context, profile_dir in resources:
+            self._cleanup_resources(p, browser, context, profile_dir)
+            
+        # 清除当前线程的线程本地属性
+        for attr in ["playwright", "browser", "context", "profile_dir"]:
+            if hasattr(self._thread_local, attr):
+                delattr(self._thread_local, attr)
+                
+        # 清除所有代理绑定
+        try:
+            from utils.proxy_manager import get_proxy_manager
+            from config import is_proxy_manager_enabled
+            if is_proxy_manager_enabled():
+                mgr = get_proxy_manager()
+                if mgr:
+                    with mgr._lock:
+                        mgr._thread_proxy_map.clear()
+        except Exception as e:
+            logger.warning("清除所有代理绑定失败: %s", e)
 
 # 创建全局实例
 browser_factory = BrowserFactory()

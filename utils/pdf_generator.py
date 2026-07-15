@@ -154,22 +154,14 @@ class PDFGenerator:
                                         )
                                         return
                         except asyncio.CancelledError:
-                            # 页面关闭时正在处理的路由任务会被取消，优雅放行
-                            try:
-                                await route.continue_()
-                            except Exception:
-                                pass
-                            return
+                            # 页面关闭时正在处理的路由任务会被取消，直接抛出
+                            raise
                         except Exception as route_err:
                             logger.warning("路由代理图片下载失败: %s", route_err)
                     await route.continue_()
                 except asyncio.CancelledError:
-                    # 顶层 CancelledError 保护，防止页面关闭时未捕获的异常
-                    try:
-                        await route.continue_()
-                    except Exception:
-                        pass
-
+                    # 顶层 CancelledError 保护，直接抛出
+                    raise
             page.route("**/*", img_router)
         except Exception as route_setup_err:
             logger.warning("配置网络拦截路由异常: %s", route_setup_err)
@@ -297,6 +289,12 @@ class PDFGenerator:
 
         try:
             if is_reuse_page:
+                # 先清空可能存在的旧路由，防止路由链式累加和泄漏
+                try:
+                    page.unroute("**/*")
+                except Exception:
+                    pass
+
                 # 挂载图片代理（复用页面也需启用）
                 if config.need_img_proxy:
                     self._setup_image_proxy(page)

@@ -333,39 +333,46 @@ class BaseCrawler:
         results_dict = {}
         early_stop_triggered = False
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_idx = {
-                executor.submit(self.process_sub_page_if_needed, raw_item, idx): idx
-                for idx, raw_item in items_to_process
-            }
+        try:
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_idx = {
+                    executor.submit(self.process_sub_page_if_needed, raw_item, idx): idx
+                    for idx, raw_item in items_to_process
+                }
 
-            # 预分配 dict，按 idx 索引，避免后续排序
-            collected_results = {idx: None for idx, _ in items_to_process}
-            for future in as_completed(future_to_idx):
-                idx = future_to_idx[future]
-                try:
-                    res = future.result()
-                    if res:
-                        collected_results[idx] = res
-                except Exception as e:
-                    logger.error("线程处理索引为 [%s] 的项目时发生异常: %s", idx, e)
+                # 预分配 dict，按 idx 索引，避免后续排序
+                collected_results = {idx: None for idx, _ in items_to_process}
+                for future in as_completed(future_to_idx):
+                    idx = future_to_idx[future]
+                    try:
+                        res = future.result()
+                        if res:
+                            collected_results[idx] = res
+                    except Exception as e:
+                        logger.error("线程处理索引为 [%s] 的项目时发生异常: %s", idx, e)
 
-            # 按预分配顺序遍历（Python 3.7+ 保持插入顺序），无需排序
-            for idx in collected_results:
-                res = collected_results[idx]
-                if res is None:
-                    continue
-                is_existing, data = res
-                consecutive_subpage_count, should_stop = self._check_consecutive_subpage_stop(
-                    idx, is_existing, consecutive_subpage_count
-                )
-                if should_stop:
-                    early_stop_triggered = True
-                if data:
-                    results_dict[idx] = data
+                # 按预分配顺序遍历（Python 3.7+ 保持插入顺序），无需排序
+                for idx in collected_results:
+                    res = collected_results[idx]
+                    if res is None:
+                        continue
+                    is_existing, data = res
+                    consecutive_subpage_count, should_stop = self._check_consecutive_subpage_stop(
+                        idx, is_existing, consecutive_subpage_count
+                    )
+                    if should_stop:
+                        early_stop_triggered = True
+                    if data:
+                        results_dict[idx] = data
 
-            logger.info("正在关闭线程池并自动清理资源...")
-            executor.shutdown(wait=True)
+                logger.info("正在关闭线程池并自动清理资源...")
+                executor.shutdown(wait=True)
+        finally:
+            try:
+                from utils.browser_factory import browser_factory
+                browser_factory.destroy_other_threads_resources()
+            except Exception as e:
+                logger.warning("清理工作线程 Playwright 资源时发生异常: %s", e)
 
         if early_stop_triggered:
             logger.warning("子页面级去重触发早停标记，已完成的结果将继续入库。")
@@ -798,6 +805,14 @@ class PlaywrightBaseCrawler(BaseCrawler):
         # 1. 优先清理主线程自身的资源
         self.release_thread_resources()
         
+        # 2. 强制销毁所有线程的所有浏览器和 Playwright 实例，避免退出时引发事件循环已关闭报错
+        try:
+            from utils.browser_factory import browser_factory
+            browser_factory.destroy_all_resources()
+            logger.info("[+] 已成功释放所有线程的 Playwright 资源")
+        except Exception as e:
+            logger.warning("释放 Playwright 全局资源失败: %s", e)
+        
         self.db_manager.commit()
 
     def _get_thread_resources(self, no_proxy=False):
@@ -1152,18 +1167,25 @@ class DomainRotationMixin:
                     except Exception:
                         pass
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            fut_curl = executor.submit(_curl_fetch)
-            fut_pw = executor.submit(_pw_fetch)
-            for fut in as_completed([fut_curl, fut_pw]):
-                result = fut.result()
-                if result:
-                    with html_lock:
-                        if html is None:
-                            html = result
-                            # 取消另一个还在跑的请求（如果有必要）
-                            # 注意：as_completed 不会取消其它 future，我们只是优先使用先到的结果
-                            break
+        try:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                fut_curl = executor.submit(_curl_fetch)
+                fut_pw = executor.submit(_pw_fetch)
+                for fut in as_completed([fut_curl, fut_pw]):
+                    result = fut.result()
+                    if result:
+                        with html_lock:
+                            if html is None:
+                                html = result
+                                # 取消另一个还在跑的请求（如果有必要）
+                                # 注意：as_completed 不会取消其它 future，我们只是优先使用先到的结果
+                                break
+        finally:
+            try:
+                from utils.browser_factory import browser_factory
+                browser_factory.destroy_other_threads_resources()
+            except Exception as e:
+                logger.warning("清理获取域名工作线程 Playwright 资源异常: %s", e)
         
         if not html:
             logger.warning("[!] 无法从主站 %s 获取到页面内容", self.main_domain)
