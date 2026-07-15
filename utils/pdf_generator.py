@@ -24,7 +24,8 @@ class PDFRenderConfig:
                  need_lazy_scroll=False, 
                  need_img_proxy=False, 
                  referer=None, 
-                 pre_access_url=None):
+                 pre_access_url=None,
+                 wait_until="load"):
         self.ad_selectors = ad_selectors or []
         self.ad_block_js = ad_block_js
         # 广告 URL 正则模式列表——在 goto 前注册路由拦截，从网络层阻止广告资源下载
@@ -37,6 +38,7 @@ class PDFRenderConfig:
         self.need_img_proxy = need_img_proxy
         self.referer = referer
         self.pre_access_url = pre_access_url
+        self.wait_until = wait_until
 
 class PDFGenerator:
     """通用的 PDF 生成与存储归档服务
@@ -321,13 +323,18 @@ class PDFGenerator:
                 # 前置访问
                 if config.pre_access_url:
                     try:
-                        page.goto(config.pre_access_url, timeout=20000, wait_until="networkidle")
+                        # 对于前置访问，使用 domcontentloaded 或 load 即可，没必要用 networkidle 导致超时
+                        pre_wait = getattr(config, "wait_until", "load")
+                        if pre_wait == "networkidle":
+                            pre_wait = "load"
+                        page.goto(config.pre_access_url, timeout=20000, wait_until=pre_wait)
                         time.sleep(1.5)
                     except Exception as e_home:
                         logger.warning("前置访问异常: %s", e_home)
 
                 # 加载真正的详情页
-                goto_args = {"timeout": 30000, "wait_until": "networkidle"}
+                wait_until_val = getattr(config, "wait_until", "load")
+                goto_args = {"timeout": 30000, "wait_until": wait_until_val}
                 if config.referer:
                     goto_args["referer"] = config.referer
                 page.goto(target_url, **goto_args)

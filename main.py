@@ -1,5 +1,10 @@
 import sys
 import argparse
+import warnings
+
+# 忽略 asyncio 中的 "Task was destroyed but it is pending!" 运行时警告
+warnings.filterwarnings("ignore", category=RuntimeWarning, message="Task was destroyed but it is pending")
+
 from config import get_db_path, use_supabase, SUPABASE_URL, SUPABASE_KEY, is_local_mode
 from utils.db_manager import DBManager, SupabaseDBManager
 from utils import setup_console_utf8

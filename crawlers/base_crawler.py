@@ -1346,8 +1346,20 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
         """子类可覆盖，默认格式 base_list_url.format(class, page)"""
         try:
             return self.base_list_url.format(cat=self.current_class, page=page_num)
-        except (KeyError, ValueError):
-            return self.base_list_url.format(self.current_class, page_num)
+        except (KeyError, ValueError, IndexError):
+            try:
+                return self.base_list_url.format(self.current_class, page_num)
+            except Exception:
+                url = self.base_list_url
+                if "{cat}" in url:
+                    url = url.replace("{cat}", str(self.current_class))
+                elif "{}" in url:
+                    url = url.replace("{}", str(self.current_class), 1)
+                if "{page}" in url:
+                    url = url.replace("{page}", str(page_num))
+                elif "{}" in url:
+                    url = url.replace("{}", str(page_num), 1)
+                return url
 
     def fetch_list_page(self, page_num, retry_with_main=True):
         """请求列表页并解密 HTML，支持域名轮换重试和自动域名发现"""
@@ -1533,8 +1545,20 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
 
             try:
                 list_url = self.base_list_url.format(cat=self.current_class, page=1)
-            except (KeyError, ValueError):
-                list_url = self.base_list_url.format(self.current_class, 1)
+            except (KeyError, ValueError, IndexError):
+                try:
+                    list_url = self.base_list_url.format(self.current_class, 1)
+                except Exception:
+                    url = self.base_list_url
+                    if "{cat}" in url:
+                        url = url.replace("{cat}", str(self.current_class))
+                    elif "{}" in url:
+                        url = url.replace("{}", str(self.current_class), 1)
+                    if "{page}" in url:
+                        url = url.replace("{page}", "1")
+                    elif "{}" in url:
+                        url = url.replace("{}", "1", 1)
+                    list_url = url
             headers = self._build_headers(referer=list_url)
             redirect_content = None
 
