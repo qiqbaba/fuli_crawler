@@ -8,7 +8,6 @@ import random
 import sqlite3
 import threading
 from typing import List, Dict, Optional
-from config import is_local_mode
 
 # 本地导入
 from utils.proxy_fetcher import ProxyFetcher
