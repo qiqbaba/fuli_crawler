@@ -55,7 +55,6 @@ class BrowserFactory:
                 proxy_url = get_effective_proxy_string(exclusive=True)
                 if proxy_url:
                     playwright_proxy = {"server": proxy_url}
-                    logger.info("Playwright 启动代理: %s", proxy_url)
             except Exception as ex:
                 logger.warning("获取自动代理失败: %s", ex)
         
@@ -158,21 +157,18 @@ class BrowserFactory:
         try:
             if context:
                 context.close()
-                logger.info("[+] 已关闭浏览器上下文")
         except Exception as e:
             logger.warning("关闭浏览器上下文失败: %s", e)
             
         try:
             if browser:
                 browser.close()
-                logger.info("[+] 已关闭浏览器实例")
         except Exception as e:
             logger.warning("关闭浏览器实例失败: %s", e)
             
         try:
             if p:
                 p.stop()
-                logger.info("[+] 已停止 Playwright 实例")
         except Exception as e:
             logger.warning("停止 Playwright 实例失败: %s", e)
             
@@ -188,7 +184,6 @@ class BrowserFactory:
             try:
                 import shutil
                 shutil.rmtree(profile_dir)
-                logger.info("[+] 已删除临时用户数据目录: %s", profile_dir)
             except Exception as e:
                 logger.warning("删除临时用户数据目录失败: %s", e)
                 
@@ -208,7 +203,6 @@ class BrowserFactory:
                     with mgr._lock:
                         if tid in mgr._thread_proxy_map:
                             del mgr._thread_proxy_map[tid]
-                    logger.info("[+] 已清除线程代理绑定")
         except Exception as e:
             logger.warning("清除线程代理绑定失败: %s", e)
 
