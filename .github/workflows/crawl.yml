@@ -86,10 +86,10 @@ jobs:
         id: get-date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-      - name: 恢复/缓存代理 IP 列表
-        uses: actions/cache@v4
+      - name: 恢复代理 IP 列表
+        uses: actions/cache/restore@v4
         with:
-          path: temp_profiles/proxy_cache.db
+          path: temp_profiles/
           key: ${{ runner.os }}-proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ runner.os }}-proxy-cache-${{ steps.get-date.outputs.date }}-
@@ -192,6 +192,13 @@ jobs:
             python main.py --crawler jingpin_toupai --crawl -q
             echo "=== jingpin_toupai 完成 ==="
           fi
+
+      - name: 保存代理 IP 缓存
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: temp_profiles/
+          key: ${{ runner.os }}-proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: 清理临时 PDF 目录
         if: always()

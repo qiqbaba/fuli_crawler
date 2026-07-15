@@ -88,10 +88,10 @@ class ProxyPool:
             logger.warning("扫描备份文件时出错: %s", e)
 
     def _init_cache_db(self):
-        """初始化 SQLite 缓存数据库表结构，启用 WAL 模式以提升并发读写性能"""
+        """初始化 SQLite 缓存数据库表结构，使用 DELETE 模式确保数据直接落盘，便于 CI 缓存单文件"""
         try:
             conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
-            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA journal_mode=DELETE;")
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS proxy_cache (
