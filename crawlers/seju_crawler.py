@@ -264,8 +264,6 @@ class SejuCrawler(PlaywrightBaseCrawler):
             pdf_path=''
         )
         data['link_type'] = link_type
-        data['is_external'] = is_external
-        data['pub_time'] = pub_time
         
         return data
 
@@ -311,8 +309,8 @@ class SejuCrawler(PlaywrightBaseCrawler):
             logger.info("[%s] 页面抓取成功: %s | 分类: %s", idx, data['title'], data['category'])
 
             # 针对内部网页，使用当前的 Playwright 页面生成 PDF
-            if not data['is_external']:
-                saved_path = self._generate_pdf_for_sub_page(current_url, data['pub_time'], data['title'])
+            if not is_external:
+                saved_path = self._generate_pdf_for_sub_page(current_url, data['publish_time'], data['title'])
                 data['pdf_path'] = saved_path
             else:
                 logger.info("-> 外部网站，已跳过 PDF 保存")

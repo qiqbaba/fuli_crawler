@@ -34,15 +34,10 @@ def _get_detector():
     return _detector
 
 
-def is_japanese(text):
+def _is_japanese_candidate(text: str) -> bool:
     """
-    判断文本是否为日语。
-    先快速预过滤（检查是否有假名），再按假名占比过滤，最后调用 lingua 精确检测。
-    返回: bool
+    快速预过滤逻辑：检查文本是否有足够的假名占比
     """
-    if not text:
-        return False
-
     # 统计假名数量（平假名 + 片假名）
     jp_chars = len(re.findall(r'[\u3040-\u309F\u30A0-\u30FF]', text))
     if jp_chars == 0:
@@ -56,7 +51,19 @@ def is_japanese(text):
         return False
 
     # 假名占比必须达到阈值
-    if jp_chars / meaningful_chars < JAPANESE_CHAR_RATIO_THRESHOLD:
+    return jp_chars / meaningful_chars >= JAPANESE_CHAR_RATIO_THRESHOLD
+
+
+def is_japanese(text):
+    """
+    判断文本是否为日语。
+    先快速预过滤（检查是否有假名），再按假名占比过滤，最后调用 lingua 精确检测。
+    返回: bool
+    """
+    if not text:
+        return False
+
+    if not _is_japanese_candidate(text):
         return False
 
     # lingua 精确检测
@@ -96,19 +103,8 @@ def batch_is_japanese(titles):
     results = [False] * len(titles)
 
     for i, text in enumerate(titles):
-        if not text:
-            continue
-        jp_chars = len(re.findall(r'[\u3040-\u309F\u30A0-\u30FF]', text))
-        if jp_chars == 0:
-            continue
-        meaningful_chars = len(
-            re.findall(r'[^\s\-_,.;:!?()\[\]{}【】「」『』《》<>・/\\~`@#$%^&*+=|"\']', text)
-        )
-        if meaningful_chars == 0:
-            continue
-        if jp_chars / meaningful_chars < JAPANESE_CHAR_RATIO_THRESHOLD:
-            continue
-        candidates[i] = text
+        if text and _is_japanese_candidate(text):
+            candidates[i] = text
 
     # 无候选，全部返回 False
     if not candidates:

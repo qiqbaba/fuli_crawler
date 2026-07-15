@@ -590,6 +590,16 @@ class BaseCrawler:
         """钩子方法：爬取分类前的准备工作，子类可覆盖"""
         pass
 
+    def get_default_max_workers(self):
+        """钩子方法：根据爬虫类型获取默认并发数，子类可覆盖"""
+        if self.no_pdf:
+            # 无 PDF 模式无需浏览器进程，可大幅提升并发
+            return 30
+        elif self.source_name in ("seju", "datang", "madou", "gcbt"):
+            return 3
+        else:
+            return 50
+
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """
         统一的爬虫执行骨架，支持多板块爬取
@@ -619,15 +629,7 @@ class BaseCrawler:
             self.max_consecutive_duplicate_pages = None
 
         if max_workers is None:
-            # Playwright 爬虫（datang, madou, gcbt, seju）每个线程启动一个浏览器，限制并发避免 OOM
-            # 纯 curl_cffi 爬虫（u3c3）可开更高并发
-            if self.no_pdf:
-                # 无 PDF 模式无需浏览器进程，可大幅提升并发
-                max_workers = 30
-            elif self.source_name in ("seju", "datang", "madou", "gcbt"):
-                max_workers = 3
-            else:
-                max_workers = 50
+            max_workers = self.get_default_max_workers()
 
         try:
             if is_test:
@@ -647,6 +649,8 @@ class BaseCrawler:
                             logger.info("[*] 检测到 %s 已完成全部爬取，跳过所有板块", self.source_name)
                             self.db_manager.clear_crawl_state(self.source_name)
                             logger.info("[+] 已清除完成标记，下次运行将重新爬取")
+                            if is_test:
+                                self._run_test_mode(start_page)
                             return
                         
                         for category in categories:
@@ -666,6 +670,8 @@ class BaseCrawler:
                                 break
                         else:
                             logger.info("[*] 所有板块已完成，无需爬取")
+                            if is_test:
+                                self._run_test_mode(start_page)
                             return
                     else:
                         logger.info("[*] 未检测到历史断点，从头开始爬取")
@@ -1404,112 +1410,19 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
         """子类覆盖：判断 Playwright 兜底时页面是否有效"""
         return bool(html)
 
-    def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
-        """带多分类板块遍历的 run() 方法"""
-        self.is_test = is_test
-        self.quiet = kwargs.get('quiet', False)
-        resume = kwargs.get('resume', False)
-        self.resume = resume
-        self.no_pdf = kwargs.get('no_pdf', False)
+    def get_categories(self):
+        """返回要爬取的分类列表，覆盖父类"""
+        return self.CATEGORIES or ["guochan"]
 
-        classes = self.CATEGORIES
-        if not classes:
-            classes = ["guochan"]
+    def before_category_crawl(self, category):
+        """爬取分类前的准备工作，覆盖父类"""
+        self.current_class = category
 
-        logger.info("[*] 启动 %s 爬虫流程...", self.source_name)
-        self.on_start()
-
-        no_early_stop = kwargs.get('no_early_stop', False)
-        if no_early_stop:
-            logger.info("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
-            self.max_consecutive_existing = None
-            self.max_consecutive_duplicate_pages = None
-        elif not resume:
-            self.max_consecutive_existing = None
-            self.max_consecutive_duplicate_pages = None
-
-        if max_workers is None:
-            if getattr(self, 'no_pdf', False):
-                max_workers = 30
-            else:
-                max_workers = 10
-
-        resume_class = None
-        resume_page = start_page
-
-        if resume:
-            all_states = self.db_manager.load_crawl_state(self.source_name)
-            if all_states:
-                if "__all__" in all_states and all_states["__all__"].get("completed", False):
-                    logger.info("[*] 检测到 %s 已完成全部爬取，跳过所有板块", self.source_name)
-                    self.db_manager.clear_crawl_state(self.source_name)
-                    logger.info("[+] 已清除完成标记，下次运行将重新爬取")
-                    try:
-                        if is_test:
-                            self._run_test_mode(start_page)
-                        return
-                    finally:
-                        self.on_finish()
-
-                for cls in classes:
-                    state = all_states.get(cls)
-                    if state:
-                        saved_page = state["page_num"]
-                        if saved_page <= end_page:
-                            resume_class = cls
-                            resume_page = saved_page
-                            logger.info("[*] 检测到板块 %s 爬取断点，从第 %s 页继续", cls, resume_page)
-                            break
-                        logger.info("[断点续爬] 板块 %s 已完成，跳过", cls)
-                    else:
-                        resume_class = cls
-                        resume_page = start_page
-                        logger.info("[*] 板块 %s 无历史记录，从头开始爬取", cls)
-                        break
-                else:
-                    logger.info("[*] 所有板块已完成，无需爬取")
-                    try:
-                        if is_test:
-                            self._run_test_mode(start_page)
-                        return
-                    finally:
-                        self.on_finish()
-            else:
-                logger.info("[*] 未检测到历史断点，从头开始爬取")
-
-        try:
-            if is_test:
-                self._run_test_mode(start_page)
-                return
-
-            for cls in classes:
-                if resume and resume_class is not None:
-                    cls_index = classes.index(cls)
-                    resume_index = classes.index(resume_class)
-                    if cls_index < resume_index:
-                        logger.info("\n[断点续爬] 板块 %s 已完成，跳过", cls)
-                        continue
-                    actual_start = resume_page if cls == resume_class else start_page
-                else:
-                    actual_start = start_page
-
-                self.current_class = cls
-                logger.info("\n[*] ================= 开始爬取 %s 板块: %s (起始页码: %s) =================", self.source_name, cls, actual_start)
-                self._crawl_pages(actual_start, end_page, max_workers, class_name=cls)
-
-                if resume and cls == resume_class:
-                    resume_class = None
-
-            if not is_test and resume:
-                self.db_manager.mark_source_completed(self.source_name)
-                logger.info("[+] %s 所有板块爬取完成，已标记完成状态", self.source_name)
-
-        except KeyboardInterrupt:
-            logger.warning("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
-        except Exception as e:
-            logger.error("\n[致命错误] 运行中发生未捕获的异常: %s", e)
-        finally:
-            self.on_finish()
+    def get_default_max_workers(self):
+        """根据爬虫类型获取默认并发数，覆盖父类"""
+        if self.no_pdf:
+            return 30
+        return 10
 
     # ------------------------------------------------------------------ #
     #  以下为子类可覆盖的钩子方法，用于 process_sub_page_if_needed() 中的差异化逻辑

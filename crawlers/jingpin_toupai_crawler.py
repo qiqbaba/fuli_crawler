@@ -30,7 +30,11 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         self.base_list_url = f"{self.base_domain}/list/{{}}-{{}}.html"
         self.current_class = "2935277"
         self.max_consecutive_existing = 15  # 连续抓到历史数据时早停
-        self.category_map = {}  # 初始化分类映射
+        self.category_map = {
+            "2935277": "国产", 
+            "2965277": "欧美", 
+            "2975277": "国产"
+        }
         
         # 域名冷却机制
         self._domain_cooldown = {}
@@ -277,11 +281,6 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
     def before_category_crawl(self, category):
         """爬取分类前的准备工作"""
         self.current_class = category
-        self.category_map = {
-            "2935277": "国产", 
-            "2965277": "欧美", 
-            "2975277": "国产"
-        }
 
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """爬虫流程入口，使用基类的多板块爬取逻辑"""
