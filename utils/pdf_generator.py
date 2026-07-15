@@ -41,47 +41,15 @@ class PDFRenderConfig:
 class PDFGenerator:
     """通用的 PDF 生成与存储归档服务
     
-    采用按需创建 aiohttp.ClientSession 的模式，避免在 __init__ 中长期持有 session，
-    以及复杂的异步关闭逻辑。每次需要 HTTP 请求时，通过 _get_http_session() 获取
-    或创建 session，并配合上下文管理器确保关闭。
+    在网络拦截器中按需、局部地创建 aiohttp.ClientSession，其生命周期与 Page 实例绑定，
+    从而在支持高并发图片代理的同时，彻底避免多线程环境下事件循环冲突及析构泄漏的问题。
     """
     def __init__(self, r2_uploader=None):
         self.r2_uploader = r2_uploader
-        self._http_session = None
-        self._http_session_lock = threading.Lock()
-    
-    def _get_http_session(self):
-        """获取或延迟创建 aiohttp.ClientSession（线程安全）"""
-        if self._http_session is None or self._http_session.closed:
-            with self._http_session_lock:
-                if self._http_session is None or self._http_session.closed:
-                    self._http_session = aiohttp.ClientSession()
-        return self._http_session
     
     def close(self):
-        """关闭HTTP会话，释放资源"""
-        if self._http_session and not self._http_session.closed:
-            try:
-                import asyncio
-                try:
-                    loop = asyncio.get_running_loop()
-                    if loop.is_running():
-                        loop.create_task(self._http_session.close())
-                        return
-                except RuntimeError:
-                    pass
-                try:
-                    loop = asyncio.get_event_loop()
-                    if not loop.is_running():
-                        loop.run_until_complete(self._http_session.close())
-                except RuntimeError:
-                    pass
-            except Exception as e:
-                logger.warning("关闭HTTP会话失败: %s", e)
-    
-    def __del__(self):
-        """析构函数，确保HTTP会话被关闭"""
-        self.close()
+        """空方法，用于向后兼容"""
+        pass
 
     def _get_pdf_local_tmp_path(self, publish_date, title, source_name):
         """获取 PDF 本地临时/持久化保存路径"""
@@ -128,6 +96,27 @@ class PDFGenerator:
     def _setup_image_proxy(self, page):
         """在网络层添加图片代理请求拦截器，在 Python 后台下载图片喂给浏览器以绕过防盗链和 GFW"""
         try:
+            # 局部实例化 ClientSession，绑定在当前线程的事件循环中
+            session = aiohttp.ClientSession()
+
+            # 监听页面关闭，安全释放局部 session 资源
+            def on_page_close():
+                try:
+                    loop = asyncio.get_running_loop()
+                    if loop.is_running():
+                        loop.create_task(session.close())
+                except RuntimeError:
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if not loop.is_running():
+                            loop.run_until_complete(session.close())
+                    except Exception as ex:
+                        logger.warning("关闭局部 session 失败: %s", ex)
+                except Exception as ex:
+                    logger.warning("关闭局部 session 异常: %s", ex)
+
+            page.on("close", lambda p: on_page_close())
+
             async def img_router(route):
                 try:
                     req_url = route.request.url
@@ -143,7 +132,7 @@ class PDFGenerator:
                                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
                             }
                             
-                            async with self._get_http_session().get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                            async with session.get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
                                     if r.status == 200:
                                         content = await r.read()
                                         content_type = r.headers.get("Content-Type", "image/jpeg")
