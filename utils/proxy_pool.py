@@ -34,7 +34,7 @@ class ProxyPool:
         self.cache_ttl = cache_ttl
         self._proxies: List[Dict[str, str]] = []  # [{"protocol": "http", "address": "ip:port", "source": "..."}]
         self._working_proxies: List[Dict[str, str]] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._last_fetch_time = 0
         self._last_verify_time = 0
         self._current_proxy_idx = 0
@@ -471,12 +471,13 @@ class ProxyPool:
         根据线程 ID 进行无重复队列轮询（Round-Robin）
         确保任意时刻一个代理 IP 尽可能只被一个活动线程独占使用。
         """
-        # 前置检测并执行动态补充
-        self.check_and_replenish(threshold=200, target_count=300)
-        
         current_thread_id = threading.get_ident()
         
         with self._lock:
+            # 在锁保护下检查并补充代理，避免 TOCTOU 竞争
+            if len(self._working_proxies) < 200:
+                self.check_and_replenish(threshold=200, target_count=300)
+            
             if not self._working_proxies:
                 return None
                 
@@ -524,9 +525,10 @@ class ProxyPool:
         """
         随机从已验证可用的代理池中获取一个代理 IP，不与线程绑定，每次调用都可能不同。
         """
-        # 前置检测并执行动态补充
-        self.check_and_replenish(threshold=200, target_count=300)
         with self._lock:
+            # 在锁保护下检查并补充代理
+            if len(self._working_proxies) < 200:
+                self.check_and_replenish(threshold=200, target_count=300)
             if not self._working_proxies:
                 return None
             p = random.choice(self._working_proxies)

@@ -272,6 +272,11 @@ class BaseCrawler:
 
         for idx, raw_item in enumerate(raw_items, 1):
             url = raw_item if isinstance(raw_item, str) else raw_item.get('url')
+            
+            # 过滤空 URL，避免 None in existing_urls 永远返回 False 导致重复数据
+            if not url:
+                continue
+                
             is_existing = url in existing_urls
 
             # 日语标题预过滤（使用批量检测结果）
@@ -767,9 +772,8 @@ class PlaywrightBaseCrawler(BaseCrawler):
             # Perf 1: 仅清理页面级资源，保留浏览器供下一页复用
             try:
                 from utils.browser_factory import browser_factory
-                # 检查线程本地是否有 page 对象
-                import threading
-                thread_local = threading.local()
+                # 使用 browser_factory 的线程本地存储，确保正确访问当前线程的 page 对象
+                thread_local = browser_factory._thread_local
                 page = getattr(thread_local, "page", None)
                 if page:
                     page.close()

@@ -249,7 +249,12 @@ def main():
 
     if args.crawler in CRAWLER_REGISTRY:
         crawler_cls = CRAWLER_REGISTRY[args.crawler]
-        crawler = crawler_cls(db_manager)
+        try:
+            crawler = crawler_cls(db_manager)
+        except Exception as e:
+            logger.error("[-] 爬虫 %s 实例化失败: %s", args.crawler, e)
+            db_manager.close()
+            sys.exit(1)
         default_end = getattr(crawler_cls, "default_end_page", 1)
         default_workers = getattr(crawler_cls, "default_workers", 8)
         if args.workers is None:

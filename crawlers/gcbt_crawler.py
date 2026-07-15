@@ -155,6 +155,21 @@ class GcbtCrawler(PlaywrightBaseCrawler):
                 elif any(domain in href for domain in ['82bt.com', 'rlink.php']) or href.endswith('.torrent'):
                     if 'javascript:' not in href and not any(ad in href for ad in ['t66y.com', 'bitbucket.org', 'chinaurl.github.io', 'madouqu.com', 'taocili.com']):
                         download_links.append(href)
+        else:
+            # 备用解析：当页面缺少 <article> 标签时，尝试从 body 中提取链接
+            for a in soup.find_all('a'):
+                href = a.get('href', '').strip()
+                if not href:
+                    continue
+                if href.lower().startswith('magnet:'):
+                    mag_match = re.search(r'magnet:\?xt=urn:btih:([0-9a-fA-F]{40})', href, re.IGNORECASE)
+                    if mag_match:
+                        download_links.append(href)
+                elif 'rmdown.com/link.php' in href:
+                    rm_match = re.search(r'hash=([0-9a-fA-F]{42,43})', href)
+                    if rm_match:
+                        btih = rm_match.group(1)[-40:].lower()
+                        download_links.append(f"magnet:?xt=urn:btih:{btih}")
 
         if download_links:
             # 优先采用磁力链接

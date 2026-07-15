@@ -13,6 +13,9 @@ try:
 except ImportError:
     pass
 
+from utils.logger import get_logger
+logger = get_logger(__name__)
+
 # ========== 运行模式配置 ==========
 _force_mode = None  # 可选值为 'local' 或 'cloud'
 
@@ -74,7 +77,15 @@ def use_r2():
 def _get_default_pdf_base_dir():
     pdf_dir = os.environ.get("PDF_BASE_DIR")
     if pdf_dir:
-        return pdf_dir
+        # 验证目录是否存在，若不存在则尝试创建
+        if os.path.exists(pdf_dir):
+            return pdf_dir
+        try:
+            os.makedirs(pdf_dir, exist_ok=True)
+            logger.info("已创建 PDF 输出目录: %s", pdf_dir)
+            return pdf_dir
+        except Exception as e:
+            logger.warning("PDF_BASE_DIR 环境变量指向的目录不可用 (%s)，回退到默认路径: %s", e, pdf_dir)
     # 否则，如果是本地模式，检查默认的几个备选路径（相对于项目根目录）
     _LOCAL_PDF_PATHS = [
         os.path.join(PROJECT_ROOT, "..", "seju", "pdf"),
@@ -83,8 +94,10 @@ def _get_default_pdf_base_dir():
     for path in _LOCAL_PDF_PATHS:
         if os.path.exists(path):
             return path
-    # 默认 fallback 到当前目录下的 pdf 子目录
-    return os.path.join(PROJECT_ROOT, "pdf")
+    # 默认 fallback 到当前目录下的 pdf 子目录，确保目录存在
+    default_path = os.path.join(PROJECT_ROOT, "pdf")
+    os.makedirs(default_path, exist_ok=True)
+    return default_path
 
 PDF_BASE_DIR = _get_default_pdf_base_dir()
 

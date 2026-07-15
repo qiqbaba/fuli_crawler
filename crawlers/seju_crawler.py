@@ -24,6 +24,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
         self.target_domain = "seju.life"
         self.use_persistent_context = True
         self.proxy_test_url = "https://seju.life/"
+        self.thread_local = threading.local()
         
         from utils.pdf_generator import PDFRenderConfig
         self.pdf_config = PDFRenderConfig(
