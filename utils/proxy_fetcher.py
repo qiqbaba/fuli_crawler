@@ -106,32 +106,24 @@ class ProxyFetcher:
         # 使用独立的连接器和较长的超时，避免共享连接池导致"Session is closed"
         timeout = aiohttp.ClientTimeout(total=45)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            # 先创建 Task，再用 Task 对象作为字典键，避免 as_completed 返回内部包装对象导致 KeyError
-            task_list = [
-                asyncio.create_task(self._fetch_from_source_async(session, name, url))
-                for name, url in self.sources.items()
+            source_names = list(self.sources.keys())
+            tasks = [
+                self._fetch_from_source_async(session, name, self.sources[name])
+                for name in source_names
             ]
-            task_source_map = {
-                task: name
-                for task, name in zip(task_list, self.sources.keys())
-            }
-
-            pending = set(task_list)
-            while pending:
-                done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
-                for done_task in done:
-                    source_name = task_source_map[done_task]
-                    try:
-                        proxies = done_task.result()
-                        for proxy in proxies:
-                            key = f"{proxy['protocol']}://{proxy['address']}"
-                            if key not in all_proxies:
-                                all_proxies[key] = proxy
-                        logger.info("  %s: 获取到 %s 个代理", source_name, len(proxies))
-                    except asyncio.CancelledError:
-                        logger.warning("  %s: 请求被取消", source_name)
-                    except Exception as e:
-                        logger.warning("  %s: 获取失败 - %s", source_name, e)
+            
+            # 使用 asyncio.gather 并发执行抓取任务，子任务抛出的异常会被捕获为结果返回
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for source_name, result in zip(source_names, results):
+                if isinstance(result, Exception):
+                    logger.warning("  %s: 获取失败 - %s", source_name, result)
+                elif isinstance(result, list):
+                    for proxy in result:
+                        key = f"{proxy['protocol']}://{proxy['address']}"
+                        if key not in all_proxies:
+                            all_proxies[key] = proxy
+                    logger.info("  %s: 获取到 %s 个代理", source_name, len(result))
 
         logger.info("共获取到 %s 个唯一代理", len(all_proxies))
         return list(all_proxies.values())
