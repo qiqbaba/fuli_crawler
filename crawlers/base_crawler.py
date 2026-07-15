@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import time
 import random
@@ -331,6 +332,7 @@ class BaseCrawler:
             (results_dict, consecutive_subpage_count, early_stop_triggered)
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        from utils.browser_factory import browser_factory
         results_dict = {}
         early_stop_triggered = False
 
@@ -343,14 +345,29 @@ class BaseCrawler:
 
                 # 预分配 dict，按 idx 索引，避免后续排序
                 collected_results = {idx: None for idx, _ in items_to_process}
-                for future in as_completed(future_to_idx):
-                    idx = future_to_idx[future]
-                    try:
-                        res = future.result()
-                        if res:
-                            collected_results[idx] = res
-                    except Exception as e:
-                        logger.error("线程处理索引为 [%s] 的项目时发生异常: %s", idx, e)
+                try:
+                    for future in as_completed(future_to_idx):
+                        idx = future_to_idx[future]
+                        try:
+                            res = future.result()
+                            if res:
+                                collected_results[idx] = res
+                        except Exception as e:
+                            logger.error("线程处理索引为 [%s] 的项目时发生异常: %s", idx, e)
+                finally:
+                    # 无论成功或异常，都在线程池关闭前提交清理任务给工作线程，在线程自身内释放 Playwright 资源
+                    logger.info("正在清理工作线程的浏览器资源...")
+                    clean_futures = []
+                    for _ in range(max_workers):
+                        try:
+                            clean_futures.append(executor.submit(browser_factory.destroy_thread_resources))
+                        except Exception:
+                            pass
+                    for fut in clean_futures:
+                        try:
+                            fut.result()
+                        except Exception as e:
+                            logger.warning("工作线程自助清理资源失败: %s", e)
 
                 # 按预分配顺序遍历（Python 3.7+ 保持插入顺序），无需排序
                 for idx in collected_results:
@@ -366,13 +383,10 @@ class BaseCrawler:
                     if data:
                         results_dict[idx] = data
 
-                logger.info("正在关闭线程池并自动清理资源...")
+                logger.info("正在关闭线程池...")
         finally:
-            try:
-                from utils.browser_factory import browser_factory
-                browser_factory.destroy_other_threads_resources()
-            except Exception as e:
-                logger.warning("清理工作线程 Playwright 资源时发生异常: %s", e)
+            # 工作线程已在自己的上下文中完成清理，主线程无需也无法跨线程清理
+            pass
 
         if early_stop_triggered:
             logger.warning("子页面级去重触发早停标记，已完成的结果将继续入库。")
@@ -707,7 +721,7 @@ class BaseCrawler:
         except KeyboardInterrupt:
             logger.warning("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
         except Exception as e:
-            logger.error("\n[致命错误] 运行中发生未捕获的异常: %s", e)
+            logger.exception("\n[致命错误] 运行中发生未捕获的异常")
         finally:
             self.on_finish()
 
@@ -1055,7 +1069,7 @@ class DomainRotationMixin:
             logger.warning("[!] 冷却结束，%s 域名切换至: %s", self.source_name.upper(), self.base_domain)
 
     def _update_domains_from_redirect(self, content):
-        """从'正在检测最新可用线路'跳转页面中提取最新域名并更新域名列表
+        """从'正在检测'跳转页面中提取最新域名并更新域名列表
         
         当旧域名失效时，服务器会返回一个包含新域名列表的跳转页面。
         此方法解析该页面，提取新域名并动态更新 self.domains。
@@ -1066,7 +1080,7 @@ class DomainRotationMixin:
         Returns:
             True 如果域名列表已更新，False 如果无变化或未检测到跳转页
         """
-        if not content or "正在检测最新可用线路" not in content:
+        if not content or "正在检测" not in content:
             return False
         
         import re
@@ -1179,21 +1193,33 @@ class DomainRotationMixin:
             with ThreadPoolExecutor(max_workers=2) as executor:
                 fut_curl = executor.submit(_curl_fetch)
                 fut_pw = executor.submit(_pw_fetch)
-                for fut in as_completed([fut_curl, fut_pw]):
-                    result = fut.result()
-                    if result:
-                        with html_lock:
-                            if html is None:
-                                html = result
-                                # 取消另一个还在跑的请求（如果有必要）
-                                # 注意：as_completed 不会取消其它 future，我们只是优先使用先到的结果
-                                break
+                try:
+                    for fut in as_completed([fut_curl, fut_pw]):
+                        result = fut.result()
+                        if result:
+                            with html_lock:
+                                if html is None:
+                                    html = result
+                                    # 取消另一个还在跑的请求（如果有必要）
+                                    # 注意：as_completed 不会取消其它 future，我们只是优先使用先到的结果
+                                    break
+                finally:
+                    # 在线程池关闭前，提交清理任务给工作线程
+                    from utils.browser_factory import browser_factory
+                    clean_futures = []
+                    for _ in range(2):
+                        try:
+                            clean_futures.append(executor.submit(browser_factory.destroy_thread_resources))
+                        except Exception:
+                            pass
+                    for fut in clean_futures:
+                        try:
+                            fut.result()
+                        except Exception as e:
+                            logger.warning("域名解析工作线程自助清理资源失败: %s", e)
         finally:
-            try:
-                from utils.browser_factory import browser_factory
-                browser_factory.destroy_other_threads_resources()
-            except Exception as e:
-                logger.warning("清理获取域名工作线程 Playwright 资源异常: %s", e)
+            # 工作线程已在自己的上下文中完成清理，主线程无需也无法跨线程清理
+            pass
         
         if not html:
             logger.warning("[!] 无法从主站 %s 获取到页面内容", self.main_domain)
@@ -1318,7 +1344,10 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
 
     def _get_full_list_url(self, page_num):
         """子类可覆盖，默认格式 base_list_url.format(class, page)"""
-        return self.base_list_url.format(self.current_class, page_num)
+        try:
+            return self.base_list_url.format(cat=self.current_class, page=page_num)
+        except (KeyError, ValueError):
+            return self.base_list_url.format(self.current_class, page_num)
 
     def fetch_list_page(self, page_num, retry_with_main=True):
         """请求列表页并解密 HTML，支持域名轮换重试和自动域名发现"""
@@ -1342,11 +1371,11 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
                     if response.status_code == 200:
                         decrypted = self.decrypt_html(response.text)
-                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                        if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                             return decrypted
-                        if decrypted and "正在检测最新可用线路" in decrypted:
+                        if decrypted and "正在检测" in decrypted:
                             redirect_content = decrypted
-                        elif "正在检测最新可用线路" in response.text:
+                        elif "正在检测" in response.text:
                             redirect_content = response.text
                     elif response.status_code == 403:
                         logger.warning("[!] 列表页返回 403，疑似触发反爬: %s", url)
@@ -1376,11 +1405,11 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 if self._is_valid_list_page(html):
                     return html
                 decrypted = self.decrypt_html(html)
-                if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                     return decrypted
-                if decrypted and "正在检测最新可用线路" in decrypted:
+                if decrypted and "正在检测" in decrypted:
                     redirect_content = decrypted
-                elif "正在检测最新可用线路" in html:
+                elif "正在检测" in html:
                     redirect_content = html
             except Exception as e:
                 logger.error("[-] Playwright 兜底抓取列表页异常: %s", e)
@@ -1502,7 +1531,10 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             else:
                 url = original_url
 
-            list_url = self.base_list_url.format(self.current_class, 1)
+            try:
+                list_url = self.base_list_url.format(cat=self.current_class, page=1)
+            except (KeyError, ValueError):
+                list_url = self.base_list_url.format(self.current_class, 1)
             headers = self._build_headers(referer=list_url)
             redirect_content = None
 
@@ -1517,12 +1549,12 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
                     if response.status_code == 200:
                         decrypted = self.decrypt_html(response.text)
-                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                        if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                             detail_html = decrypted
                             break
-                        if decrypted and "正在检测最新可用线路" in decrypted:
+                        if decrypted and "正在检测" in decrypted:
                             redirect_content = decrypted
-                        elif "正在检测最新可用线路" in response.text:
+                        elif "正在检测" in response.text:
                             redirect_content = response.text
                     elif response.status_code == 403:
                         logger.warning("[!] 详情页返回 403，疑似触发反爬: %s", url)
@@ -1548,12 +1580,12 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         break
                     else:
                         decrypted = self.decrypt_html(html)
-                        if decrypted and "正在检测最新可用线路" not in decrypted and "403 Forbidden" not in decrypted:
+                        if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                             detail_html = decrypted
                             break
-                        if decrypted and "正在检测最新可用线路" in decrypted:
+                        if decrypted and "正在检测" in decrypted:
                             redirect_content = decrypted
-                        elif "正在检测最新可用线路" in html:
+                        elif "正在检测" in html:
                             redirect_content = html
                 except Exception as e:
                     logger.error("[-] Playwright 兜底抓取详情页异常 (%s): %s", url, e)

@@ -150,48 +150,65 @@ class SejuCrawler(PlaywrightBaseCrawler):
     # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
     def _fetch_sub_page(self, sub_url):
-        """获取子页面内容"""
+        """获取子页面内容，最多重试 3 次"""
         html_text = None
         current_url = sub_url
         sub_page = None
+        last_err = None
         
-        try:
-            _, _, context = self._get_thread_resources()
-            sub_page = context.new_page()
-            sub_page.goto(sub_url, timeout=60000, wait_until="domcontentloaded")
-            
-            # 检测并等待 Cloudflare 盾通过
-            bypassed = self._wait_for_cloudflare_bypass(sub_page)
-            if not bypassed:
-                logger.warning("[!] Cloudflare 解盾超时，子页面 %s 内容可能不完整", sub_url)
+        for attempt in range(1, 4):
+            if attempt > 1:
+                logger.info("[*] 第 %s/3 次重试抓取子页面: %s", attempt, sub_url)
+                if sub_page:
+                    try:
+                        sub_page.close()
+                    except Exception:
+                        pass
+                    sub_page = None
+                self._destroy_thread_resources()
+                time.sleep(random.uniform(2.0, 4.0))
             
             try:
-                sub_page.wait_for_load_state("load", timeout=15000)
-            except Exception as wait_err:
-                logger.warning("[!] 等待 load 状态超时，继续处理: %s", wait_err)
-            
-            # 等待网络静止让图片完全加载，对直接生成 PDF 至关重要
-            try:
-                sub_page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception as wait_idle:
-                logger.info("[*] 等待 networkidle 状态超时，继续处理: %s", wait_idle)
+                _, _, context = self._get_thread_resources()
+                sub_page = context.new_page()
+                sub_page.goto(sub_url, timeout=60000, wait_until="domcontentloaded")
                 
-            time.sleep(random.uniform(2.0, 4.0))
-            
-            current_url = sub_page.url
-            html_text = sub_page.content()
-            return html_text, current_url, sub_page
-        except Exception as err:
-            logger.error("[-] 使用 Playwright 抓取子页面 %s 异常: %s", sub_url, err)
-            from config import is_proxy_manager_enabled
-            if is_proxy_manager_enabled():
-                manager = get_proxy_manager()
-                if manager:
-                    proxy_url = manager._thread_proxy_map.get(threading.get_ident())
-                    if proxy_url:
-                        manager.report_failure(proxy_url)
-            self._destroy_thread_resources()
-            return None, None, None
+                # 检测并等待 Cloudflare 盾通过
+                bypassed = self._wait_for_cloudflare_bypass(sub_page)
+                if not bypassed:
+                    logger.warning("[!] Cloudflare 解盾超时，子页面 %s 内容可能不完整", sub_url)
+                
+                try:
+                    sub_page.wait_for_load_state("load", timeout=15000)
+                except Exception as wait_err:
+                    logger.warning("[!] 等待 load 状态超时，继续处理: %s", wait_err)
+                
+                # 等待网络静止让图片完全加载，对直接生成 PDF 至关重要
+                try:
+                    sub_page.wait_for_load_state("networkidle", timeout=15000)
+                except Exception as wait_idle:
+                    logger.info("[*] 等待 networkidle 状态超时，继续处理: %s", wait_idle)
+                    
+                time.sleep(random.uniform(2.0, 4.0))
+                
+                current_url = sub_page.url
+                html_text = sub_page.content()
+                return html_text, current_url, sub_page
+            except Exception as err:
+                last_err = err
+                logger.error("[-] 使用 Playwright 抓取子页面 %s 异常 (第 %s/3 次): %s", sub_url, attempt, err)
+                from config import is_proxy_manager_enabled
+                if is_proxy_manager_enabled():
+                    manager = get_proxy_manager()
+                    if manager:
+                        proxy_url = manager._thread_proxy_map.get(threading.get_ident())
+                        if proxy_url:
+                            manager.report_failure(proxy_url)
+        
+        # 所有重试均失败
+        logger.error("[-] 子页面 %s 抓取失败（3 次重试均已耗尽）: %s", sub_url, last_err)
+        self._destroy_thread_resources()
+        return None, None, None
 
     def _parse_sub_page(self, html_text, current_url):
         """解析子页面元数据"""

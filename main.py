@@ -12,6 +12,8 @@ from crawlers.datang_crawler import DatangCrawler
 from crawlers.gcbt_crawler import GcbtCrawler
 from crawlers.madou_crawler import MadouCrawler
 from crawlers.jingpin_toupai_crawler import JingpinToupaiCrawler
+from crawlers.taose_crawler import TaoseCrawler
+
 
 
 # Windows下控制台强制使用utf-8编码输出，防止中文乱码
@@ -26,6 +28,7 @@ CRAWLER_REGISTRY = {
     "gcbt":         GcbtCrawler,
     "madou":        MadouCrawler,
     "jingpin_toupai": JingpinToupaiCrawler,
+    "taose":        TaoseCrawler,
 }
 
 # 交互式爬虫选择菜单
@@ -36,6 +39,7 @@ CRAWLER_CHOICES = [
     ("gcbt", "gcbt"),
     ("madou", "madou"),
     ("jingpin_toupai", "jingpin_toupai"),
+    ("taose", "taose"),
 ]
 
 
@@ -59,8 +63,8 @@ def main():
     parser.add_argument(
         "--crawler", "-c",
         required=False,
-        choices=["seju", "u3c3", "datang", "gcbt", "madou", "jingpin_toupai"],
-        help="指定运行哪一个网站的爬虫 (seju, u3c3, datang, gcbt, madou, jingpin_toupai)"
+        choices=["seju", "u3c3", "datang", "gcbt", "madou", "jingpin_toupai", "taose"],
+        help="指定运行哪一个网站的爬虫 (seju, u3c3, datang, gcbt, madou, jingpin_toupai, taose)"
     )
     
     # 互斥参数：测试模式或正式爬取模式

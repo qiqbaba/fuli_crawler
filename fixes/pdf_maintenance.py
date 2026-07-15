@@ -858,6 +858,31 @@ def run_rebuild(args):
                             if (document.body) document.body.style.overflow = 'auto';
                             if (document.documentElement) document.documentElement.style.overflow = 'auto';
                         }"""
+                    ),
+                    "taose": PDFRenderConfig(
+                        emulate_media="screen",
+                        ad_selectors=[
+                            'div[style*="height:60px"]',
+                            'div[style*="height:55px"]',
+                            'div[style*="height:70px"]',
+                            '#bottom_float',
+                            '.layui-layer',
+                            '.layui-layer-shade',
+                            '[id*="layui-layer"]',
+                            '.modal',
+                            '.modal-backdrop'
+                        ],
+                        ad_block_js="""() => {
+                            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+                            if (document.body) document.body.style.overflow = 'auto';
+                            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+                            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
+                            adDivs.forEach(div => div.remove());
+                            const bottomFloat = document.getElementById('bottom_float');
+                            if (bottomFloat) {
+                                bottomFloat.remove();
+                            }
+                        }"""
                     )
                 }
 
