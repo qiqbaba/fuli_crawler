@@ -781,6 +781,11 @@ class PlaywrightBaseCrawler(BaseCrawler):
                 thread_local = browser_factory._thread_local
                 page = getattr(thread_local, "page", None)
                 if page:
+                    # 先移除所有路由处理器，避免异步路由任务在 close 时被取消导致 CancelledError
+                    try:
+                        page.unroute("**/*")
+                    except Exception:
+                        pass
                     page.close()
                     del thread_local.page
                     logger.info("[+] 已关闭页面资源，保留浏览器供复用")

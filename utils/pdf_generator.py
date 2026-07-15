@@ -3,6 +3,7 @@ import re
 import time
 import random
 import threading
+import asyncio
 import urllib.parse
 import aiohttp
 
@@ -128,32 +129,46 @@ class PDFGenerator:
         """在网络层添加图片代理请求拦截器，在 Python 后台下载图片喂给浏览器以绕过防盗链和 GFW"""
         try:
             async def img_router(route):
-                req_url = route.request.url
-                if "plugin/img_layer/data/" in req_url and "?src=" in req_url:
+                try:
+                    req_url = route.request.url
+                    if "plugin/img_layer/data/" in req_url and "?src=" in req_url:
+                        try:
+                            real_url = urllib.parse.unquote(req_url.split("?src=")[1])
+                            
+                            from config import get_effective_proxy
+                            p_dict = get_effective_proxy(exclusive=True)
+                            
+                            headers = {
+                                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                                "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+                            }
+                            
+                            async with self._get_http_session().get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
+                                    if r.status == 200:
+                                        content = await r.read()
+                                        content_type = r.headers.get("Content-Type", "image/jpeg")
+                                        await route.fulfill(
+                                            status=200,
+                                            content_type=content_type,
+                                            body=content
+                                        )
+                                        return
+                        except asyncio.CancelledError:
+                            # 页面关闭时正在处理的路由任务会被取消，优雅放行
+                            try:
+                                await route.continue_()
+                            except Exception:
+                                pass
+                            return
+                        except Exception as route_err:
+                            logger.warning("路由代理图片下载失败: %s", route_err)
+                    await route.continue_()
+                except asyncio.CancelledError:
+                    # 顶层 CancelledError 保护，防止页面关闭时未捕获的异常
                     try:
-                        real_url = urllib.parse.unquote(req_url.split("?src=")[1])
-                        
-                        from config import get_effective_proxy
-                        p_dict = get_effective_proxy(exclusive=True)
-                        
-                        headers = {
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
-                        }
-                        
-                        async with self._get_http_session().get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                                if r.status == 200:
-                                    content = await r.read()
-                                    content_type = r.headers.get("Content-Type", "image/jpeg")
-                                    await route.fulfill(
-                                        status=200,
-                                        content_type=content_type,
-                                        body=content
-                                    )
-                                    return
-                    except Exception as route_err:
-                        logger.warning("路由代理图片下载失败: %s", route_err)
-                await route.continue_()
+                        await route.continue_()
+                    except Exception:
+                        pass
 
             page.route("**/*", img_router)
         except Exception as route_setup_err:
@@ -354,11 +369,20 @@ class PDFGenerator:
                     print_background=True,
                     margin=config.margin
                 )
+                # 关闭页面前移除路由，避免异步路由任务被取消时抛出 CancelledError
+                try:
+                    page.unroute("**/*")
+                except Exception:
+                    pass
                 page.close()
                 page = None
         except Exception as e:
             logger.error("PDF 生成失败: %s", e)
             if page and not is_reuse_page:
+                try:
+                    page.unroute("**/*")
+                except Exception:
+                    pass
                 try:
                     page.close()
                 except Exception:
