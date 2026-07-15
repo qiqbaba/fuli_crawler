@@ -465,6 +465,10 @@ class ProxyPool:
             with self._lock:
                 self._is_replenishing = False
 
+    def _should_replenish(self) -> bool:
+        """在锁内快速判断是否需要触发补给（不执行实际补给）"""
+        return len(self._working_proxies) < 200 and not self._is_replenishing
+
     def get_thread_exclusive_proxy(self) -> Optional[str]:
         """
         根据线程 ID 进行无重复队列轮询（Round-Robin）
@@ -472,14 +476,13 @@ class ProxyPool:
         """
         current_thread_id = threading.get_ident()
         
+        # 先快速检查是否需要触发补给（锁内仅做判断，不执行耗时操作）
         with self._lock:
-            # 在锁保护下检查并补充代理，避免 TOCTOU 竞争
-            if len(self._working_proxies) < 200:
-                self.check_and_replenish(threshold=200, target_count=300)
+            need_replenish = self._should_replenish()
             
             if not self._working_proxies:
                 return None
-                
+            
             # 1. 清理已死亡线程的分配记录
             active_thread_ids = {t.ident for t in threading.enumerate() if t.ident is not None}
             dead_threads = [tid for tid in self._thread_proxy_map if tid not in active_thread_ids]
@@ -519,19 +522,28 @@ class ProxyPool:
                 self._current_proxy_idx += 1
                 self._thread_proxy_map[current_thread_id] = selected_proxy
                 return selected_proxy
+        
+        # 锁外执行补给，避免阻塞其他获取代理的线程
+        if need_replenish:
+            self.check_and_replenish(threshold=200, target_count=300)
 
     def get_random_pool_proxy(self) -> Optional[str]:
         """
         随机从已验证可用的代理池中获取一个代理 IP，不与线程绑定，每次调用都可能不同。
         """
+        # 先快速检查是否需要触发补给（锁内仅做判断，不执行耗时操作）
         with self._lock:
-            # 在锁保护下检查并补充代理
-            if len(self._working_proxies) < 200:
-                self.check_and_replenish(threshold=200, target_count=300)
+            need_replenish = self._should_replenish()
             if not self._working_proxies:
                 return None
             p = random.choice(self._working_proxies)
-            return f"{p['protocol']}://{p['address']}"
+            proxy_url = f"{p['protocol']}://{p['address']}"
+        
+        # 锁外执行补给，避免阻塞其他获取代理的线程
+        if need_replenish:
+            self.check_and_replenish(threshold=200, target_count=300)
+        
+        return proxy_url
 
     def get_random_proxy(self) -> Optional[str]:
         """获取当前线程独占的代理（原随机获取改为独占队列轮询模式）"""
