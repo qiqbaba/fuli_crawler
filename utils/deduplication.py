@@ -1,3 +1,5 @@
+import os
+import json
 import threading
 import time
 import hashlib
@@ -11,9 +13,11 @@ logger = get_logger(__name__)
 
 class BloomFilter:
     """轻量 Bloom Filter，用于减少 DynamoDB 查询次数
-    
+
     使用多个哈希函数（基于 hashlib）的位数组实现。
     存在假阳性（可配置），但不存在假阴性。
+    
+    支持序列化到本地文件，避免进程重启后的冷启动穿透。
     """
     def __init__(self, capacity: int = 100000, error_rate: float = 0.01):
         import math
@@ -56,6 +60,55 @@ class BloomFilter:
         self._bit_array = 0
         self._count = 0
 
+    def save(self, filepath: str):
+        """将 Bloom Filter 的位数组序列化到本地文件
+        
+        Args:
+            filepath: 保存路径
+        """
+        import pickle
+        import os
+        data = {
+            'capacity': self.capacity,
+            'error_rate': self.error_rate,
+            'bit_size': self.bit_size,
+            'hash_count': self.hash_count,
+            'bit_array': self._bit_array,
+            'count': self._count,
+        }
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        with open(filepath, 'wb') as f:
+            pickle.dump(data, f)
+
+    @classmethod
+    def load(cls, filepath: str) -> 'BloomFilter':
+        """从本地文件加载 Bloom Filter
+        
+        Args:
+            filepath: 保存路径
+            
+        Returns:
+            加载后的 BloomFilter 实例，如果文件不存在或损坏则返回空的 BloomFilter
+        """
+        import pickle
+        try:
+            with open(filepath, 'rb') as f:
+                data = pickle.load(f)
+            bf = cls(capacity=data['capacity'], error_rate=data['error_rate'])
+            bf.bit_size = data['bit_size']
+            bf.hash_count = data['hash_count']
+            bf._bit_array = data['bit_array']
+            bf._count = data['count']
+            logger.info("从 %s 加载 Bloom Filter 成功，位大小=%s，哈希数=%s，已记录元素=%s",
+                        filepath, bf.bit_size, bf.hash_count, bf._count)
+            return bf
+        except (FileNotFoundError, pickle.UnpicklingError, EOFError, KeyError) as e:
+            logger.info("从 %s 加载 Bloom Filter 失败 (%s)，使用空 Bloom Filter", filepath, e)
+            return cls(capacity=200000, error_rate=0.01)
+        except Exception as e:
+            logger.warning("从 %s 加载 Bloom Filter 异常 (%s)，使用空 Bloom Filter", filepath, e)
+            return cls(capacity=200000, error_rate=0.01)
+
 
 class DynamoDBDeduplicationService:
     """AWS DynamoDB 数据库助手，用于比对重复项和保存资源"""
@@ -74,8 +127,14 @@ class DynamoDBDeduplicationService:
         self._cached_urls = set()              # 新插入的 URL 缓存
         self._cached_resource_links = set()    # 新插入的磁力链接缓存
         # Bloom Filter 缓存 — 减少 DynamoDB 查询次数
-        self._url_bloom = BloomFilter(capacity=200000, error_rate=0.01)
+        # 尝试从本地文件加载，避免进程重启后的冷启动穿透
+        self._bloom_cache_path = os.path.join(_cfg.PROJECT_ROOT, "cache", "bloom_filter.pkl")
+        self._url_bloom = BloomFilter.load(self._bloom_cache_path)
         self._bloom_sync_count = 0             # 已同步到 Bloom Filter 的 URL 数
+        self._bloom_dirty = False              # Bloom Filter 是否有未保存的变更
+        self._bloom_save_interval = 120        # 自动保存间隔（秒）
+        self._bloom_last_save = time.time()
+        self._bloom_save_timer = None           # 定时保存定时器
         self._executor = None                  # 线程池延迟加载
 
         if not self.aws_access_key_id or not self.aws_secret_access_key:
@@ -92,6 +151,8 @@ class DynamoDBDeduplicationService:
         self.ensure_table_exists()
         from concurrent.futures import ThreadPoolExecutor
         self._executor = ThreadPoolExecutor(max_workers=5)
+        # 启动定时保存 Bloom Filter 的定时器
+        self._start_bloom_save_timer()
 
     def ensure_table_exists(self):
         """确保 DynamoDB 表已存在，若不存在则创建"""
@@ -188,6 +249,7 @@ class DynamoDBDeduplicationService:
                         url_val = item.get("url", {}).get("S")
                         if url_val:
                             self._url_bloom.add(url_val)
+                            self._bloom_dirty = True
                 
                 # 处理未处理完的 Keys（最大重试 5 次）
                 unprocessed = response.get("UnprocessedKeys", {}).get(self.table_name, {})
@@ -350,6 +412,7 @@ class DynamoDBDeduplicationService:
         with self._lock:
             self._cached_urls.add(url)
             self._url_bloom.add(url)
+            self._bloom_dirty = True
             if resource_link:
                 self._cached_resource_links.add(resource_link)
                 if self._scanned_resource_links is not None:
@@ -375,8 +438,43 @@ class DynamoDBDeduplicationService:
             # 异步写入失败不应影响主流程，记录即可
             logger.error("AWS DynamoDB 异步写入记录失败 (%s): %s", url, e)
 
+    def _start_bloom_save_timer(self):
+        """启动定时保存 Bloom Filter 的后台定时器"""
+        def _timer_loop():
+            while True:
+                time.sleep(self._bloom_save_interval)
+                self._save_bloom_filter()
+
+        self._bloom_save_timer = threading.Thread(
+            target=_timer_loop, daemon=True, name="bloom-save-timer"
+        )
+        self._bloom_save_timer.start()
+
+    def _save_bloom_filter(self):
+        """将 Bloom Filter 保存到本地文件（如果有关联变更）"""
+        if not self._bloom_dirty:
+            return
+        self._save_bloom_filter_sync()
+
+    def _save_bloom_filter_sync(self):
+        """同步保存 Bloom Filter 到本地文件（带锁）"""
+        try:
+            with self._lock:
+                self._url_bloom.save(self._bloom_cache_path)
+                self._bloom_dirty = False
+                self._bloom_last_save = time.time()
+        except Exception as e:
+            logger.error("Bloom Filter 持久化保存失败: %s", e)
+
     def shutdown(self):
-        """在爬虫关闭时清理后台线程池并关闭 DynamoDB 客户端连接"""
+        """在爬虫关闭时清理后台线程池并关闭 DynamoDB 客户端连接
+        
+        在关闭前将 Bloom Filter 持久化到本地，避免数据丢失。
+        """
+        # 关闭前确保 Bloom Filter 已持久化
+        if self._bloom_dirty:
+            self._save_bloom_filter_sync()
+        self._bloom_save_timer = None
         if self._executor:
             try:
                 self._executor.shutdown(wait=True)
