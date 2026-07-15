@@ -217,7 +217,12 @@ class ProxyPool:
             self._last_save_time = time.time()
 
     def _do_save_cache(self):
-        """实际执行 SQLite 写入 — 只保存已验证可用的代理，大幅减少数据库体积"""
+        """实际执行 SQLite 写入 — 使用 UPSERT 增量更新，避免全量重写
+        
+        重要：不再先 DELETE 再 INSERT，避免在 _working_proxies 为空时
+        误删所有代理数据（如程序启动时触发 atexit 保存）。
+        保存所有代理（已验证 + 未验证），通过 last_verified 字段区分。
+        """
         conn = None
         try:
             conn = sqlite3.connect(_PROXY_CACHE_DB, timeout=10)
@@ -236,14 +241,21 @@ class ProxyPool:
                 ("last_verify_time", str(int(self._last_verify_time)))
             )
 
-            # 清空旧记录，只保留已验证可用的代理
-            cursor.execute("DELETE FROM proxy_cache")
+            # 构建已验证代理的快速查找集合
+            working_set = {(w["protocol"], w["address"]) for w in self._working_proxies}
 
-            # 只保存已验证可用的代理
-            for p in self._working_proxies:
+            # 使用 UPSERT 增量更新所有代理，不清除未验证的代理
+            for p in self._proxies:
+                last_verified = 1.0 if (p["protocol"], p["address"]) in working_set else 0.0
                 cursor.execute(
                     """INSERT INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(protocol, address) DO UPDATE SET
+                           source = EXCLUDED.source,
+                           success_count = EXCLUDED.success_count,
+                           fail_count = EXCLUDED.fail_count,
+                           score = EXCLUDED.score,
+                           last_verified = EXCLUDED.last_verified""",
                     (
                         p["protocol"],
                         p["address"],
@@ -251,7 +263,7 @@ class ProxyPool:
                         p.get("success_count", 0),
                         p.get("fail_count", 0),
                         p.get("score", 0.0),
-                        1.0
+                        last_verified
                     )
                 )
 
