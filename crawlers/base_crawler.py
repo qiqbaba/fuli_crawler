@@ -889,7 +889,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
 
                 saved_path = self._save_pdf(url_or_page, publish_date, title, no_proxy=no_proxy)
                 if saved_path:
-                    logger.info("[PDF-SAVE] 标题: %s -> PDF 路径: %s", title, saved_path)
+                    # logger.info("[PDF-SAVE] 标题: %s -> PDF 路径: %s", title, saved_path)
                     return saved_path
                 else:
                     last_error = f"第 {attempt}/{max_retries} 次尝试返回空"
