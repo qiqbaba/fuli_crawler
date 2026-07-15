@@ -1,8 +1,12 @@
 import re
 import time
 import requests
+import urllib3
 from urllib.parse import urlparse, parse_qs
 from utils.logger import get_logger
+
+# 禁用 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = get_logger(__name__)
 
@@ -38,87 +42,107 @@ def get_pikpak_link(keepshare_url, timeout=30, poll_interval=2, quiet=False):
     except Exception:
         pass
 
-    try:
-        # 发送 GET 请求，禁止自动跳转
-        res = requests.get(keepshare_url, headers=headers, allow_redirects=False, timeout=10, proxies=proxies)
-        
-        # 1. 检查重定向地址
-        location = res.headers.get("Location")
-        if not location:
-            log("[-] 未在响应头中找到 Location 重定向地址。")
-            return None
+    current_url = keepshare_url
+    max_redirects = 5
+    redirect_count = 0
+    
+    while redirect_count < max_redirects:
+        try:
+            # 发送 GET 请求，禁止自动跳转（忽略 SSL 证书验证以解决 GitHub Actions 环境下的证书问题）
+            res = requests.get(current_url, headers=headers, allow_redirects=False, timeout=10, proxies=proxies, verify=False)
             
-        log(f"[+] 初始重定向目标: {location}")
-        
-        # 情况 A: 已经转存过，直接 302 到 pikpak 链接
-        if "mypikpak.com" in location:
-            log("[OK] 资源已存在缓存，直接秒级获取成功！")
-            return location
-            
-        # 情况 B: 尚未转存成功，跳转到了状态等待页
-        if "console/shared/status" in location:
-            log("[*] 资源尚未转存完成，正在解析 API 并开始后台轮询...")
-            
-            # 解析 URL 中的参数 id 和 request_id
-            parsed_loc = urlparse(location)
-            params = parse_qs(parsed_loc.query)
-            
-            task_id = params.get("id", [None])[0]
-            request_id = params.get("request_id", [""])[0]
-            
-            if not task_id:
-                log("[-] 无法从状态 URL 中解析出任务 id。")
+            # 1. 检查重定向地址
+            location = res.headers.get("Location")
+            if not location:
+                log("[-] 未在响应头中找到 Location 重定向地址。")
                 return None
                 
-            # 开始轮询后台 API
-            api_url = f"https://keepshare.org/api/shared_link?id={task_id}&request_id={request_id}&is_end=false"
-            log(f"[+] API 查询接口: {api_url}")
+            log(f"[+] 重定向目标: {location}")
             
-            start_time = time.time()
-            attempt = 0
-            max_interval = 30  # 退避上限 30 秒
-            while time.time() - start_time < timeout:
-                try:
-                    attempt += 1
-                    api_res = requests.get(api_url, headers=headers, timeout=10, proxies=proxies)
-                    if api_res.status_code == 200:
-                        data = api_res.json()
-                        state = data.get("state")
-                        pikpak_link = data.get("host_shared_link")
-                        
-                        log(f"    [轮询] 当前状态: {state} | 链接: {pikpak_link or '等待生成中...'}")
-                        
-                        if pikpak_link:
-                            log(f"[OK] 资源转存成功，轮询获取到 PikPak 链接！花费时间: {int(time.time() - start_time)}秒")
-                            return pikpak_link
+            # 如果重定向 URL 是相对路径，拼接成绝对路径
+            if location.startswith("/"):
+                parsed_curr = urlparse(current_url)
+                location = f"{parsed_curr.scheme}://{parsed_curr.netloc}{location}"
+            
+            # 情况 A: 已经转存过，直接 302 到 pikpak 链接
+            if "mypikpak.com" in location:
+                log("[OK] 资源已存在缓存，直接秒级获取成功！")
+                return location
+                
+            # 情况 B: 尚未转存成功，跳转到了状态等待页
+            if "console/shared/status" in location:
+                log("[*] 资源尚未转存完成，正在解析 API 并开始后台轮询...")
+                
+                # 解析 URL 中的参数 id 和 request_id
+                parsed_loc = urlparse(location)
+                params = parse_qs(parsed_loc.query)
+                
+                task_id = params.get("id", [None])[0]
+                request_id = params.get("request_id", [""])[0]
+                
+                if not task_id:
+                    log("[-] 无法从状态 URL 中解析出任务 id。")
+                    return None
+                    
+                # 开始轮询后台 API，使用 location 的 scheme 和 host 动态拼接，兼容域名跳转
+                api_url = f"{parsed_loc.scheme}://{parsed_loc.netloc}/api/shared_link?id={task_id}&request_id={request_id}&is_end=false"
+                log(f"[+] API 查询接口: {api_url}")
+                
+                start_time = time.time()
+                attempt = 0
+                max_interval = 30  # 退避上限 30 秒
+                while time.time() - start_time < timeout:
+                    try:
+                        attempt += 1
+                        api_res = requests.get(api_url, headers=headers, timeout=10, proxies=proxies, verify=False)
+                        if api_res.status_code == 200:
+                            data = api_res.json()
+                            state = data.get("state")
+                            pikpak_link = data.get("host_shared_link")
                             
-                        # 如果出现 ERROR 状态
-                        if state == "ERROR":
-                            log(f"[-] 转存任务出错，错误原因: {data.get('error')}")
-                            return None
-                    else:
-                        log(f"    [警告] API 请求失败，状态码: {api_res.status_code}")
-                except Exception as api_err:
-                    log(f"    [警告] 轮询请求发生异常: {api_err}")
+                            log(f"    [轮询] 当前状态: {state} | 链接: {pikpak_link or '等待生成中...'}")
+                            
+                            if pikpak_link:
+                                log(f"[OK] 资源转存成功，轮询获取到 PikPak 链接！花费时间: {int(time.time() - start_time)}秒")
+                                return pikpak_link
+                                
+                            # 如果出现 ERROR 状态
+                            if state == "ERROR":
+                                log(f"[-] 转存任务出错，错误原因: {data.get('error')}")
+                                return None
+                        else:
+                            log(f"    [警告] API 请求失败，状态码: {api_res.status_code}")
+                    except Exception as api_err:
+                        log(f"    [警告] 轮询请求发生异常: {api_err}")
+                    
+                    # 指数退避：间隔 = min(base * 2^attempt, max_interval)
+                    sleep_time = min(poll_interval * (2 ** (attempt - 1)), max_interval)
+                    # 同时确保不超过剩余超时时间
+                    remaining = timeout - (time.time() - start_time)
+                    sleep_time = min(sleep_time, max(remaining, 0))
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+                    
+                log(f"[-] 轮询超时 ({timeout}秒)，资源可能在排队离线中，您可以稍后直接请求该 KeepShare 链接。")
+                return None
                 
-                # 指数退避：间隔 = min(base * 2^attempt, max_interval)
-                sleep_time = min(poll_interval * (2 ** (attempt - 1)), max_interval)
-                # 同时确保不超过剩余超时时间
-                remaining = timeout - (time.time() - start_time)
-                sleep_time = min(sleep_time, max(remaining, 0))
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
+            # 情况 C: 如果是 KeepShare 域名跳转，跟随重定向继续请求
+            if "keepshare" in location:
+                log(f"[*] 发现 KeepShare 域名跳转，跟随重定向: {location}")
+                current_url = location
+                redirect_count += 1
+                continue
                 
-            log(f"[-] 轮询超时 ({timeout}秒)，资源可能在排队离线中，您可以稍后直接请求该 KeepShare 链接。")
+            # 其他不认识的重定向
+            log(f"[-] 遇到未知的重定向目标: {location}")
             return None
             
-        # 其他不认识的重定向
-        log(f"[-] 遇到未知的重定向目标: {location}")
-        return None
-        
-    except Exception as e:
-        log(f"[-] 请求发生错误: {e}")
-        return None
+        except Exception as e:
+            log(f"[-] 请求发生错误: {e}")
+            return None
+            
+    log(f"[-] 达到最大重定向次数 ({max_redirects})，未获取到有效目标")
+    return None
 
 if __name__ == "__main__":
     # 测试用例 1: 已缓存的资源（秒跳）
