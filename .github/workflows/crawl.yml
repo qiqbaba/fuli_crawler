@@ -19,6 +19,8 @@ on:
           - gcbt
           - madou
           - jingpin_toupai
+          - taose
+          - dashen
       start:
         description: '起始页码 (留空则默认为 1)'
         required: false
@@ -110,6 +112,8 @@ jobs:
           mkdir -p /tmp/gcbt_pdfs
           mkdir -p /tmp/datang_pdfs
           mkdir -p /tmp/jingpin_toupai_pdfs
+          mkdir -p /tmp/taose_pdfs
+          mkdir -p /tmp/dashen_pdfs
 
       - name: 执行爬虫任务
         run: |
@@ -154,6 +158,12 @@ jobs:
               echo "=== 开始爬取 jingpin_toupai ==="
               python main.py --crawler jingpin_toupai --crawl $COMMON_ARGS
               echo "=== jingpin_toupai 完成 ==="
+              echo "=== 开始爬取 taose ==="
+              python main.py --crawler taose --crawl $COMMON_ARGS
+              echo "=== taose 完成 ==="
+              echo "=== 开始爬取 dashen ==="
+              python main.py --crawler dashen --crawl $COMMON_ARGS
+              echo "=== dashen 完成 ==="
             else
               CMD="python main.py --crawler $CRAWLER --crawl -q"
               if [ -n "${{ github.event.inputs.start }}" ]; then
@@ -191,6 +201,12 @@ jobs:
             echo "=== 开始爬取 jingpin_toupai ==="
             python main.py --crawler jingpin_toupai --crawl -q
             echo "=== jingpin_toupai 完成 ==="
+            echo "=== 开始爬取 taose ==="
+            python main.py --crawler taose --crawl -q
+            echo "=== taose 完成 ==="
+            echo "=== 开始爬取 dashen ==="
+            python main.py --crawler dashen --crawl -q
+            echo "=== dashen 完成 ==="
           fi
 
       - name: 保存代理 IP 缓存

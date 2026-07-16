@@ -18,6 +18,7 @@ from crawlers.gcbt_crawler import GcbtCrawler
 from crawlers.madou_crawler import MadouCrawler
 from crawlers.jingpin_toupai_crawler import JingpinToupaiCrawler
 from crawlers.taose_crawler import TaoseCrawler
+from crawlers.dashen_crawler import DashenCrawler
 
 
 
@@ -34,6 +35,7 @@ CRAWLER_REGISTRY = {
     "madou":        MadouCrawler,
     "jingpin_toupai": JingpinToupaiCrawler,
     "taose":        TaoseCrawler,
+    "dashen":       DashenCrawler,
 }
 
 # 交互式爬虫选择菜单
@@ -45,6 +47,7 @@ CRAWLER_CHOICES = [
     ("madou", "madou"),
     ("jingpin_toupai", "jingpin_toupai"),
     ("taose", "taose"),
+    ("dashen", "dashen (大神)"),
 ]
 
 
@@ -68,8 +71,8 @@ def main():
     parser.add_argument(
         "--crawler", "-c",
         required=False,
-        choices=["seju", "u3c3", "datang", "gcbt", "madou", "jingpin_toupai", "taose"],
-        help="指定运行哪一个网站的爬虫 (seju, u3c3, datang, gcbt, madou, jingpin_toupai, taose)"
+        choices=["seju", "u3c3", "datang", "gcbt", "madou", "jingpin_toupai", "taose", "dashen"],
+        help="指定运行哪一个网站的爬虫 (seju, u3c3, datang, gcbt, madou, jingpin_toupai, taose, dashen)"
     )
     
     # 互斥参数：测试模式或正式爬取模式
@@ -96,7 +99,7 @@ def main():
         "--end",
         type=int,
         default=None,
-        help="结束页码 (seju默认: 4, u3c3默认: 20, datang默认: 60)"
+        help="结束页码 (seju默认: 4, u3c3默认: 20, datang默认: 60, dashen默认: 50)"
     )
     parser.add_argument(
         "--mode", "-m",
