@@ -170,23 +170,24 @@ class BrowserFactory:
             
     def _cleanup_resources(self, p, browser, context, profile_dir):
         """通用资源清理方法"""
-        try:
-            if context:
-                context.close()
-        except Exception as e:
-            logger.warning("关闭浏览器上下文失败: %s", e)
+        def _safe_close(name, action):
+            try:
+                action()
+            except Exception as e:
+                err_msg = str(e)
+                if "cannot switch to a different thread" in err_msg:
+                    logger.debug("%s静默忽略(跨线程): %s", name, e)
+                else:
+                    logger.warning("%s失败: %s", name, e)
+
+        if context:
+            _safe_close("关闭浏览器上下文", context.close)
             
-        try:
-            if browser:
-                browser.close()
-        except Exception as e:
-            logger.warning("关闭浏览器实例失败: %s", e)
+        if browser:
+            _safe_close("关闭浏览器实例", browser.close)
             
-        try:
-            if p:
-                p.stop()
-        except Exception as e:
-            logger.warning("停止 Playwright 实例失败: %s", e)
+        if p:
+            _safe_close("停止 Playwright 实例", p.stop)
             
         if profile_dir and os.path.exists(profile_dir):
             try:

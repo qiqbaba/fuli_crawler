@@ -88,15 +88,16 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             url = self.base_list_url.format(self.current_class, page_num)
             headers = self._build_headers()
 
-            for attempt in range(3):
-                # 前两次尝试用代理，第三次降级为直连（避免代理异常导致误判网站不可达）
+            max_retries = self.max_retries
+            for attempt in range(max_retries):
+                # 前 max_retries - 1 次尝试用代理，最后一次降级为直连（避免代理异常导致误判网站不可达）
                 proxies = None
-                if attempt < 2:
+                if attempt < max_retries - 1:
                     from config import get_effective_proxy
                     proxies = get_effective_proxy()
 
                 try:
-                    logger.info("[*] 正在拉取列表页 (尝试 %s/3): %s", attempt + 1, url)
+                    logger.info("[*] 正在拉取列表页 (尝试 %s/%s): %s", attempt + 1, max_retries, url)
                     r = requests.get(url, headers=headers, impersonate="chrome110", timeout=20, proxies=proxies)
                     r.encoding = 'utf-8'
                     if r.status_code == 200:
@@ -108,10 +109,9 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     else:
                         logger.error("[-] 列表页请求失败，状态码: %s", r.status_code)
                 except Exception as e:
-                    logger.error("[-] 请求列表页发生异常: %s", e)
-
-                if attempt < 2:
-                    time.sleep(random.uniform(1.0, 2.0))
+                    logger.error("[-] 拉取列表页异常: %s", e)
+                if attempt < max_retries - 1:
+                    time.sleep(random.uniform(1.0, 3.0))
 
             # 如果失败，轮换域名再试
             self._rotate_domain()
@@ -158,10 +158,11 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         headers = self._build_headers(referer=self.base_domain + "/")
         
         html_text = None
-        for attempt in range(3):
-            # 前两次尝试用代理，第三次降级为直连（避免代理异常导致误判网站不可达）
+        max_retries = self.max_retries
+        for attempt in range(max_retries):
+            # 前 max_retries - 1 次尝试用代理，最后一次降级为直连（避免代理异常导致误判网站不可达）
             proxies = None
-            if attempt < 2:
+            if attempt < max_retries - 1:
                 from config import get_effective_proxy
                 proxies = get_effective_proxy()
 
@@ -174,7 +175,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                         break
             except Exception as e:
                 pass
-            if attempt < 2:
+            if attempt < max_retries - 1:
                 time.sleep(random.uniform(0.5, 1.5))
 
         if not html_text:
@@ -232,26 +233,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             # 写入 PDF 文件（测试模式跳过）
             pdf_path = ''
             if not self.is_test:
-                for attempt in range(1, 5):
-                    no_proxy = (attempt == 4)
-                    if no_proxy:
-                        logger.warning("[-] [PDF-SAVE] 详情页: %s 前3次代理均失败，第4次尝试直连...", sub_url)
-                        try:
-                            self._destroy_thread_resources()
-                        except Exception:
-                            pass
-                        time.sleep(random.uniform(1.0, 2.0))
-                    pdf_path = self._save_pdf(sub_url, pub_time, title, no_proxy=no_proxy)
-                    if pdf_path:
-                        break
-                    else:
-                        logger.warning("[-] [PDF-SAVE] 详情页: %s 生成 PDF 失败，第 %s/4 次重试...", sub_url, attempt)
-                        if attempt < 4:
-                            try:
-                                self._destroy_thread_resources()
-                            except Exception as rec_err:
-                                logger.warning("[!] 重构 Playwright 资源失败: %s", rec_err)
-                            time.sleep(random.uniform(1.5, 3.0))
+                pdf_path = self.retry_generate_pdf(sub_url, pub_time, title, no_proxy_last=True)
 
             # 数据清洗入库
             processed_data = self.clean_common_metadata(

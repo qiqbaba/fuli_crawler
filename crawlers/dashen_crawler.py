@@ -11,6 +11,7 @@ from crawlers.base_crawler import DecryptSiteBaseCrawler, CrawlConfig
 
 
 class DashenCrawler(DecryptSiteBaseCrawler):
+    max_retries = 4  # 大神爬虫默认尝试 4 次
     CATEGORIES = ["guochan", "oumei"]
     default_end_page = 50
     default_workers = 8
@@ -204,10 +205,10 @@ class DashenCrawler(DecryptSiteBaseCrawler):
             headers = self._build_headers(referer=list_url)
             redirect_content = None
 
-            # 1. 优先使用 requests
-            for attempt in range(3):
+            max_retries = self.max_retries
+            for attempt in range(max_retries):
                 proxies = None
-                if attempt < 2:
+                if attempt < max_retries - 1:
                     from config import get_effective_proxy
                     proxies = get_effective_proxy()
 
@@ -319,7 +320,7 @@ class DashenCrawler(DecryptSiteBaseCrawler):
         else:
             data['pdf_path'] = self.retry_generate_pdf(
                 url, date_str, raw_item['title'],
-                max_retries=4, no_proxy_last=True
+                no_proxy_last=True
             )
 
         return is_existing, data
@@ -327,9 +328,10 @@ class DashenCrawler(DecryptSiteBaseCrawler):
     def _fetch_magnet_from_download_page(self, download_url, referer_url):
         """辅助方法：请求下载页并解密提取磁力链接"""
         headers = self._build_headers(referer=referer_url)
-        for attempt in range(3):
+        max_retries = self.max_retries
+        for attempt in range(max_retries):
             proxies = None
-            if attempt < 2:
+            if attempt < max_retries - 1:
                 from config import get_effective_proxy
                 proxies = get_effective_proxy()
             try:
@@ -343,6 +345,6 @@ class DashenCrawler(DecryptSiteBaseCrawler):
                     if magnet_match:
                         return magnet_match.group(0)
             except Exception as e:
-                self.log.warning("[!] 请求下载页面异常 (尝试 %s/3): %s", attempt + 1, e)
+                self.log.warning("[!] 请求下载页面异常 (尝试 %s/%s): %s", attempt + 1, max_retries, e)
             time.sleep(random.uniform(1.0, 2.5))
         return ""

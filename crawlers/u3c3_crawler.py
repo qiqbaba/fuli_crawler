@@ -58,7 +58,8 @@ class U3c3Crawler(BaseCrawler):
         
         from config import get_effective_proxy
         
-        for attempt in range(3):
+        max_retries = getattr(self, 'max_retries', 3)
+        for attempt in range(max_retries):
             # 获取代理配置
             proxies = get_effective_proxy()
             
@@ -66,18 +67,19 @@ class U3c3Crawler(BaseCrawler):
                 response = requests.get(url, headers=headers, timeout=20, proxies=proxies, impersonate="chrome120")
                 if response.status_code == 200:
                     return response.text
-                logger.info("[*] 页面 %s 抓取失败 (HTTP %s)，尝试重试 (%s/3)...", page_num, response.status_code, attempt + 1)
+                logger.info("[*] 页面 %s 抓取失败 (HTTP %s)，尝试重试 (%s/%s)...", page_num, response.status_code, attempt + 1, max_retries)
                 if response.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
                     manager = get_proxy_manager()
                     if manager and "http" in proxies:
                         manager.report_failure(proxies["http"])
             except Exception as e:
-                logger.info("[*] 页面 %s 抓取异常 (%s)，尝试重试 (%s/3)...", page_num, e, attempt + 1)
+                logger.info("[*] 页面 %s 抓取异常 (%s)，尝试重试 (%s/%s)...", page_num, e, attempt + 1, max_retries)
                 if proxies and is_proxy_manager_enabled():
                     manager = get_proxy_manager()
                     if manager and "http" in proxies:
                         manager.report_failure(proxies["http"])
-            time.sleep(random.uniform(2.0, 4.0))
+            if attempt < max_retries - 1:
+                time.sleep(random.uniform(2.0, 4.0))
             
         return None
 

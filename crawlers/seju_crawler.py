@@ -150,15 +150,16 @@ class SejuCrawler(PlaywrightBaseCrawler):
     # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
     def _fetch_sub_page(self, sub_url):
-        """获取子页面内容，最多重试 3 次"""
+        """获取子页面内容，支持自定义重试次数"""
         html_text = None
         current_url = sub_url
         sub_page = None
         last_err = None
+        max_retries = getattr(self, 'max_retries', 3)
         
-        for attempt in range(1, 4):
+        for attempt in range(1, max_retries + 1):
             if attempt > 1:
-                logger.info("[*] 第 %s/3 次重试抓取子页面: %s", attempt, sub_url)
+                logger.info("[*] 第 %s/%s 次重试抓取子页面: %s", attempt, max_retries, sub_url)
                 if sub_page:
                     try:
                         sub_page.close()
@@ -291,7 +292,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
             return ""
         
         pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"
-        saved_path = self.retry_generate_pdf(current_url, pdf_date, title, max_retries=3)
+        saved_path = self.retry_generate_pdf(current_url, pdf_date, title)
         return saved_path
 
     def process_sub_page_if_needed(self, sub_url, idx):

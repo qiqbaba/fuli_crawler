@@ -178,6 +178,20 @@ def main():
         help="非交互模式：跳过所有交互式提示，使用默认值 (CI/CD 环境推荐)"
     )
     
+    # 重试次数相关参数
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=None,
+        help="最大请求重试次数"
+    )
+    parser.add_argument(
+        "--max-pdf-retries",
+        type=int,
+        default=None,
+        help="最大 PDF 生成重试次数"
+    )
+    
     args = parser.parse_args()
     
     # 自动检测非 TTY 环境（管道输入、重定向、CI/CD 等），强制非交互模式
@@ -271,6 +285,12 @@ def main():
         default_workers = getattr(crawler_cls, "default_workers", 8)
         if args.workers is None:
             args.workers = default_workers
+        
+        # 用命令行参数覆盖爬虫的重试设置
+        if args.max_retries is not None:
+            crawler.max_retries = args.max_retries
+        if args.max_pdf_retries is not None:
+            crawler.max_pdf_retries = args.max_pdf_retries
 
     if crawler is None:
         logger.error("[-] 找不到指定的爬虫: %s", args.crawler)

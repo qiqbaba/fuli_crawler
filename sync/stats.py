@@ -29,6 +29,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from utils.logger import get_logger
 
+# stats.py 作为纯查询工具，应始终尝试连接已配置的云服务
+config.set_run_mode('cloud')
+
 logger = get_logger(__name__)
 
 

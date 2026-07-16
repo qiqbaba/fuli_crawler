@@ -91,6 +91,11 @@ class BloomFilter:
             加载后的 BloomFilter 实例，如果文件不存在或损坏则返回空的 BloomFilter
         """
         import pickle
+        import os
+        if not os.path.exists(filepath):
+            logger.info("未检测到本地 Bloom Filter 缓存文件，将使用空 Bloom Filter 初始化")
+            return cls(capacity=200000, error_rate=0.01)
+
         try:
             with open(filepath, 'rb') as f:
                 data = pickle.load(f)
@@ -102,8 +107,8 @@ class BloomFilter:
             logger.info("从 %s 加载 Bloom Filter 成功，位大小=%s，哈希数=%s，已记录元素=%s",
                         filepath, bf.bit_size, bf.hash_count, bf._count)
             return bf
-        except (FileNotFoundError, pickle.UnpicklingError, EOFError, KeyError) as e:
-            logger.info("从 %s 加载 Bloom Filter 失败 (%s)，使用空 Bloom Filter", filepath, e)
+        except (pickle.UnpicklingError, EOFError, KeyError) as e:
+            logger.warning("从 %s 加载 Bloom Filter 失败 (%s)，使用空 Bloom Filter", filepath, e)
             return cls(capacity=200000, error_rate=0.01)
         except Exception as e:
             logger.warning("从 %s 加载 Bloom Filter 异常 (%s)，使用空 Bloom Filter", filepath, e)

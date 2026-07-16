@@ -54,6 +54,9 @@ class CrawlConfig:
 
 
 class BaseCrawler:
+    max_retries = 3
+    max_pdf_retries = 3
+
     def __init__(self, db_manager, source_name):
         self.db_manager = db_manager
         self.source_name = source_name
@@ -65,6 +68,8 @@ class BaseCrawler:
         self.is_test = False
         self.quiet = False  # 静音模式，在 run() 中可被覆盖
         self.no_pdf = False  # 无 PDF 模式，在 run() 中可被覆盖
+        self.max_retries = getattr(self.__class__, 'max_retries', 3)
+        self.max_pdf_retries = getattr(self.__class__, 'max_pdf_retries', 3)
 
     def _build_headers(self, referer=None):
         """构造完整的浏览器请求头，模拟真实浏览器行为"""
@@ -90,14 +95,15 @@ class BaseCrawler:
         return headers
 
     def _http_get(self, url, timeout=20, impersonate="chrome120"):
-        """通用 HTTP GET 请求，最多重试 3 次，支持代理自动切换和失败上报"""
+        """通用 HTTP GET 请求，根据 self.max_retries 重试，支持代理自动切换和失败上报"""
         from config import get_effective_proxy, is_proxy_manager_enabled
         from utils.proxy_manager import get_proxy_manager
 
         # 预先获取代理管理器实例（移出重试循环，只执行一次）
         proxy_manager = get_proxy_manager() if is_proxy_manager_enabled() else None
+        max_retries = getattr(self, 'max_retries', 3)
 
-        for attempt in range(1, 4):
+        for attempt in range(1, max_retries + 1):
             proxies = None
             try:
                 ua = random.choice(USER_AGENTS)
@@ -110,17 +116,17 @@ class BaseCrawler:
                 if r.status_code == 200:
                     return r.url, r.text
                 else:
-                    self.log.error("HTTP 请求失败 (%s) [第 %s/3 次尝试]: 状态码 %s", url, attempt, r.status_code)
+                    self.log.error("HTTP 请求失败 (%s) [第 %s/%s 次尝试]: 状态码 %s", url, attempt, max_retries, r.status_code)
                     if r.status_code in (403, 407, 502, 503, 504) and proxies and proxy_manager:
                         if "http" in proxies:
                             proxy_manager.report_failure(proxies["http"])
             except Exception as e:
-                self.log.error("HTTP 请求异常 (%s) [第 %s/3 次尝试]: %s", url, attempt, e)
+                self.log.error("HTTP 请求异常 (%s) [第 %s/%s 次尝试]: %s", url, attempt, max_retries, e)
                 if proxies and proxy_manager:
                     if "http" in proxies:
                         proxy_manager.report_failure(proxies["http"])
 
-            if attempt < 3:
+            if attempt < max_retries:
                 time.sleep(random.uniform(1.0, 3.0))
 
         return url, None
@@ -895,7 +901,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
             config=config
         )
 
-    def retry_generate_pdf(self, url_or_page, publish_date, title, max_retries=3,
+    def retry_generate_pdf(self, url_or_page, publish_date, title, max_retries=None,
                            destroy_on_retry=True, no_proxy_last=False, after_destroy_cb=None):
         """统一的 PDF 生成重试逻辑
 
@@ -903,7 +909,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
             url_or_page: 详情页 URL 或 Playwright Page 对象
             publish_date: 发布日期
             title: 标题
-            max_retries: 最大重试次数 (默认 3)
+            max_retries: 最大重试次数 (默认从 self.max_pdf_retries 读取)
             destroy_on_retry: 重试前是否销毁 Playwright 资源 (默认 True)
             no_proxy_last: 最后一次重试是否使用直连 (默认 False)
             after_destroy_cb: 资源销毁后的回调 (用于 seju 等需要重建页面的场景)
@@ -915,6 +921,9 @@ class PlaywrightBaseCrawler(BaseCrawler):
             return ""
         if getattr(self, 'is_test', False):
             return ""
+
+        if max_retries is None:
+            max_retries = getattr(self, 'max_pdf_retries', 3)
 
         last_error = None
         for attempt in range(1, max_retries + 1):
@@ -1564,9 +1573,10 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             redirect_content = None
 
             # 1. 优先使用 requests
-            for attempt in range(3):
+            max_retries = self.max_retries
+            for attempt in range(max_retries):
                 proxies = None
-                if attempt < 2:
+                if attempt < max_retries - 1:
                     from config import get_effective_proxy
                     proxies = get_effective_proxy()
 
@@ -1586,7 +1596,8 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         break
                 except Exception:
                     pass
-                time.sleep(random.uniform(2.0, 4.0))
+                if attempt < max_retries - 1:
+                    time.sleep(random.uniform(2.0, 4.0))
 
             if detail_html:
                 break
@@ -1678,7 +1689,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
         else:
             data['pdf_path'] = self.retry_generate_pdf(
                 url, date_str, raw_item['title'],
-                max_retries=4, no_proxy_last=True
+                no_proxy_last=True
             )
 
         return is_existing, data

@@ -14,6 +14,8 @@ logger = get_logger(__name__)
 class GcbtCrawler(PlaywrightBaseCrawler):
     default_end_page = 20
     default_workers = 8
+    max_retries = 10
+    max_pdf_retries = 10
 
     def __init__(self, db_manager):
         super().__init__(db_manager, "gcbt")
@@ -187,7 +189,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         # 6. 生成并渲染 PDF 文件（直接保存原网页，测试模式跳过）
         pdf_path = ''
         if not self.is_test and article:
-            pdf_path = self.retry_generate_pdf(sub_url, pub_time, title, max_retries=3)
+            pdf_path = self.retry_generate_pdf(sub_url, pub_time, title)
             
         # 7. 调用通用清洗逻辑
         data = self.clean_common_metadata(
