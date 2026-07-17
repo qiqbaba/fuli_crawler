@@ -109,7 +109,8 @@ class BaseCrawler:
                 ua = random.choice(USER_AGENTS)
                 headers = {"User-Agent": ua}
 
-                proxies = get_effective_proxy()
+                if attempt < max_retries:
+                    proxies = get_effective_proxy()
 
                 r = requests.get(url, headers=headers, impersonate=impersonate, timeout=timeout, proxies=proxies)
                 r.encoding = 'utf-8'
@@ -902,7 +903,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
         )
 
     def retry_generate_pdf(self, url_or_page, publish_date, title, max_retries=None,
-                           destroy_on_retry=True, no_proxy_last=False, after_destroy_cb=None):
+                           destroy_on_retry=True, no_proxy_last=True, after_destroy_cb=None):
         """统一的 PDF 生成重试逻辑
 
         Args:

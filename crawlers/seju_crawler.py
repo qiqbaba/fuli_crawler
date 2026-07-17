@@ -168,9 +168,9 @@ class SejuCrawler(PlaywrightBaseCrawler):
                     sub_page = None
                 self._destroy_thread_resources()
                 time.sleep(random.uniform(2.0, 4.0))
-            
             try:
-                _, _, context = self._get_thread_resources()
+                no_proxy = (attempt == max_retries)
+                _, _, context = self._get_thread_resources(no_proxy=no_proxy)
                 sub_page = context.new_page()
                 sub_page.goto(sub_url, timeout=60000, wait_until="domcontentloaded")
                 

@@ -60,8 +60,10 @@ class U3c3Crawler(BaseCrawler):
         
         max_retries = getattr(self, 'max_retries', 3)
         for attempt in range(max_retries):
-            # 获取代理配置
-            proxies = get_effective_proxy()
+            # 获取代理配置，最后一次尝试使用直连
+            proxies = None
+            if attempt < max_retries - 1:
+                proxies = get_effective_proxy()
             
             try:
                 response = requests.get(url, headers=headers, timeout=20, proxies=proxies, impersonate="chrome120")
