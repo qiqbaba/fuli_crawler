@@ -2,8 +2,10 @@ name: 定时爬虫任务
 
 on:
   schedule:
-    # 每天 UTC 18:00 = 北京时间次日凌晨 02:00
-    - cron: '0 18 * * *'
+    # 北京时间 03:00 = UTC 19:00（前一天）
+    - cron: '0 19 * * *'
+    # 北京时间 15:00 = UTC 07:00
+    - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
       crawler:
@@ -115,6 +117,20 @@ jobs:
           mkdir -p /tmp/taose_pdfs
           mkdir -p /tmp/dashen_pdfs
 
+      - name: 判断运行时段（上午/下午分组）
+        id: period
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "group=all" >> $GITHUB_OUTPUT
+          else
+            HOUR=$(TZ='Asia/Shanghai' date +%H)
+            if [ "$HOUR" = "03" ]; then
+              echo "group=morning" >> $GITHUB_OUTPUT
+            else
+              echo "group=afternoon" >> $GITHUB_OUTPUT
+            fi
+          fi
+
       - name: 执行爬虫任务
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -182,31 +198,35 @@ jobs:
               eval $CMD
             fi
           else
-            echo "定时触发，执行默认日常爬取..."
-            echo "=== 开始爬取 seju ==="
-            python main.py --crawler seju --crawl -q
-            echo "=== seju 完成 ==="
-            echo "=== 开始爬取 u3c3 ==="
-            python main.py --crawler u3c3 --crawl -q
-            echo "=== u3c3 完成 ==="
-            echo "=== 开始爬取 datang ==="
-            python main.py --crawler datang --crawl --resume -q
-            echo "=== datang 完成 ==="
-            echo "=== 开始爬取 gcbt ==="
-            python main.py --crawler gcbt --crawl -q
-            echo "=== gcbt 完成 ==="
-            echo "=== 开始爬取 madou ==="
-            python main.py --crawler madou --crawl -q
-            echo "=== madou 完成 ==="
-            echo "=== 开始爬取 jingpin_toupai ==="
-            python main.py --crawler jingpin_toupai --crawl -q
-            echo "=== jingpin_toupai 完成 ==="
-            echo "=== 开始爬取 taose ==="
-            python main.py --crawler taose --crawl -q
-            echo "=== taose 完成 ==="
-            echo "=== 开始爬取 dashen ==="
-            python main.py --crawler dashen --crawl -q
-            echo "=== dashen 完成 ==="
+            GROUP="${{ steps.period.outputs.group }}"
+            echo "定时触发，当前时段: $GROUP"
+            if [ "$GROUP" = "morning" ]; then
+              echo "=== 上午组：开始爬取 seju ==="
+              python main.py --crawler seju --crawl -q
+              echo "=== seju 完成 ==="
+              echo "=== 上午组：开始爬取 u3c3 ==="
+              python main.py --crawler u3c3 --crawl -q
+              echo "=== u3c3 完成 ==="
+              echo "=== 上午组：开始爬取 datang ==="
+              python main.py --crawler datang --crawl --resume -q
+              echo "=== datang 完成 ==="
+              echo "=== 上午组：开始爬取 gcbt ==="
+              python main.py --crawler gcbt --crawl -q
+              echo "=== gcbt 完成 ==="
+            else
+              echo "=== 下午组：开始爬取 madou ==="
+              python main.py --crawler madou --crawl -q
+              echo "=== madou 完成 ==="
+              echo "=== 下午组：开始爬取 jingpin_toupai ==="
+              python main.py --crawler jingpin_toupai --crawl -q
+              echo "=== jingpin_toupai 完成 ==="
+              echo "=== 下午组：开始爬取 taose ==="
+              python main.py --crawler taose --crawl -q
+              echo "=== taose 完成 ==="
+              echo "=== 下午组：开始爬取 dashen ==="
+              python main.py --crawler dashen --crawl -q
+              echo "=== dashen 完成 ==="
+            fi
           fi
 
       - name: 保存代理 IP 缓存

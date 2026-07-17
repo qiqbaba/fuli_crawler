@@ -47,7 +47,6 @@ class R2Uploader:
                 remote_key,
                 ExtraArgs={"ContentType": "application/pdf"},
             )
-            logger.info("[+] PDF 已上传至 R2: %s", remote_key)
 
             try:
                 os.remove(local_path)

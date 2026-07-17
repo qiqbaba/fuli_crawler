@@ -216,7 +216,6 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             if self.check_resource_link and resource_link:
                 existing_links = self.db_manager.filter_existing_resource_links([resource_link])
                 if resource_link in existing_links:
-                    logger.info("[%s] 磁力链接已存在，跳过 PDF 生成: %s...", idx, resource_link[:60])
                     processed_data = self.clean_common_metadata(
                         title=title,
                         date_str=pub_time,
@@ -228,6 +227,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     processed_data['size'] = size
                     processed_data['resource_format'] = res_format
                     processed_data['source'] = self.source_name
+                    logger.info("[%s] 抓取成功: %s", idx, title[:60])
                     return True, processed_data
 
             # 写入 PDF 文件（测试模式跳过）
@@ -250,6 +250,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             processed_data['resource_format'] = res_format
             processed_data['source'] = self.source_name
 
+            logger.info("[%s] 抓取成功: %s", idx, title[:60])
             return False, processed_data
 
         except Exception as e:

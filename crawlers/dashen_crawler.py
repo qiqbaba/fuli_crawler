@@ -323,6 +323,7 @@ class DashenCrawler(DecryptSiteBaseCrawler):
                 no_proxy_last=True
             )
 
+        self.log.info("[%s] 抓取成功: %s", idx, data.get('title', '')[:60])
         return is_existing, data
 
     def _fetch_magnet_from_download_page(self, download_url, referer_url):

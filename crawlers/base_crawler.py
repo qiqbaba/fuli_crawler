@@ -1695,4 +1695,5 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 no_proxy_last=True
             )
 
+        self.log.info("[%s] 抓取成功: %s", idx, data.get('title', '')[:60])
         return is_existing, data
