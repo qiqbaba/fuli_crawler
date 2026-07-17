@@ -110,7 +110,7 @@ class BaseCrawler:
                 headers = {"User-Agent": ua}
 
                 if attempt < max_retries:
-                    proxies = get_effective_proxy()
+                    proxies = get_effective_proxy(source=self.source_name)
 
                 r = requests.get(url, headers=headers, impersonate=impersonate, timeout=timeout, proxies=proxies)
                 r.encoding = 'utf-8'
@@ -791,7 +791,8 @@ class PlaywrightBaseCrawler(BaseCrawler):
                         target_count=300,
                         start_threshold=100,
                         test_url=test_url, 
-                        expected_content=expected_content
+                        expected_content=expected_content,
+                        source=self.source_name
                     )
                     stats = manager.get_stats()
                     if not self.quiet:
@@ -870,7 +871,8 @@ class PlaywrightBaseCrawler(BaseCrawler):
             browser_type=self.browser_type,
             enable_stealth=self.enable_stealth,
             use_persistent_context=self.use_persistent_context,
-            no_proxy=no_proxy
+            no_proxy=no_proxy,
+            source=self.source_name
         )
 
     def _destroy_thread_resources(self):
@@ -1152,7 +1154,7 @@ class DomainRotationMixin:
         
         # 1. 优先获取代理
         from config import get_effective_proxy, is_proxy_manager_enabled
-        proxies = get_effective_proxy()
+        proxies = get_effective_proxy(source=self.source_name)
             
         html = None
         # Perf 4: curl_cffi 与 Playwright 并发请求，谁先完成用谁
@@ -1388,7 +1390,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 proxies = None
                 if attempt < 2:
                     from config import get_effective_proxy, is_proxy_manager_enabled
-                    proxies = get_effective_proxy()
+                    proxies = get_effective_proxy(source=self.source_name)
 
                 try:
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")

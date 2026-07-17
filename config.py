@@ -237,12 +237,13 @@ def is_proxy_manager_enabled():
     return ENABLE_PROXY_MANAGER
 
 
-def get_effective_proxy(exclusive: bool = False) -> Optional[Dict[str, str]]:
+def get_effective_proxy(exclusive: bool = False, source: Optional[str] = None) -> Optional[Dict[str, str]]:
     """
     统一代理获取入口：固定代理 > 代理池 > 无代理
     
     Args:
         exclusive: 是否为 Playwright 等长连接客户端获取独占代理
+        source: 针对的爬虫源名称
     Returns:
         {"http": "...", "https": "..."} 或 None
     """
@@ -251,16 +252,17 @@ def get_effective_proxy(exclusive: bool = False) -> Optional[Dict[str, str]]:
         return {"http": fixed, "https": fixed}
     if is_proxy_manager_enabled():
         from utils.proxy_manager import get_proxy_dict
-        return get_proxy_dict(exclusive=exclusive)
+        return get_proxy_dict(exclusive=exclusive, source=source)
     return None
 
 
-def get_effective_proxy_string(exclusive: bool = True) -> str:
+def get_effective_proxy_string(exclusive: bool = True, source: Optional[str] = None) -> str:
     """
     统一代理字符串获取入口：固定代理 > 代理池 > 直连
     
     Args:
         exclusive: 是否为 Playwright 等长连接客户端获取独占代理
+        source: 针对的爬虫源名称
     Returns:
         代理 URL 字符串，或空字符串（直连）
     """
@@ -269,7 +271,7 @@ def get_effective_proxy_string(exclusive: bool = True) -> str:
         return fixed
     if is_proxy_manager_enabled():
         from utils.proxy_manager import get_proxy_string
-        return get_proxy_string(exclusive=exclusive)
+        return get_proxy_string(exclusive=exclusive, source=source)
     return ""
 
 

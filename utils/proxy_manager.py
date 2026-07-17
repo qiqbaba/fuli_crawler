@@ -54,12 +54,13 @@ def init_proxy_manager(force_fetch=False, force_verify=False) -> Optional[ProxyP
     return manager
 
 
-def get_proxy_string(exclusive: bool = True) -> str:
+def get_proxy_string(exclusive: bool = True, source: Optional[str] = None) -> str:
     """
     获取当前代理字符串，遵循 config 的运行时参数覆盖及禁用设置
     
     Args:
         exclusive: 是否使用线程独占模式。默认为 True（给 Playwright 等长效客户端使用）
+        source: 针对的爬虫源名称
     """
     from config import get_crawler_proxy, is_proxy_manager_enabled
     
@@ -73,24 +74,25 @@ def get_proxy_string(exclusive: bool = True) -> str:
         manager = get_proxy_manager()
         if manager:
             if exclusive:
-                return manager.get_thread_exclusive_proxy() or ""
+                return manager.get_thread_exclusive_proxy(source=source) or ""
             else:
-                return manager.get_random_pool_proxy() or ""
+                return manager.get_random_pool_proxy(source=source) or ""
             
     return ""
 
 
-def get_proxy_dict(exclusive: bool = False) -> Optional[Dict[str, str]]:
+def get_proxy_dict(exclusive: bool = False, source: Optional[str] = None) -> Optional[Dict[str, str]]:
     """
     获取代理字典（用于 requests/curl_cffi 库）
     默认使用非线程独占模式，每次请求使用高频随机轮换的代理IP
     
     Args:
         exclusive: 是否使用线程独占模式。默认为 False（requests 默认不独占）
+        source: 针对的爬虫源名称
     Returns:
         {"http": "...", "https": "..."} 或 None
     """
-    proxy_url = get_proxy_string(exclusive=exclusive)
+    proxy_url = get_proxy_string(exclusive=exclusive, source=source)
     if proxy_url:
         return {"http": proxy_url, "https": proxy_url}
     return None

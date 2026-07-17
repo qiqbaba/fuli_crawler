@@ -43,6 +43,7 @@ class ProxyPool:
         self._thread_proxy_map: Dict[int, str] = {}  # thread_id -> proxy_url
         self._is_replenishing = False
         self._is_verifying = False
+        self._source_test_urls: Dict[str, str] = {}  # 记住不同爬虫源对应的测试URL
 
         # 延迟写入缓存相关（优化：避免高频写入 SQLite）
         self._pending_save = False
@@ -105,6 +106,13 @@ class ProxyPool:
                     PRIMARY KEY (protocol, address)
                 )
             ''')
+            # 检测并升级表结构，确保 valid_sources 字段存在
+            cursor.execute("PRAGMA table_info(proxy_cache)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "valid_sources" not in columns:
+                cursor.execute("ALTER TABLE proxy_cache ADD COLUMN valid_sources TEXT DEFAULT ''")
+                logger.info("已为 SQLite 代理缓存表结构升级新增 valid_sources 字段")
+
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS cache_meta (
                     key TEXT PRIMARY KEY,
@@ -134,10 +142,10 @@ class ProxyPool:
             try:
                 for p in proxies:
                     conn.execute(
-                        "INSERT OR IGNORE INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT OR IGNORE INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified, valid_sources) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                         (p.get("protocol", "http"), p.get("address", ""), p.get("source", ""),
                          p.get("success_count", 0), p.get("fail_count", 0), p.get("score", 0.0),
-                         p.get("last_verified", 0))
+                         p.get("last_verified", 0), "")
                     )
                 for k, v in meta.items():
                     conn.execute("INSERT OR REPLACE INTO cache_meta (key, value) VALUES (?, ?)", (k, str(v)))
@@ -167,14 +175,30 @@ class ProxyPool:
             self._last_fetch_time = int(meta.get("last_fetch_time", 0))
             self._last_verify_time = int(meta.get("last_verify_time", 0))
 
-            # 只读取已验证可用的代理
-            cursor.execute(
-                "SELECT protocol, address, source, success_count, fail_count, score, last_verified "
-                "FROM proxy_cache WHERE last_verified > 0"
-            )
+            # 读取包含 valid_sources 的字段
+            cursor.execute("PRAGMA table_info(proxy_cache)")
+            columns = [row[1] for row in cursor.fetchall()]
+            has_valid_sources = "valid_sources" in columns
+
+            if has_valid_sources:
+                cursor.execute(
+                    "SELECT protocol, address, source, success_count, fail_count, score, last_verified, valid_sources "
+                    "FROM proxy_cache WHERE last_verified > 0"
+                )
+            else:
+                cursor.execute(
+                    "SELECT protocol, address, source, success_count, fail_count, score, last_verified "
+                    "FROM proxy_cache WHERE last_verified > 0"
+                )
             self._proxies = []
             self._working_proxies = []
             for row in cursor.fetchall():
+                valid_sources_set = set()
+                if has_valid_sources:
+                    db_sources = row["valid_sources"]
+                    if db_sources:
+                        valid_sources_set = set(s.strip() for s in db_sources.split(",") if s.strip())
+                
                 p = {
                     "protocol": row["protocol"],
                     "address": row["address"],
@@ -183,6 +207,7 @@ class ProxyPool:
                     "fail_count": row["fail_count"],
                     "score": row["score"],
                     "last_verified": row["last_verified"],
+                    "valid_sources": valid_sources_set
                 }
                 self._proxies.append(p)
                 self._working_proxies.append(p.copy())
@@ -260,15 +285,20 @@ class ProxyPool:
                         # 否则，保留原有的有效验证通过时间戳，防止被其他爬虫的特定 test_url 抹杀
                         last_verified = old_last_verified
 
+                # 序列化 valid_sources 集合为逗号分隔的字符串
+                vs_set = p.get("valid_sources", set())
+                vs_str = ",".join(vs_set) if isinstance(vs_set, set) else ""
+
                 cursor.execute(
-                    """INSERT INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """INSERT INTO proxy_cache (protocol, address, source, success_count, fail_count, score, last_verified, valid_sources)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                        ON CONFLICT(protocol, address) DO UPDATE SET
                            source = EXCLUDED.source,
                            success_count = EXCLUDED.success_count,
                            fail_count = EXCLUDED.fail_count,
                            score = EXCLUDED.score,
-                           last_verified = EXCLUDED.last_verified""",
+                           last_verified = EXCLUDED.last_verified,
+                           valid_sources = EXCLUDED.valid_sources""",
                     (
                         p["protocol"],
                         p["address"],
@@ -276,7 +306,8 @@ class ProxyPool:
                         p.get("success_count", 0),
                         p.get("fail_count", 0),
                         p.get("score", 0.0),
-                        last_verified
+                        last_verified,
+                        vs_str
                     )
                 )
 
@@ -340,7 +371,8 @@ class ProxyPool:
                     "success_count": p.get("success_count", 0),
                     "fail_count": p.get("fail_count", 0),
                     "score": p.get("score", 0.0),
-                    "last_verified": p.get("last_verified", 0.0)
+                    "last_verified": p.get("last_verified", 0.0),
+                    "valid_sources": p.get("valid_sources", set())
                 }
 
         # 调用 fetcher 获取新抓取的代理
@@ -357,11 +389,13 @@ class ProxyPool:
                     proxy["fail_count"] = history["fail_count"]
                     proxy["score"] = history["score"]
                     proxy["last_verified"] = history["last_verified"]
+                    proxy["valid_sources"] = set(history["valid_sources"]) if isinstance(history["valid_sources"], set) else set()
                 else:
                     proxy["success_count"] = 0
                     proxy["fail_count"] = 0
                     proxy["score"] = 0.0
                     proxy["last_verified"] = 0.0
+                    proxy["valid_sources"] = set()
                 all_proxies[key] = proxy
 
         with self._lock:
@@ -382,7 +416,8 @@ class ProxyPool:
         target_count: int = 300,
         start_threshold: Optional[int] = None,
         test_url: Optional[str] = None,
-        expected_content: Optional[str] = None
+        expected_content: Optional[str] = None,
+        source: Optional[str] = None
     ) -> int:
         """
         验证代理IP可用性并更新可用池
@@ -394,11 +429,16 @@ class ProxyPool:
             start_threshold: 可用代理达到此数量时，主线程提前返回（启动爬虫）。若为 None，则等同于 target_count（即同步阻塞直到完成）
             test_url: 测试网页 URL
             expected_content: 期望包含的网页文本
+            source: 针对的爬虫源名称（如 'u3c3', 'seju'）
             
         Returns:
             可用代理数量
         """
         now = time.time()
+        # 如果是针对特定 source，记住它的测试 URL，以便动态补给时复用
+        if source and test_url:
+            self._source_test_urls[source] = test_url
+
         # 如果不是强制验证，且上次验证结果在 6 小时以内，直接使用
         if not force and (now - self._last_verify_time) < 21600 and self._working_proxies:
             logger.info("使用缓存的验证代理列表（%s 个，上次验证于 %s 分钟前）", len(self._working_proxies), int((now - self._last_verify_time)/60))
@@ -439,7 +479,7 @@ class ProxyPool:
                                     if proxy_url not in existing_urls:
                                         self._working_proxies.append(proxy)
                             
-                            logger.info("[*] 启动后台代理验证线程，目标数量: %s 个", target_count)
+                            logger.info("[*] 启动后台代理验证线程，目标数量: %s 个，针对爬虫源: %s", target_count, source or "global")
                             working = self.verifier.verify_proxies(
                                 proxies=self._proxies,
                                 force=force,
@@ -447,7 +487,8 @@ class ProxyPool:
                                 target_count=target_count,
                                 test_url=test_url,
                                 expected_content=expected_content,
-                                on_proxy_valid=on_proxy_valid
+                                on_proxy_valid=on_proxy_valid,
+                                source=source
                             )
                             self._save_cache()
                             logger.info("[+] 后台代理验证完成，当前可用代理: %s 个", len(self._working_proxies))
@@ -492,7 +533,8 @@ class ProxyPool:
                     max_workers=max_workers,
                     target_count=target_count,
                     test_url=test_url,
-                    expected_content=expected_content
+                    expected_content=expected_content,
+                    source=source
                 )
                 with self._lock:
                     now_ts = time.time()
@@ -506,57 +548,12 @@ class ProxyPool:
                 with self._lock:
                     self._is_verifying = False
 
-    def report_failure(self, proxy_url: str):
+    def check_and_replenish(self, threshold: int = 200, target_count: int = 300, source: Optional[str] = None):
         """
-        当使用代理发生网络失败或连接超时等异常时，安全剔除并扣分
-        （使用延迟批量写入缓存，降低高并发下的 SQLite 写入压力）
-        """
-        if not proxy_url:
-            return
-
-        should_save = False
-        with self._lock:
-            try:
-                parts = proxy_url.split("://", 1)
-                protocol = parts[0]
-                address = parts[1]
-
-                initial_len = len(self._working_proxies)
-                self._working_proxies = [
-                    p for p in self._working_proxies
-                    if not (p["protocol"] == protocol and p["address"] == address)
-                ]
-
-                # 清理线程独占绑定中该失效代理的分配记录
-                tids_to_del = [tid for tid, p_url in self._thread_proxy_map.items() if p_url == proxy_url]
-                for tid in tids_to_del:
-                    del self._thread_proxy_map[tid]
-
-                # 更新历史评分数据：增加 fail_count，扣减 score
-                updated_history = False
-                for p in self._proxies:
-                    if p["protocol"] == protocol and p["address"] == address:
-                        p["fail_count"] = p.get("fail_count", 0) + 1
-                        p["score"] = p.get("success_count", 0) - 3 * p["fail_count"]
-                        updated_history = True
-                        break
-
-                if len(self._working_proxies) < initial_len or updated_history:
-                    if len(self._working_proxies) < initial_len:
-                        logger.info("剔除失效代理: %s，当前剩余可用: %s 个", proxy_url, len(self._working_proxies))
-                    should_save = True  # 标记需要保存，合并高频写入
-            except Exception as e:
-                logger.warning("剔除代理失败: %s", e)
-
-        if should_save:
-            self._save_cache_delayed()  # 改为延迟写入，不直接写 SQLite
-
-    def check_and_replenish(self, threshold: int = 200, target_count: int = 300):
-        """
-        若当前可用代理数少于 threshold，同步补给代理
+        若当前可用代理数少于 threshold，或者针对特定爬虫源的可用代理较少，同步补给代理
         """
         with self._lock:
-            if len(self._working_proxies) >= threshold:
+            if not self._should_replenish(source):
                 return
             if self._is_replenishing:
                 # 已有其他线程在补充中，等待其完成后返回
@@ -575,9 +572,13 @@ class ProxyPool:
 
         # 同步执行代理补充（阻塞），确保调用方拿到代理后再继续
         try:
-            logger.info("可用代理数仅剩 %s，低于阈值 %s，正在同步补充...", len(self._working_proxies), threshold)
+            logger.info("针对爬虫源 %s 的代理较少（或总数较低），正在同步补充代理...", source or "global")
             self.fetch_proxies(force=True)
-            self.verify_proxies(force=True, target_count=target_count)
+            
+            # 从记住的测试 URL 映射中获取该 source 对应的 test_url，如果没有则默认为 None
+            test_url = self._source_test_urls.get(source) if source else None
+            
+            self.verify_proxies(force=True, target_count=target_count, test_url=test_url, source=source)
             logger.info("代理补充完成: 可用 %s 个", len(self._working_proxies))
         except Exception as e:
             logger.warning("补充代理出现异常: %s", e)
@@ -585,20 +586,34 @@ class ProxyPool:
             with self._lock:
                 self._is_replenishing = False
 
-    def _should_replenish(self) -> bool:
+    def _should_replenish(self, source: Optional[str] = None) -> bool:
         """在锁内快速判断是否需要触发补给（不执行实际补给）"""
-        return len(self._working_proxies) < 200 and not self._is_replenishing
+        if self._is_replenishing:
+            return False
+            
+        # 1. 如果总的可用代理少于 100，肯定要补给
+        if len(self._working_proxies) < 100:
+            return True
+            
+        # 2. 如果指定了 source，并且针对该 source 的可用代理少于 30 个，也要补给
+        if source:
+            source_count = sum(1 for p in self._working_proxies if source in p.get("valid_sources", set()))
+            if source_count < 30:
+                return True
+                
+        return False
 
-    def get_thread_exclusive_proxy(self) -> Optional[str]:
+    def get_thread_exclusive_proxy(self, source: Optional[str] = None) -> Optional[str]:
         """
         根据线程 ID 进行无重复队列轮询（Round-Robin）
         确保任意时刻一个代理 IP 尽可能只被一个活动线程独占使用。
+        优先分配当前爬虫 source 验证可用的代理。
         """
         current_thread_id = threading.get_ident()
         
-        # 先快速检查是否需要触发补给（锁内仅做判断，不执行耗时操作）
+        # 先快速检查是否需要触发补给
         with self._lock:
-            need_replenish = self._should_replenish()
+            need_replenish = self._should_replenish(source)
             
             if not self._working_proxies:
                 return None
@@ -609,84 +624,121 @@ class ProxyPool:
             for tid in dead_threads:
                 del self._thread_proxy_map[tid]
                 
-            # 2. 如果当前线程已经分配了代理，直接返回已分配的
+            # 2. 如果当前线程已经分配了代理，直接返回已分配的，避免频繁切换代理
             if current_thread_id in self._thread_proxy_map:
                 return self._thread_proxy_map[current_thread_id]
                 
             # 3. 找出所有正在被活动线程使用的代理
             in_use_proxies = set(self._thread_proxy_map.values())
             
-            # 获取所有可用代理 URL
-            all_proxy_urls = [f"{p['protocol']}://{p['address']}" for p in self._working_proxies]
-            
-            # 4. 寻找未被占用的代理
-            available_proxies = [p for p in all_proxy_urls if p not in in_use_proxies]
-            
-            if available_proxies:
-                # 还有未占用的代理，通过轮询顺序选择一个，并记录分配
-                selected_proxy = available_proxies[self._current_proxy_idx % len(available_proxies)]
-                self._current_proxy_idx += 1
-                self._thread_proxy_map[current_thread_id] = selected_proxy
-                return selected_proxy
+            # 获取第一优先级和第二优先级的可用代理对象
+            if source:
+                domain_proxies = [p for p in self._working_proxies if source in p.get("valid_sources", set())]
+                other_proxies = [p for p in self._working_proxies if source not in p.get("valid_sources", set())]
             else:
-                # 所有代理都在使用中（线程数 > 代理数），则分配当前分配给最少线程的代理
-                proxy_usage = {p: 0 for p in all_proxy_urls}
-                for p in self._thread_proxy_map.values():
-                    if p in proxy_usage:
-                        proxy_usage[p] += 1
+                domain_proxies = []
+                other_proxies = list(self._working_proxies)
                 
-                min_usage = min(proxy_usage.values())
-                candidates = [p for p, usage in proxy_usage.items() if usage == min_usage]
-                
-                selected_proxy = candidates[self._current_proxy_idx % len(candidates)]
+            domain_proxy_urls = [f"{p['protocol']}://{p['address']}" for p in domain_proxies]
+            other_proxy_urls = [f"{p['protocol']}://{p['address']}" for p in other_proxies]
+            
+            # 4. 优先寻找第一优先级中未被占用的代理
+            available_domain_proxies = [p for p in domain_proxy_urls if p not in in_use_proxies]
+            if available_domain_proxies:
+                selected_proxy = available_domain_proxies[self._current_proxy_idx % len(available_domain_proxies)]
                 self._current_proxy_idx += 1
                 self._thread_proxy_map[current_thread_id] = selected_proxy
                 return selected_proxy
+                
+            # 5. 其次寻找第二优先级中未被占用的代理
+            available_other_proxies = [p for p in other_proxy_urls if p not in in_use_proxies]
+            if available_other_proxies:
+                selected_proxy = available_other_proxies[self._current_proxy_idx % len(available_other_proxies)]
+                self._current_proxy_idx += 1
+                self._thread_proxy_map[current_thread_id] = selected_proxy
+                return selected_proxy
+                
+            # 6. 如果全都被占用了，按最少线程占用数分配
+            all_proxy_urls = [f"{p['protocol']}://{p['address']}" for p in self._working_proxies]
+            proxy_usage = {p: 0 for p in all_proxy_urls}
+            for p in self._thread_proxy_map.values():
+                if p in proxy_usage:
+                    proxy_usage[p] += 1
+            
+            # 优先选当前爬虫验证可用的
+            if domain_proxy_urls:
+                usage_list = {p: proxy_usage[p] for p in domain_proxy_urls if p in proxy_usage}
+                if usage_list:
+                    min_usage = min(usage_list.values())
+                    candidates = [p for p, usage in usage_list.items() if usage == min_usage]
+                    selected_proxy = candidates[self._current_proxy_idx % len(candidates)]
+                    self._current_proxy_idx += 1
+                    self._thread_proxy_map[current_thread_id] = selected_proxy
+                    return selected_proxy
+            
+            # 兜底在所有中挑最少占用的
+            min_usage = min(proxy_usage.values())
+            candidates = [p for p, usage in proxy_usage.items() if usage == min_usage]
+            selected_proxy = candidates[self._current_proxy_idx % len(candidates)]
+            self._current_proxy_idx += 1
+            self._thread_proxy_map[current_thread_id] = selected_proxy
+            return selected_proxy
         
         # 锁外执行补给，避免阻塞其他获取代理的线程
         if need_replenish:
-            self.check_and_replenish(threshold=200, target_count=300)
+            self.check_and_replenish(threshold=200, target_count=300, source=source)
 
-    def get_random_pool_proxy(self) -> Optional[str]:
+    def get_random_pool_proxy(self, source: Optional[str] = None) -> Optional[str]:
         """
         随机从已验证可用的代理池中获取一个代理 IP，不与线程绑定，每次调用都可能不同。
+        优先分配当前爬虫 source 验证可用的代理。
         """
-        # 先快速检查是否需要触发补给（锁内仅做判断，不执行耗时操作）
+        # 先快速检查是否需要触发补给
         with self._lock:
-            need_replenish = self._should_replenish()
+            need_replenish = self._should_replenish(source)
             if not self._working_proxies:
                 return None
-            p = random.choice(self._working_proxies)
+                
+            if source:
+                domain_proxies = [p for p in self._working_proxies if source in p.get("valid_sources", set())]
+            else:
+                domain_proxies = []
+                
+            if domain_proxies:
+                p = random.choice(domain_proxies)
+            else:
+                p = random.choice(self._working_proxies)
+                
             proxy_url = f"{p['protocol']}://{p['address']}"
         
         # 锁外执行补给，避免阻塞其他获取代理的线程
         if need_replenish:
-            self.check_and_replenish(threshold=200, target_count=300)
+            self.check_and_replenish(threshold=200, target_count=300, source=source)
         
         return proxy_url
 
-    def get_random_proxy(self) -> Optional[str]:
+    def get_random_proxy(self, source: Optional[str] = None) -> Optional[str]:
         """获取当前线程独占的代理（原随机获取改为独占队列轮询模式）"""
-        return self.get_thread_exclusive_proxy()
+        return self.get_thread_exclusive_proxy(source=source)
 
-    def get_next_proxy(self) -> Optional[str]:
+    def get_next_proxy(self, source: Optional[str] = None) -> Optional[str]:
         """按顺序获取当前线程独占的代理（原普通轮询改为独占队列轮询模式）"""
-        return self.get_thread_exclusive_proxy()
+        return self.get_thread_exclusive_proxy(source=source)
 
-    def get_proxy_for_requests(self) -> Optional[Dict[str, str]]:
+    def get_proxy_for_requests(self, source: Optional[str] = None) -> Optional[Dict[str, str]]:
         """
         获取适用于 requests 库的代理字典
         """
-        proxy_url = self.get_random_proxy()
+        proxy_url = self.get_random_proxy(source=source)
         if proxy_url:
             return {"http": proxy_url, "https": proxy_url}
         return None
 
-    def get_proxy_for_playwright(self) -> Optional[Dict[str, str]]:
+    def get_proxy_for_playwright(self, source: Optional[str] = None) -> Optional[Dict[str, str]]:
         """
         获取适用于 Playwright 的代理配置
         """
-        proxy_url = self.get_random_proxy()
+        proxy_url = self.get_random_proxy(source=source)
         if proxy_url:
             return {"server": proxy_url}
         return None

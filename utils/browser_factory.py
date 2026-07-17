@@ -29,7 +29,8 @@ class BrowserFactory:
         user_agent: Optional[str] = None,
         viewport: Optional[dict] = None,
         locale: str = "zh-CN",
-        timezone_id: str = "Asia/Shanghai"
+        timezone_id: str = "Asia/Shanghai",
+        source: Optional[str] = None
     ) -> Tuple[Playwright, Browser, BrowserContext]:
         """创建浏览器上下文，支持线程隔离和持久化模式"""
         
@@ -73,7 +74,7 @@ class BrowserFactory:
         playwright_proxy = None
         if not no_proxy:
             try:
-                proxy_url = get_effective_proxy_string(exclusive=True)
+                proxy_url = get_effective_proxy_string(exclusive=True, source=source)
                 if proxy_url:
                     playwright_proxy = {"server": proxy_url}
             except Exception as ex:

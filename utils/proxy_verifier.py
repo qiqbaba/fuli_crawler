@@ -52,7 +52,8 @@ class ProxyVerifier:
         target_count: int = 300,
         test_url: Optional[str] = None,
         expected_content: Optional[str] = None,
-        on_proxy_valid: Optional[Callable] = None
+        on_proxy_valid: Optional[Callable] = None,
+        source: Optional[str] = None
     ) -> List[Dict[str, str]]:
         """
         异步验证代理IP是否可用
@@ -64,6 +65,8 @@ class ProxyVerifier:
             target_count: 目标可用代理数量，达到后提前退出
             test_url: 可选。用于测试的网址
             expected_content: 可选。验证页面内是否包含此内容
+            on_proxy_valid: 可选。验证成功的回调函数
+            source: 针对的爬虫源名称（如 'u3c3', 'seju'）
             
         Returns:
             可用代理列表
@@ -85,7 +88,7 @@ class ProxyVerifier:
         # 在多协程验证队列开始前，将待校验代理按历史评分 score 降序排序，优先测试表现好的代理
         proxies.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
-        logger.info("开始异步验证 %s 个代理（并发: %s，超时: %ss，目标数: %s，测试目标: %s）...", len(proxies), max_workers, verify_timeout, target_count, current_test_url)
+        logger.info("开始异步验证 %s 个代理（并发: %s，超时: %ss，目标数: %s，测试目标: %s，源: %s）...", len(proxies), max_workers, verify_timeout, target_count, current_test_url, source or "global")
 
         working = []
         total = len(proxies)
@@ -129,6 +132,8 @@ class ProxyVerifier:
                             continue
 
                         # 2. 完整协议与连通性检测
+                        proxy_url = f"{protocol}://address"
+                        # 等等，原来是 proxy_url = f"{protocol}://{address}"，让我们写对：
                         proxy_url = f"{protocol}://{address}"
                         connector = None
                         client_proxy = None
@@ -164,6 +169,12 @@ class ProxyVerifier:
                                             if not stop_event.is_set():
                                                 proxy["success_count"] = proxy.get("success_count", 0) + 1
                                                 proxy["score"] = proxy["success_count"] - 3 * proxy.get("fail_count", 0)
+                                                
+                                                if source:
+                                                    if "valid_sources" not in proxy or not isinstance(proxy["valid_sources"], set):
+                                                        proxy["valid_sources"] = set()
+                                                    proxy["valid_sources"].add(source)
+                                                
                                                 working.append(proxy)
                                                 if on_proxy_valid:
                                                     try:
