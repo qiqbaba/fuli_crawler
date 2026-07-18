@@ -50,7 +50,7 @@ jobs:
   # ========== 前置 job：统一抓取并验证代理，供后续所有爬虫共享 ==========
   fetch_proxies:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 60
     continue-on-error: true   # 即使代理获取失败，也不阻塞爬虫运行（爬虫会回退到独立获取）
     env:
       ENABLE_PROXY_MANAGER: 'true'
@@ -103,7 +103,7 @@ jobs:
   crawl:
     needs: fetch_proxies
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 720
     strategy:
       fail-fast: false
       matrix:
