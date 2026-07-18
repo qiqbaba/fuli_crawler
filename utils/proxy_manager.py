@@ -98,6 +98,20 @@ def get_proxy_dict(exclusive: bool = False, source: Optional[str] = None) -> Opt
     return None
 
 
+def report_failure(proxy_url: str, source: Optional[str] = None):
+    """全局代理失败汇报门面"""
+    manager = get_proxy_manager()
+    if manager:
+        manager.report_failure(proxy_url, source=source)
+
+
+def report_success(proxy_url: str, source: Optional[str] = None):
+    """全局代理成功汇报门面"""
+    manager = get_proxy_manager()
+    if manager:
+        manager.report_success(proxy_url, source=source)
+
+
 if __name__ == "__main__":
     # 测试代理管理器
     logger.info("=" * 60)

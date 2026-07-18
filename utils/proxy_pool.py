@@ -763,3 +763,80 @@ class ProxyPool:
             "last_fetch": self._last_fetch_time,
             "last_verify": self._last_verify_time,
         }
+
+    def _find_proxy_entry_in_lock(self, proxy_url: str) -> Optional[Dict]:
+        """在锁内查找匹配的代理字典对象"""
+        if not proxy_url:
+            return None
+        clean_url = proxy_url
+        if "://" in clean_url:
+            clean_url = clean_url.split("://", 1)[1]
+        if "@" in clean_url:
+            clean_url = clean_url.split("@", 1)[1]
+
+        for p in self._proxies:
+            addr = p.get("address", "")
+            if addr and (addr == clean_url or clean_url.endswith(addr) or f"{p.get('protocol')}://{addr}" == proxy_url):
+                return p
+        return None
+
+    def report_failure(self, proxy_url: str, source: Optional[str] = None):
+        """
+        汇报代理请求失败，降低该代理评分并从当前线程解除绑定
+        
+        Args:
+            proxy_url: 失败的代理 URL
+            source: 针对的爬虫源（可选）
+        """
+        if not proxy_url:
+            return
+
+        current_thread_id = threading.get_ident()
+
+        with self._lock:
+            # 如果当前线程绑定了这个失败的代理（或者匹配），解绑促使下次重新获取
+            bound_proxy = self._thread_proxy_map.get(current_thread_id)
+            if bound_proxy:
+                if bound_proxy == proxy_url or proxy_url.endswith(bound_proxy) or bound_proxy.endswith(proxy_url):
+                    del self._thread_proxy_map[current_thread_id]
+
+            p = self._find_proxy_entry_in_lock(proxy_url)
+            if p:
+                p["fail_count"] = p.get("fail_count", 0) + 1
+                p["score"] = p.get("score", 0.0) - 2.0
+
+                # 移除此 source 的有效状态
+                if source and isinstance(p.get("valid_sources"), set):
+                    p["valid_sources"].discard(source)
+
+                # 失败过多或扣分过低，从 working_proxies 中剔除
+                if p.get("fail_count", 0) >= 3 or p.get("score", 0.0) < -5.0:
+                    if p in self._working_proxies:
+                        self._working_proxies.remove(p)
+
+        logger.debug("代理 %s 汇报失败，已降低评分并更新状态", proxy_url)
+        self._save_cache_delayed()
+
+    def report_success(self, proxy_url: str, source: Optional[str] = None):
+        """
+        汇报代理请求成功，增加该代理评分
+        
+        Args:
+            proxy_url: 成功的代理 URL
+            source: 针对的爬虫源（可选）
+        """
+        if not proxy_url:
+            return
+
+        with self._lock:
+            p = self._find_proxy_entry_in_lock(proxy_url)
+            if p:
+                p["success_count"] = p.get("success_count", 0) + 1
+                p["score"] = min(10.0, p.get("score", 0.0) + 1.0)
+                if source:
+                    if "valid_sources" not in p or not isinstance(p["valid_sources"], set):
+                        p["valid_sources"] = set()
+                    p["valid_sources"].add(source)
+
+        self._save_cache_delayed()
+
