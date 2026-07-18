@@ -19,7 +19,9 @@ from crawlers.madou_crawler import MadouCrawler
 from crawlers.jingpin_toupai_crawler import JingpinToupaiCrawler
 from crawlers.taose_crawler import TaoseCrawler
 from crawlers.dashen_crawler import DashenCrawler
-
+from crawlers.tanhua_crawler import TanhuaCrawler
+from crawlers.jingpin_crawler import JingpinCrawler
+from crawlers.mianfei_guochan_crawler import MianfeiGuochanCrawler
 
 
 # Windows下控制台强制使用utf-8编码输出，防止中文乱码
@@ -36,6 +38,9 @@ CRAWLER_REGISTRY = {
     "jingpin_toupai": JingpinToupaiCrawler,
     "taose":        TaoseCrawler,
     "dashen":       DashenCrawler,
+    "tanhua":       TanhuaCrawler,
+    "jingpin":      JingpinCrawler,
+    "mianfei_guochan": MianfeiGuochanCrawler,
 }
 
 # 交互式爬虫选择菜单
@@ -48,6 +53,9 @@ CRAWLER_CHOICES = [
     ("jingpin_toupai", "jingpin_toupai"),
     ("taose", "taose"),
     ("dashen", "dashen (大神)"),
+    ("tanhua", "tanhua (探花)"),
+    ("jingpin", "jingpin (精品)"),
+    ("mianfei_guochan", "mianfei_guochan (免费国产)"),
 ]
 
 
@@ -71,8 +79,8 @@ def main():
     parser.add_argument(
         "--crawler", "-c",
         required=False,
-        choices=["seju", "u3c3", "datang", "gcbt", "madou", "jingpin_toupai", "taose", "dashen"],
-        help="指定运行哪一个网站的爬虫 (seju, u3c3, datang, gcbt, madou, jingpin_toupai, taose, dashen)"
+        choices=["seju", "u3c3", "datang", "gcbt", "madou", "jingpin_toupai", "taose", "dashen", "tanhua", "jingpin", "mianfei_guochan"],
+        help="指定运行哪一个网站的爬虫 (seju, u3c3, datang, gcbt, madou, jingpin_toupai, taose, dashen, tanhua, jingpin, mianfei_guochan)"
     )
     
     # 互斥参数：测试模式或正式爬取模式
