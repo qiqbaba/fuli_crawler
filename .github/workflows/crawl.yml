@@ -47,7 +47,61 @@ on:
           - 'false'
 
 jobs:
+  # ========== 前置 job：统一抓取并验证代理，供后续所有爬虫共享 ==========
+  fetch_proxies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true   # 即使代理获取失败，也不阻塞爬虫运行（爬虫会回退到独立获取）
+    env:
+      ENABLE_PROXY_MANAGER: 'true'
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 设置 Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装 Python 依赖
+        run: pip install -r requirements.txt
+
+      - name: 获取当前日期
+        id: get-date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: 恢复代理 IP 缓存（尝试复用上次已验证的代理）
+        uses: actions/cache/restore@v4
+        with:
+          path: temp_profiles/
+          key: proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
+          restore-keys: |
+            proxy-cache-${{ steps.get-date.outputs.date }}-
+            proxy-cache-
+
+      - name: 抓取并验证代理（供所有爬虫共享）
+        run: |
+          python -c "
+          from utils.proxy_manager import init_proxy_manager
+          mgr = init_proxy_manager(force_fetch=False, force_verify=False)
+          if mgr:
+              stats = mgr.get_stats()
+              print(f'代理池就绪: 总计 {stats[\"total\"]} 个, 可用 {stats[\"working\"]} 个')
+          else:
+              print('代理管理器未启用')
+          "
+
+      - name: 保存代理 IP 缓存（共享）
+        uses: actions/cache/save@v4
+        with:
+          path: temp_profiles/
+          key: proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
+
+  # ========== 爬虫并行 job ==========
   crawl:
+    needs: fetch_proxies
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
@@ -91,15 +145,15 @@ jobs:
         id: get-date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
-      - name: 恢复代理 IP 列表
+      - name: 恢复代理 IP 列表（共享缓存）
         uses: actions/cache/restore@v4
         with:
           path: temp_profiles/
-          key: ${{ runner.os }}-proxy-cache-${{ matrix.crawler }}-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
+          # 使用 fetch_proxies 保存的共享缓存 key 前缀
+          key: proxy-cache-restored-${{ matrix.crawler }}
           restore-keys: |
-            ${{ runner.os }}-proxy-cache-${{ matrix.crawler }}-${{ steps.get-date.outputs.date }}-
-            ${{ runner.os }}-proxy-cache-${{ matrix.crawler }}-
-            ${{ runner.os }}-proxy-cache-
+            proxy-cache-${{ steps.get-date.outputs.date }}-
+            proxy-cache-
 
       - name: 安装 Python 依赖和 Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
@@ -169,13 +223,6 @@ jobs:
       - name: 执行爬虫 - ${{ matrix.crawler }}
         if: steps.check-crawler.outputs.skip != 'true'
         run: python main.py ${{ steps.build-args.outputs.args }}
-
-      - name: 保存代理 IP 缓存 - ${{ matrix.crawler }}
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: temp_profiles/
-          key: ${{ runner.os }}-proxy-cache-${{ matrix.crawler }}-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
 
       - name: 清理临时 PDF 目录
         if: always()
