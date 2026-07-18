@@ -182,6 +182,21 @@ class BrowserFactory:
                     logger.warning("%s失败: %s", name, e)
 
         if context:
+            # 在关闭 context 前，先对所有 page 逐一 unroute + close，
+            # 避免 Playwright 内部待处理的 _on_route 协程在事件循环关闭后
+            # 尝试 asyncio.create_task() 而触发 RuntimeError: no running event loop
+            try:
+                for page in list(context.pages):
+                    try:
+                        page.unroute("**/*")
+                    except Exception:
+                        pass
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+            except Exception as e:
+                logger.debug("清理 context pages 失败（已忽略）: %s", e)
             _safe_close("关闭浏览器上下文", context.close)
             
         if browser:
