@@ -34,19 +34,22 @@ def _get_detector():
     return _detector
 
 
+# 模块级预编译正则匹配模式
+_JP_KANA_PATTERN = re.compile(r'[\u3040-\u309F\u30A0-\u30FF]')
+_NON_PUNCT_PATTERN = re.compile(r'[^\s\-_,.;:!?()\[\]{}【】「」『』《》<>・/\\~`@#$%^&*+=|"\']')
+
+
 def _is_japanese_candidate(text: str) -> bool:
     """
     快速预过滤逻辑：检查文本是否有足够的假名占比
     """
     # 统计假名数量（平假名 + 片假名）
-    jp_chars = len(re.findall(r'[\u3040-\u309F\u30A0-\u30FF]', text))
+    jp_chars = len(_JP_KANA_PATTERN.findall(text))
     if jp_chars == 0:
         return False
 
     # 统计有效字符数（排除空格和常见标点）
-    meaningful_chars = len(
-        re.findall(r'[^\s\-_,.;:!?()\[\]{}【】「」『』《》<>・/\\~`@#$%^&*+=|"\']', text)
-    )
+    meaningful_chars = len(_NON_PUNCT_PATTERN.findall(text))
     if meaningful_chars == 0:
         return False
 

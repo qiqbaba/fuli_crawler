@@ -99,20 +99,20 @@ class BaseCrawler:
         from config import get_effective_proxy, is_proxy_manager_enabled
         from utils.proxy_manager import get_proxy_manager
 
-        # 预先获取代理管理器实例（移出重试循环，只执行一次）
+        # 预先获取代理管理器实例
         proxy_manager = get_proxy_manager() if is_proxy_manager_enabled() else None
         max_retries = getattr(self, 'max_retries', 3)
+        # 分离连接超时与读取超时，防止死代理建立 TCP 连接卡死 20 秒
+        req_timeout = (4.0, timeout) if isinstance(timeout, (int, float)) else timeout
 
         for attempt in range(1, max_retries + 1):
             proxies = None
             try:
                 ua = random.choice(USER_AGENTS)
                 headers = {"User-Agent": ua}
+                proxies = get_effective_proxy(source=self.source_name)
 
-                if attempt < max_retries:
-                    proxies = get_effective_proxy(source=self.source_name)
-
-                r = requests.get(url, headers=headers, impersonate=impersonate, timeout=timeout, proxies=proxies)
+                r = requests.get(url, headers=headers, impersonate=impersonate, timeout=req_timeout, proxies=proxies)
                 r.encoding = 'utf-8'
                 if r.status_code == 200:
                     return r.url, r.text
@@ -120,15 +120,15 @@ class BaseCrawler:
                     self.log.error("HTTP 请求失败 (%s) [第 %s/%s 次尝试]: 状态码 %s", url, attempt, max_retries, r.status_code)
                     if r.status_code in (403, 407, 502, 503, 504) and proxies and proxy_manager:
                         if "http" in proxies:
-                            proxy_manager.report_failure(proxies["http"])
+                            proxy_manager.report_failure(proxies["http"], source=self.source_name)
             except Exception as e:
                 self.log.error("HTTP 请求异常 (%s) [第 %s/%s 次尝试]: %s", url, attempt, max_retries, e)
                 if proxies and proxy_manager:
                     if "http" in proxies:
-                        proxy_manager.report_failure(proxies["http"])
+                        proxy_manager.report_failure(proxies["http"], source=self.source_name)
 
             if attempt < max_retries:
-                time.sleep(random.uniform(1.0, 3.0))
+                time.sleep(random.uniform(0.5, 1.5))
 
         return url, None
 
@@ -450,24 +450,18 @@ class BaseCrawler:
                 self.log.info("[*] 磁力链接去重过滤掉 %s 条", resource_link_skipped)
             results = filtered_results
 
-        self.log.info("[*] 正在写入 %s 条新纪录到数据库...", len(results))
-        for data in results:
-            success = self.db_manager.insert_resource(data)
-            if success:
-                inserted_count += 1
+        self.log.info("[*] 正在批量写入 %s 条新纪录到数据库...", len(results))
+        if results:
+            inserted_count, skipped_count = self.db_manager.insert_resources_batch(results)
+            if inserted_count > 0:
                 consecutive_count = 0
-            else:
-                skipped_count += 1
+            elif skipped_count > 0:
                 if self.max_consecutive_existing is not None:
-                    consecutive_count += 1
+                    consecutive_count += skipped_count
                     if not self.quiet:
-                        self.log.info("[*] 写入失败或重复 (DB IGNORE)，连续已存在计数: %s/%s", consecutive_count, self.max_consecutive_existing)
+                        self.log.info("[*] 批量写入跳过 %s 条已存在数据，连续已存在计数: %s/%s", skipped_count, consecutive_count, self.max_consecutive_existing)
                     if consecutive_count >= self.max_consecutive_existing:
                         early_stop_triggered = True
-                        break
-                else:
-                    if not self.quiet:
-                        self.log.info("[*] 写入失败或重复 (DB IGNORE)")
 
         return inserted_count, skipped_count, consecutive_count, early_stop_triggered
 

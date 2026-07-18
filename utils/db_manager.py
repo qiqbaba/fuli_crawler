@@ -29,6 +29,11 @@ class BaseDBManager(ABC):
         """持久化写入并同步去重标记"""
         ...
 
+    @abstractmethod
+    def insert_resources_batch(self, data_list):
+        """批量持久化写入并同步去重标记"""
+        ...
+
     def commit(self):
         """提交事务（不同后端实现不同）"""
         self.persistence.commit()
@@ -101,6 +106,20 @@ class DBManager(BaseDBManager):
             return True
         return False
 
+    def insert_resources_batch(self, data_list):
+        """
+        批量持久化与去重双写逻辑：
+        1. 本地 SQLite 批量写入
+        2. 同步向 AWS DynamoDB 批量更新去重标记
+        返回: (inserted_count, skipped_count)
+        """
+        if not data_list:
+            return 0, 0
+        inserted_count, skipped_count = self.persistence.insert_resources_batch(data_list)
+        if inserted_count > 0:
+            self.aws_helper.insert_resources_batch(data_list)
+        return inserted_count, skipped_count
+
 
 class SupabaseDBManager(BaseDBManager):
     """Supabase PostgreSQL 数据库管理器（云端 GitHub Actions 使用）"""
@@ -147,3 +166,17 @@ class SupabaseDBManager(BaseDBManager):
             self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'))
             return True
         return False
+
+    def insert_resources_batch(self, data_list):
+        """
+        批量持久化与去重双写逻辑：
+        1. 云端 Supabase 批量写入
+        2. 同步向 AWS DynamoDB 批量更新去重标记
+        返回: (inserted_count, skipped_count)
+        """
+        if not data_list:
+            return 0, 0
+        inserted_count, skipped_count = self.persistence.insert_resources_batch(data_list)
+        if inserted_count > 0:
+            self.aws_helper.insert_resources_batch(data_list)
+        return inserted_count, skipped_count

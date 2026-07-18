@@ -37,6 +37,10 @@ class SqlitePersistenceService:
             conn = cursor.connection
             close_after = False
         
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA cache_size=-64000;")
+        
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS resources (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,6 +124,50 @@ class SqlitePersistenceService:
             
             return self.cursor.rowcount > 0
 
+    def insert_resources_batch(self, data_list):
+        """
+        批量向 SQLite 数据库写入数据字典列表
+        返回：
+            (inserted_count, skipped_count)
+        """
+        if not data_list:
+            return 0, 0
+        
+        params = [
+            (
+                d.get('title'),
+                d.get('publish_time'),
+                d.get('category'),
+                d.get('resource_link'),
+                d.get('pikpak_link'),
+                d.get('size'),
+                d.get('resource_format'),
+                d.get('link_type', ''),
+                d.get('url'),
+                d.get('pdf_path', ''),
+                d.get('source')
+            )
+            for d in data_list
+        ]
+        
+        with self.lock:
+            self.cursor.execute("SELECT COUNT(*) FROM resources")
+            count_before = self.cursor.fetchone()[0]
+            
+            self.cursor.executemany('''
+                INSERT OR IGNORE INTO resources (
+                    title, publish_time, category, resource_link, pikpak_link, 
+                    size, resource_format, link_type, url, pdf_path, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', params)
+            
+            self.cursor.execute("SELECT COUNT(*) FROM resources")
+            count_after = self.cursor.fetchone()[0]
+            
+            inserted = count_after - count_before
+            skipped = len(data_list) - inserted
+            return inserted, skipped
+
     def commit(self):
         """手动提交"""
         with self.lock:
@@ -179,6 +227,43 @@ class SupabasePersistenceService:
             return False
         except Exception as e:
             logger.error("[-] Supabase insert_resource 失败 (网络/API 错误): %s", e)
+            raise
+
+    def insert_resources_batch(self, data_list):
+        """
+        批量向 Supabase 表写入数据字典列表（upsert，url 为唯一键）
+        返回：
+            (inserted_count, skipped_count)
+        """
+        if not data_list:
+            return 0, 0
+        records = [
+            {
+                "title":           d.get("title"),
+                "publish_time":    d.get("publish_time"),
+                "category":        d.get("category"),
+                "resource_link":   d.get("resource_link"),
+                "pikpak_link":     d.get("pikpak_link"),
+                "size":            d.get("size"),
+                "resource_format": d.get("resource_format"),
+                "link_type":       d.get("link_type", ""),
+                "url":             d.get("url"),
+                "pdf_path":        d.get("pdf_path", ""),
+                "source":          d.get("source"),
+            }
+            for d in data_list
+        ]
+        try:
+            resp = (
+                self.client.table(self.table)
+                .upsert(records, on_conflict="url", ignore_duplicates=True)
+                .execute()
+            )
+            inserted = len(resp.data) if resp.data else 0
+            skipped = len(data_list) - inserted
+            return inserted, skipped
+        except Exception as e:
+            logger.error("[-] Supabase insert_resources_batch 失败: %s", e)
             raise
 
     def commit(self):

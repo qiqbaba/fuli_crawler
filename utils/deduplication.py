@@ -428,6 +428,31 @@ class DynamoDBDeduplicationService:
             self._executor.submit(self._async_put_item, url, resource_link)
         return True
 
+    def insert_resources_batch(self, items_list):
+        """向 AWS DynamoDB 异步批量写入数据列表"""
+        if not items_list:
+            return
+        
+        with self._lock:
+            for d in items_list:
+                url = d.get('url')
+                resource_link = d.get('resource_link')
+                if url:
+                    self._cached_urls.add(url)
+                    self._url_bloom.add(url)
+                    self._bloom_dirty = True
+                if resource_link:
+                    self._cached_resource_links.add(resource_link)
+                    if self._scanned_resource_links is not None:
+                        self._scanned_resource_links.add(resource_link)
+
+        if self._executor:
+            for d in items_list:
+                url = d.get('url')
+                resource_link = d.get('resource_link')
+                if url:
+                    self._executor.submit(self._async_put_item, url, resource_link)
+
     def _async_put_item(self, url, resource_link):
         """实际在线程池中运行的 DynamoDB 写入任务"""
         item = {"url": {"S": url}}

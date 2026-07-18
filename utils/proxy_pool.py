@@ -794,27 +794,29 @@ class ProxyPool:
         current_thread_id = threading.get_ident()
 
         with self._lock:
-            # 如果当前线程绑定了这个失败的代理（或者匹配），解绑促使下次重新获取
-            bound_proxy = self._thread_proxy_map.get(current_thread_id)
-            if bound_proxy:
-                if bound_proxy == proxy_url or proxy_url.endswith(bound_proxy) or bound_proxy.endswith(proxy_url):
-                    del self._thread_proxy_map[current_thread_id]
+            # 清除所有线程中对此失败代理的绑定，防止其他线程继续复用坏代理
+            tids_to_unbind = [
+                tid for tid, p_url in self._thread_proxy_map.items()
+                if p_url == proxy_url or proxy_url.endswith(p_url) or p_url.endswith(proxy_url)
+            ]
+            for tid in tids_to_unbind:
+                del self._thread_proxy_map[tid]
 
             p = self._find_proxy_entry_in_lock(proxy_url)
             if p:
                 p["fail_count"] = p.get("fail_count", 0) + 1
-                p["score"] = p.get("score", 0.0) - 2.0
+                p["score"] = p.get("score", 0.0) - 2.5
 
                 # 移除此 source 的有效状态
                 if source and isinstance(p.get("valid_sources"), set):
                     p["valid_sources"].discard(source)
 
-                # 失败过多或扣分过低，从 working_proxies 中剔除
-                if p.get("fail_count", 0) >= 3 or p.get("score", 0.0) < -5.0:
+                # 失败 2 次以上或扣分低于 -3.0，立即从 working_proxies 中剔除熔断
+                if p.get("fail_count", 0) >= 2 or p.get("score", 0.0) <= -3.0:
                     if p in self._working_proxies:
                         self._working_proxies.remove(p)
 
-        logger.debug("代理 %s 汇报失败，已降低评分并更新状态", proxy_url)
+        logger.debug("代理 %s 汇报失败，已降低评分并更新熔断状态", proxy_url)
         self._save_cache_delayed()
 
     def report_success(self, proxy_url: str, source: Optional[str] = None):
