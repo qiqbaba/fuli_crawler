@@ -572,14 +572,26 @@ class ProxyPool:
 
         # 同步执行代理补充（阻塞），确保调用方拿到代理后再继续
         try:
-            logger.info("针对爬虫源 %s 的代理较少（或总数较低），正在同步补充代理...", source or "global")
-            self.fetch_proxies(force=True)
-            
-            # 从记住的测试 URL 映射中获取该 source 对应的 test_url，如果没有则默认为 None
             test_url = self._source_test_urls.get(source) if source else None
-            
-            self.verify_proxies(force=True, target_count=target_count, test_url=test_url, source=source)
-            logger.info("代理补充完成: 可用 %s 个", len(self._working_proxies))
+
+            # 优先检查候选代理池中是否已有充足的待校验代理，避免盲目重复抓取网络源
+            with self._lock:
+                has_enough_candidates = len(self._proxies) >= 200
+
+            if has_enough_candidates:
+                logger.info("针对爬虫源 %s 的可用代理较少，优先从现有候选代理池（%s 个）继续验证...", source or "global", len(self._proxies))
+                self.verify_proxies(force=True, target_count=target_count, test_url=test_url, source=source)
+
+            # 如果复用已有代理池验证后，可用代理依然低于阈值，则重新抓取网络代理源
+            with self._lock:
+                still_need = self._should_replenish(source)
+
+            if still_need or not has_enough_candidates:
+                logger.info("针对爬虫源 %s 的可用代理依然不足，正在重新同步抓取代理源...", source or "global")
+                self.fetch_proxies(force=True)
+                self.verify_proxies(force=True, target_count=target_count, test_url=test_url, source=source)
+
+            logger.info("代理补充完成: 当前可用 %s 个", len(self._working_proxies))
         except Exception as e:
             logger.warning("补充代理出现异常: %s", e)
         finally:
@@ -588,7 +600,7 @@ class ProxyPool:
 
     def _should_replenish(self, source: Optional[str] = None) -> bool:
         """在锁内快速判断是否需要触发补给（不执行实际补给）"""
-        if self._is_replenishing:
+        if self._is_replenishing or self._is_verifying:
             return False
             
         # 1. 如果总的可用代理少于 100，肯定要补给
