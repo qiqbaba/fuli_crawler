@@ -12,19 +12,19 @@ logger = get_logger(__name__)
 
 # ========== 代理源配置 ==========
 PROXY_SOURCES = {
-    # free-proxy-list.net - HTML 解析，稳定更新
-    "free_proxy_list": "https://free-proxy-list.net/",
+    # free-proxy-list.net - HTML 解析，稳定更新 [暂取消-仅HTTP]
+    # "free_proxy_list": "https://free-proxy-list.net/",
     # sslproxies.org - HTML 解析，HTTPS 专用
     "sslproxies_org": "https://www.sslproxies.org/",
     # proxyscrape - 免费 HTTP/HTTPS/SOCKS5 列表
-    "proxyscrape_http": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all",
+    # "proxyscrape_http": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all",  # [暂取消-仅HTTP]
     "proxyscrape_https": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=https&timeout=10000&country=all",
     "proxyscrape_socks5": "https://api.proxyscrape.com/v2/?request=getproxies&protocol=socks5&timeout=10000&country=all",
     # TheSpeedX/PROXY-List - 每天更新
-    "speedx_http": "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",
+    # "speedx_http": "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/http.txt",  # [暂取消-仅HTTP]
     "speedx_socks5": "https://raw.githubusercontent.com/TheSpeedX/SOCKS-List/master/socks5.txt",
     # ProxyScraper/ProxyScraper - 每小时自动更新
-    "proxyscraper_http": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/http.txt",
+    # "proxyscraper_http": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/http.txt",  # [暂取消-仅HTTP]
     "proxyscraper_socks4": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks4.txt",
     "proxyscraper_socks5": "https://raw.githubusercontent.com/ProxyScraper/ProxyScraper/main/socks5.txt",
     
@@ -32,28 +32,27 @@ PROXY_SOURCES = {
     # proxifly/free-proxy-list - 自动更新
     "proxifly_all": "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/all/data.txt",
     # TheSpeedX/PROXY-List - 每天更新的 HTTP 列表
-    "speedx_proxy_list_http": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+    # "speedx_proxy_list_http": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",  # [暂取消-仅HTTP]
     "speedx_proxy_list_socks5": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
     # monosans/proxy-list
-    "monosans_http": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
+    # "monosans_http": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",  # [暂取消-仅HTTP]
     "monosans_socks5": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
     # elliottophellia/proxylist - 经检测的代理
-    "elliottophellia_http": "https://raw.githubusercontent.com/elliottophellia/proxylist/master/results/http/global/http_checked.txt",
+    # "elliottophellia_http": "https://raw.githubusercontent.com/elliottophellia/proxylist/master/results/http/global/http_checked.txt",  # [暂取消-仅HTTP]
     # roosterkid/openproxylist - 每小时更新的 RAW 列表
     "roosterkid_https": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt",
     "roosterkid_socks5": "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt",
     # Anonym0usWork1221/Free-Proxies - 每两小时更新
-    "anonym0uswork_http": "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/http_proxies.txt",
+    # "anonym0uswork_http": "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/http_proxies.txt",  # [暂取消-仅HTTP]
     "anonym0uswork_socks4": "https://raw.githubusercontent.com/Anonym0usWork1221/Free-Proxies/main/proxy_files/socks4_proxies.txt",
 
     # 新增代理源：
     # Thordata/awesome-free-proxy-list (每天更新)
-    "thordata_all": "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/all.txt",
-    "thordata_http": "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt",
+    # "thordata_http": "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/http.txt",  # [暂取消-仅HTTP]
     "thordata_socks5": "https://raw.githubusercontent.com/Thordata/awesome-free-proxy-list/main/proxies/socks5.txt",
     # VPSLabCloud/VPSLab-Free-Proxy-List (15分钟更新)
     "vpslab_all_elite": "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/all_elite.txt",
-    "vpslab_http_all": "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/http_all.txt",
+    # "vpslab_http_all": "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/http_all.txt",  # [暂取消-仅HTTP]
     "vpslab_socks5_all": "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/socks5_all.txt",
 
     # 新增代理源（第三批）：
@@ -61,16 +60,16 @@ PROXY_SOURCES = {
     "r00tee_https": "https://raw.githubusercontent.com/r00tee/Proxy-List/main/Https.txt",
     "r00tee_socks5": "https://raw.githubusercontent.com/r00tee/Proxy-List/main/Socks5.txt",
     # gfpcom/free-proxy-list（高容量代理列表）
-    "gfpcom_http": "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/http.txt",
+    # "gfpcom_http": "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/http.txt",  # [暂取消-仅HTTP]
     "gfpcom_socks5": "https://raw.githubusercontent.com/wiki/gfpcom/free-proxy-list/lists/socks5.txt",
     # databay-labs/free-proxy-list（SSL校验，5分钟更新）
-    "databay_http": "https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/http.txt",
+    # "databay_http": "https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/http.txt",  # [暂取消-仅HTTP]
     "databay_socks5": "https://raw.githubusercontent.com/databay-labs/free-proxy-list/master/socks5.txt",
     # vakhov/fresh-proxy-list（5-20分钟更新）
-    "vakhov_http": "https://vakhov.github.io/fresh-proxy-list/http.txt",
+    # "vakhov_http": "https://vakhov.github.io/fresh-proxy-list/http.txt",  # [暂取消-仅HTTP]
     "vakhov_socks5": "https://vakhov.github.io/fresh-proxy-list/socks5.txt",
     # komutan234/Proxy-List-Free（高频更新）
-    "komutan_http": "https://raw.githubusercontent.com/komutan234/Proxy-List-Free/main/proxies/http.txt",
+    # "komutan_http": "https://raw.githubusercontent.com/komutan234/Proxy-List-Free/main/proxies/http.txt",  # [暂取消-仅HTTP]
     "komutan_socks5": "https://raw.githubusercontent.com/komutan234/Proxy-List-Free/main/proxies/socks5.txt",
 }
 
