@@ -614,6 +614,14 @@ class BaseCrawler:
 
     def get_default_max_workers(self):
         """钩子方法：根据爬虫类型获取默认并发数，子类可覆盖"""
+        # 检测 GitHub Actions CI 环境，自动降级并发数防止 OOM
+        import os as _os
+        if _os.environ.get("GITHUB_ACTIONS") == "true":
+            if self.source_name in ("seju", "datang", "madou", "gcbt", "jingpin_toupai", "taose", "dashen"):
+                return 4  # CI 环境 Playwright 爬虫降级到 4 workers，避免 7GB RAM OOM
+            # CI 中 u3c3 等纯 HTTP 爬虫可保持较高并发
+            return 30
+
         if self.no_pdf:
             # 无 PDF 模式无需浏览器进程，可大幅提升并发
             return 30

@@ -4,14 +4,12 @@ on:
   schedule:
     # 北京时间 03:00 = UTC 19:00（前一天）
     - cron: '0 19 * * *'
-    # 北京时间 15:00 = UTC 07:00
-    - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
       crawler:
         description: '指定运行的爬虫模块'
         required: true
-        default: 'gcbt'
+        default: 'all'
         type: choice
         options:
           - all
@@ -47,19 +45,15 @@ on:
         options:
           - 'true'
           - 'false'
-      apply_params_to_all:
-        description: '选择 all 时是否应用上面的 start/end/early_stop/resume 参数'
-        required: true
-        default: 'false'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
 
 jobs:
   crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 最长运行 6 小时
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        crawler: [seju, u3c3, datang, gcbt, madou, jingpin_toupai, taose, dashen]
 
     env:
       SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
@@ -72,7 +66,7 @@ jobs:
       AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       # 云端临时 PDF 目录（上传 R2 后自动删除）
-      PDF_BASE_DIR:          /tmp/seju_pdfs
+      PDF_BASE_DIR:          /tmp/pdfs
       # 启用内置代理IP管理器（自动获取并轮换免费代理）
       ENABLE_PROXY_MANAGER:  'true'
 
@@ -86,6 +80,13 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: 缓存 Playwright Chromium 浏览器
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+
       - name: 获取当前日期
         id: get-date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
@@ -94,153 +95,88 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: temp_profiles/
-          key: ${{ runner.os }}-proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ runner.os }}-proxy-cache-${{ matrix.crawler }}-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
           restore-keys: |
-            ${{ runner.os }}-proxy-cache-${{ steps.get-date.outputs.date }}-
+            ${{ runner.os }}-proxy-cache-${{ matrix.crawler }}-${{ steps.get-date.outputs.date }}-
+            ${{ runner.os }}-proxy-cache-${{ matrix.crawler }}-
             ${{ runner.os }}-proxy-cache-
 
-      - name: 安装 Python 依赖
-        run: pip install -r requirements.txt
-
-      - name: 安装 Playwright Chromium 浏览器
+      - name: 安装 Python 依赖和 Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
+          pip install -r requirements.txt
           playwright install chromium --with-deps
-          echo "Playwright Chromium 安装完成"
+
+      - name: 仅安装 Python 依赖（Playwright 已缓存）
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          pip install -r requirements.txt
 
       - name: 创建临时 PDF 目录
-        run: |
-          mkdir -p /tmp/madou_pdfs
-          mkdir -p /tmp/seju_pdfs
-          mkdir -p /tmp/gcbt_pdfs
-          mkdir -p /tmp/datang_pdfs
-          mkdir -p /tmp/jingpin_toupai_pdfs
-          mkdir -p /tmp/taose_pdfs
-          mkdir -p /tmp/dashen_pdfs
+        run: mkdir -p /tmp/pdfs
 
-      - name: 判断运行时段（上午/下午分组）
-        id: period
+      - name: 检查 workflow_dispatch 是否匹配当前爬虫
+        id: check-crawler
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "group=all" >> $GITHUB_OUTPUT
-          else
-            HOUR=$(TZ='Asia/Shanghai' date +%H)
-            if [ "$HOUR" = "03" ]; then
-              echo "group=morning" >> $GITHUB_OUTPUT
+            INPUT_CRAWLER="${{ github.event.inputs.crawler }}"
+            if [ "$INPUT_CRAWLER" != "all" ] && [ "$INPUT_CRAWLER" != "${{ matrix.crawler }}" ]; then
+              echo "skip=true" >> $GITHUB_OUTPUT
+              echo "爬虫 ${{ matrix.crawler }} 不匹配手动输入的 $INPUT_CRAWLER，跳过"
             else
-              echo "group=afternoon" >> $GITHUB_OUTPUT
+              echo "skip=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 构建爬虫参数
+        id: build-args
+        if: steps.check-crawler.outputs.skip != 'true'
+        run: |
+          ARGS="--crawler ${{ matrix.crawler }} --crawl -q"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # workflow_dispatch: 如果选了 all 但 apply_params_to_all=false，不附加参数
+            INPUT_CRAWLER="${{ github.event.inputs.crawler }}"
+            APPLY_ALL="${{ github.event.inputs.apply_params_to_all }}"
+            if [ "$INPUT_CRAWLER" = "all" ] && [ "$APPLY_ALL" != "true" ]; then
+              echo "args=$ARGS" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            # 附加参数
+            if [ -n "${{ github.event.inputs.start }}" ]; then
+              ARGS="$ARGS --start ${{ github.event.inputs.start }}"
+            fi
+            if [ -n "${{ github.event.inputs.end }}" ]; then
+              ARGS="$ARGS --end ${{ github.event.inputs.end }}"
+            fi
+            if [ "${{ github.event.inputs.no_early_stop }}" = "true" ]; then
+              ARGS="$ARGS --no-early-stop"
+            fi
+            if [ "${{ github.event.inputs.resume }}" = "true" ]; then
+              ARGS="$ARGS --resume"
+            fi
+          else
+            # 定时触发：datang 带上 --resume
+            if [ "${{ matrix.crawler }}" = "datang" ]; then
+              ARGS="$ARGS --resume"
             fi
           fi
 
-      - name: 执行爬虫任务
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            CRAWLER="${{ github.event.inputs.crawler }}"
-            if [ "$CRAWLER" = "all" ]; then
-              # 根据 apply_params_to_all 决定是否附加通用参数
-              COMMON_ARGS=""
-              if [ "${{ github.event.inputs.apply_params_to_all }}" = "true" ]; then
-                if [ -n "${{ github.event.inputs.start }}" ]; then
-                  COMMON_ARGS="$COMMON_ARGS --start ${{ github.event.inputs.start }}"
-                fi
-                if [ -n "${{ github.event.inputs.end }}" ]; then
-                  COMMON_ARGS="$COMMON_ARGS --end ${{ github.event.inputs.end }}"
-                fi
-                if [ "${{ github.event.inputs.no_early_stop }}" = "true" ]; then
-                  COMMON_ARGS="$COMMON_ARGS --no-early-stop"
-                fi
-                if [ "${{ github.event.inputs.resume }}" = "true" ]; then
-                  COMMON_ARGS="$COMMON_ARGS --resume"
-                fi
-                echo "全量模式应用通用参数:$COMMON_ARGS"
-              else
-                echo "全量模式使用默认参数（忽略手动输入的 start/end/early_stop/resume）"
-              fi
+          echo "args=$ARGS" >> $GITHUB_OUTPUT
 
-              echo "=== 开始爬取 seju ==="
-              python main.py --crawler seju --crawl $COMMON_ARGS
-              echo "=== seju 完成 ==="
-              echo "=== 开始爬取 u3c3 ==="
-              python main.py --crawler u3c3 --crawl $COMMON_ARGS
-              echo "=== u3c3 完成 ==="
-              echo "=== 开始爬取 datang ==="
-              python main.py --crawler datang --crawl $COMMON_ARGS
-              echo "=== datang 完成 ==="
-              echo "=== 开始爬取 gcbt ==="
-              python main.py --crawler gcbt --crawl $COMMON_ARGS
-              echo "=== gcbt 完成 ==="
-              echo "=== 开始爬取 madou ==="
-              python main.py --crawler madou --crawl $COMMON_ARGS
-              echo "=== madou 完成 ==="
-              echo "=== 开始爬取 jingpin_toupai ==="
-              python main.py --crawler jingpin_toupai --crawl $COMMON_ARGS
-              echo "=== jingpin_toupai 完成 ==="
-              echo "=== 开始爬取 taose ==="
-              python main.py --crawler taose --crawl $COMMON_ARGS
-              echo "=== taose 完成 ==="
-              echo "=== 开始爬取 dashen ==="
-              python main.py --crawler dashen --crawl $COMMON_ARGS
-              echo "=== dashen 完成 ==="
-            else
-              CMD="python main.py --crawler $CRAWLER --crawl -q"
-              if [ -n "${{ github.event.inputs.start }}" ]; then
-                CMD="$CMD --start ${{ github.event.inputs.start }}"
-              fi
-              if [ -n "${{ github.event.inputs.end }}" ]; then
-                CMD="$CMD --end ${{ github.event.inputs.end }}"
-              fi
-              if [ "${{ github.event.inputs.no_early_stop }}" = "true" ]; then
-                CMD="$CMD --no-early-stop"
-              fi
-              if [ "${{ github.event.inputs.resume }}" = "true" ]; then
-                CMD="$CMD --resume"
-              fi
-              echo "手动运行命令: $CMD"
-              eval $CMD
-            fi
-          else
-            GROUP="${{ steps.period.outputs.group }}"
-            echo "定时触发，当前时段: $GROUP"
-            if [ "$GROUP" = "morning" ]; then
-              echo "=== 上午组：开始爬取 seju ==="
-              python main.py --crawler seju --crawl -q
-              echo "=== seju 完成 ==="
-              echo "=== 上午组：开始爬取 u3c3 ==="
-              python main.py --crawler u3c3 --crawl -q
-              echo "=== u3c3 完成 ==="
-              echo "=== 上午组：开始爬取 datang ==="
-              python main.py --crawler datang --crawl --resume -q
-              echo "=== datang 完成 ==="
-              echo "=== 上午组：开始爬取 gcbt ==="
-              python main.py --crawler gcbt --crawl -q
-              echo "=== gcbt 完成 ==="
-            else
-              echo "=== 下午组：开始爬取 madou ==="
-              python main.py --crawler madou --crawl -q
-              echo "=== madou 完成 ==="
-              echo "=== 下午组：开始爬取 jingpin_toupai ==="
-              python main.py --crawler jingpin_toupai --crawl -q
-              echo "=== jingpin_toupai 完成 ==="
-              echo "=== 下午组：开始爬取 taose ==="
-              python main.py --crawler taose --crawl -q
-              echo "=== taose 完成 ==="
-              echo "=== 下午组：开始爬取 dashen ==="
-              python main.py --crawler dashen --crawl -q
-              echo "=== dashen 完成 ==="
-            fi
-          fi
+      - name: 执行爬虫 - ${{ matrix.crawler }}
+        if: steps.check-crawler.outputs.skip != 'true'
+        run: python main.py ${{ steps.build-args.outputs.args }}
 
-      - name: 保存代理 IP 缓存
+      - name: 保存代理 IP 缓存 - ${{ matrix.crawler }}
         uses: actions/cache/save@v4
         if: always()
         with:
           path: temp_profiles/
-          key: ${{ runner.os }}-proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: ${{ runner.os }}-proxy-cache-${{ matrix.crawler }}-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
 
       - name: 清理临时 PDF 目录
         if: always()
-        run: |
-          rm -rf /tmp/madou_pdfs
-          rm -rf /tmp/seju_pdfs
-          rm -rf /tmp/gcbt_pdfs
-          rm -rf /tmp/datang_pdfs
-          rm -rf /tmp/jingpin_toupai_pdfs
+        run: rm -rf /tmp/pdfs
