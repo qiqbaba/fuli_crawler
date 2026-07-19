@@ -212,10 +212,11 @@ jobs:
               ARGS="$ARGS --resume"
             fi
           else
-            # 定时触发：datang 带上 --resume
-            if [ "${{ matrix.crawler }}" = "datang" ]; then
-              ARGS="$ARGS --resume"
-            fi
+            # 定时触发断点续爬配置（目前不使用）
+            # 如需为某个爬虫开启断点续爬，可在此添加
+            # if [ "${{ matrix.crawler }}" = "datang" ]; then
+            #   ARGS="$ARGS --resume"
+            # fi
           fi
 
           echo "args=$ARGS" >> $GITHUB_OUTPUT
