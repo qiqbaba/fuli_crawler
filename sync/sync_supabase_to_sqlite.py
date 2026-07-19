@@ -5,8 +5,8 @@ import sqlite3
 from datetime import datetime
 from urllib.parse import urlparse
 
-# 确保能加载当前目录下的模块
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 确保能加载项目根目录下的模块（config.py 在项目根目录）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from dotenv import load_dotenv
@@ -164,8 +164,8 @@ def sync_data():
         return
 
     # 6. 安全清理云端已同步的数据
-    confirm_clear = input("[?] 是否需要从云端数据库中删除这部分已成功备份的记录？
-    警告: 此操作将批量删除云端数据，请输入 'DELETE' 确认执行，或按其他键取消: ").strip().upper()
+    confirm_clear = input('''[?] 是否需要从云端数据库中删除这部分已成功备份的记录？
+    警告: 此操作将批量删除云端数据，请输入 'DELETE' 确认执行，或按其他键取消: ''').strip().upper()
     if confirm_clear == 'DELETE':
         # 查找云端当前的最小 ID，以便精确确定删除起点
         try:
