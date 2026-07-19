@@ -2,6 +2,7 @@ import os
 import re
 import json
 import time
+import csv
 import random
 import threading
 from dataclasses import dataclass, field
@@ -15,6 +16,33 @@ from config import USER_AGENTS
 from curl_cffi import requests
 
 logger = get_logger(__name__)
+
+_RETRY_CSV_LOCK = threading.Lock()
+_RETRY_CSV_PATH = os.path.join("logs", "resource_retry_stats.csv")
+
+
+def record_resource_retry(source_name: str, title: str, url: str, attempts: int, retry_count: int, status: str, saved_path: str = ""):
+    """单独记录每条资源抓取/PDF生成的重试统计数据到 CSV 文件"""
+    try:
+        os.makedirs("logs", exist_ok=True)
+        file_exists = os.path.isfile(_RETRY_CSV_PATH)
+        
+        with _RETRY_CSV_LOCK:
+            with open(_RETRY_CSV_PATH, mode="a", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow([
+                        "timestamp", "source", "title", "url", 
+                        "attempts", "retry_count", "status", "saved_path"
+                    ])
+                now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+                writer.writerow([
+                    now_str, source_name, title, url, 
+                    attempts, retry_count, status, saved_path
+                ])
+    except Exception as e:
+        logger.warning("写入重试统计文件失败: %s", e)
+
 
 
 @dataclass
@@ -930,6 +958,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
         if max_retries is None:
             max_retries = getattr(self, 'max_pdf_retries', 3)
 
+        target_url = url_or_page if isinstance(url_or_page, str) else getattr(url_or_page, 'url', '')
         last_error = None
         for attempt in range(1, max_retries + 1):
             try:
@@ -946,7 +975,17 @@ class PlaywrightBaseCrawler(BaseCrawler):
 
                 saved_path = self._save_pdf(url_or_page, publish_date, title, no_proxy=no_proxy)
                 if saved_path:
-                    # logger.info("[PDF-SAVE] 标题: %s -> PDF 路径: %s", title, saved_path)
+                    retry_count = attempt - 1
+                    self.log.info("[PDF-SAVE] 标题: %s -> 成功生成 (尝试 %s 次, 重试 %s 次) -> %s", title, attempt, retry_count, saved_path)
+                    record_resource_retry(
+                        source_name=getattr(self, 'source_name', 'unknown'),
+                        title=title,
+                        url=target_url,
+                        attempts=attempt,
+                        retry_count=retry_count,
+                        status="SUCCESS",
+                        saved_path=saved_path
+                    )
                     return saved_path
                 else:
                     last_error = f"第 {attempt}/{max_retries} 次尝试返回空"
@@ -964,6 +1003,15 @@ class PlaywrightBaseCrawler(BaseCrawler):
                 time.sleep(random.uniform(1.5, 3.0))
 
         self.log.error("[PDF-SAVE] 标题: %s 生成 PDF 失败 (已达最大重试次数): %s", title, last_error)
+        record_resource_retry(
+            source_name=getattr(self, 'source_name', 'unknown'),
+            title=title,
+            url=target_url,
+            attempts=max_retries,
+            retry_count=max_retries - 1,
+            status="FAILED",
+            saved_path=""
+        )
         return ""
 
 
