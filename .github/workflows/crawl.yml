@@ -79,18 +79,11 @@ jobs:
       - name: 安装 Python 依赖
         run: pip install -r requirements.txt
 
-      - name: 获取当前日期
-        id: get-date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-
       - name: 恢复代理 IP 缓存（尝试复用上次已验证的代理）
         uses: actions/cache/restore@v4
         with:
           path: temp_profiles/
-          key: proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
-          restore-keys: |
-            proxy-cache-${{ steps.get-date.outputs.date }}-
-            proxy-cache-
+          key: proxy-cache-latest
 
       - name: 抓取并验证代理（供所有爬虫共享）
         run: |
@@ -104,11 +97,24 @@ jobs:
               print('代理管理器未启用')
           "
 
-      - name: 保存代理 IP 缓存（共享）
+      - name: 删除旧的代理缓存（避免堆积）
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CACHE_ID=$(gh actions cache list --key proxy-cache-latest --repo ${{ github.repository }} --json id --jq '.[0].id' 2>/dev/null || echo "")
+          if [ -n "$CACHE_ID" ]; then
+            gh actions cache delete "$CACHE_ID" --repo ${{ github.repository }}
+            echo "已删除旧缓存 (ID: $CACHE_ID)"
+          else
+            echo "没有找到旧缓存，跳过删除"
+          fi
+
+      - name: 保存代理 IP 缓存（共享，始终使用固定 key）
         uses: actions/cache/save@v4
         with:
           path: temp_profiles/
-          key: proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
+          key: proxy-cache-latest
 
   # ========== 爬虫并行 job ==========
   crawl:
@@ -152,19 +158,11 @@ jobs:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
 
-      - name: 获取当前日期
-        id: get-date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
-
       - name: 恢复代理 IP 列表（共享缓存）
         uses: actions/cache/restore@v4
         with:
           path: temp_profiles/
-          # 使用 fetch_proxies 保存的共享缓存 key 前缀
-          key: proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
-          restore-keys: |
-            proxy-cache-${{ steps.get-date.outputs.date }}-
-            proxy-cache-
+          key: proxy-cache-latest
 
       - name: 安装 Python 依赖和 Playwright Chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
