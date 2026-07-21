@@ -21,6 +21,9 @@ on:
           - jingpin_toupai
           - taose
           - dashen
+          - tanhua
+          - jingpin
+          - mianfei_guochan
       start:
         description: '起始页码 (留空则默认为 1)'
         required: false
@@ -41,6 +44,14 @@ on:
         description: '是否启用断点续爬模式 (跳过已完成板块/页面，从上一次中断处继续)'
         required: true
         default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      apply_params_to_all:
+        description: '当选择 all 时，是否将 start/end/no_early_stop/resume 参数应用到每个爬虫 (false 则各爬虫使用默认参数)'
+        required: true
+        default: 'false'
         type: choice
         options:
           - 'true'
@@ -107,7 +118,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        crawler: [seju, u3c3, datang, gcbt, madou, jingpin_toupai, taose, dashen]
+        crawler: [seju, u3c3, datang, gcbt, madou, jingpin_toupai, taose, dashen, tanhua, jingpin, mianfei_guochan]
 
     env:
       SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
@@ -150,7 +161,7 @@ jobs:
         with:
           path: temp_profiles/
           # 使用 fetch_proxies 保存的共享缓存 key 前缀
-          key: proxy-cache-restored-${{ matrix.crawler }}
+          key: proxy-cache-${{ steps.get-date.outputs.date }}-${{ github.run_id }}
           restore-keys: |
             proxy-cache-${{ steps.get-date.outputs.date }}-
             proxy-cache-
@@ -165,6 +176,7 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: |
           pip install -r requirements.txt
+          playwright install-deps chromium
 
       - name: 创建临时 PDF 目录
         run: mkdir -p /tmp/pdfs
@@ -226,6 +238,71 @@ jobs:
         if: steps.check-crawler.outputs.skip != 'true'
         run: python main.py ${{ steps.build-args.outputs.args }}
 
+      - name: 准备重试统计文件（重命名为唯一名称）
+        if: always()
+        run: |
+          if [ -f logs/resource_retry_stats.csv ]; then
+            cp logs/resource_retry_stats.csv logs/retry_${{ matrix.crawler }}.csv
+          fi
+
+      - name: 上传重试统计 CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: retry-stats-${{ matrix.crawler }}
+          path: logs/retry_${{ matrix.crawler }}.csv
+          if-no-files-found: ignore
+
       - name: 清理临时 PDF 目录
         if: always()
         run: rm -rf /tmp/pdfs
+
+  # ========== 汇总 job：合并所有爬虫的重试统计并提交到仓库 ==========
+  merge_stats:
+    if: always()
+    needs: crawl
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 下载所有爬虫的重试统计 artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: retry-stats-*
+          path: downloaded-stats/
+          merge-multiple: true
+
+      - name: 合并并提交统计文件
+        run: |
+          mkdir -p stats
+          MERGED="stats/retry_stats.csv"
+          HEADER="timestamp,source,title,url,attempts,retry_count,status,saved_path"
+
+          # 写入文件头
+          echo "$HEADER" > "$MERGED"
+
+          # 遍历所有下载的 CSV，追加内容（跳过文件头行）
+          for f in downloaded-stats/*.csv; do
+            if [ -f "$f" ]; then
+              tail -n +2 "$f" >> "$MERGED"
+              echo "已合并: $f"
+            fi
+          done
+
+          echo "=== 合并后的统计文件 ==="
+          wc -l "$MERGED"
+
+          # 配置 git 并提交
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$MERGED"
+          if git diff --cached --quiet; then
+            echo "无变更，跳过提交"
+          else
+            git commit -m "chore: 更新重试统计数据 ($(date +'%Y-%m-%d'))"
+            git push
+            echo "已提交并推送重试统计数据"
+          fi
