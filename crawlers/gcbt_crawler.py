@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 class GcbtCrawler(PlaywrightBaseCrawler):
     default_end_page = 20
     default_workers = 8
-    max_retries = 10
+    max_retries = 5
     max_pdf_retries = 10
 
     def __init__(self, db_manager):

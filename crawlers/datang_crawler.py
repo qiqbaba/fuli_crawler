@@ -7,7 +7,7 @@ from crawlers.base_crawler import DecryptSiteBaseCrawler, CrawlConfig
 
 class DatangCrawler(DecryptSiteBaseCrawler):
     CATEGORIES = ["guochan", "wuma", "oumei"]
-    default_end_page = 60
+    default_end_page = 50
     default_workers = 8
 
     def __init__(self, db_manager):
