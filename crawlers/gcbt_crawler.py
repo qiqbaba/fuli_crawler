@@ -15,7 +15,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
     default_end_page = 20
     default_workers = 8
     max_retries = 5
-    max_pdf_retries = 10
+    max_pdf_retries = 5
 
     def __init__(self, db_manager):
         super().__init__(db_manager, "gcbt")

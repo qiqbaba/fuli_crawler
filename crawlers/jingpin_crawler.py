@@ -7,7 +7,7 @@ from crawlers.base_crawler import DecryptSiteBaseCrawler, CrawlConfig
 
 class JingpinCrawler(DecryptSiteBaseCrawler):
     CATEGORIES = ["guochan", "oumei"]
-    default_end_page = 70
+    default_end_page = 50
     default_workers = 4  # GitHub Actions runner 内存约 7GB，降低并发避免 OOM
 
     def __init__(self, db_manager):
