@@ -347,19 +347,27 @@ class ProxyPool:
                 return  # 未达到间隔，仅标记 pending
         self._do_save_cache()
 
-    def fetch_proxies(self, force: bool = False) -> int:
+    def fetch_proxies(self, force: bool = False, min_count: int = 300) -> int:
         """
         从所有配置的源获取代理IP并保存
         
         Args:
             force: 是否强制刷新（忽略缓存）
+            min_count: 最小代理数量阈值，如果已验证代理数量 >= min_count，则跳过抓取
             
         Returns:
             获取到的代理数量
         """
         now = time.time()
+        
+        # 如果已验证代理数量已经足够，且未超过缓存时间，则跳过抓取
         if not force and (now - self._last_fetch_time) < self.cache_ttl and self._proxies:
             logger.info("使用缓存的代理列表（%s 个）", len(self._proxies))
+            return len(self._proxies)
+        
+        # 即使超过缓存时间，如果已验证代理数量已经足够，也跳过抓取
+        if not force and len(self._working_proxies) >= min_count:
+            logger.info("已验证代理数量充足（%s 个 >= %s 个），跳过重新抓取", len(self._working_proxies), min_count)
             return len(self._proxies)
 
         # 1. 提取当前已存在代理的历史数据映射以供继承
