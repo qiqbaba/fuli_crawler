@@ -98,6 +98,20 @@ class BaseCrawler:
         self.no_pdf = False  # 无 PDF 模式，在 run() 中可被覆盖
         self.max_retries = getattr(self.__class__, 'max_retries', 3)
         self.max_pdf_retries = getattr(self.__class__, 'max_pdf_retries', 3)
+        self.start_time = None
+
+    def format_elapsed_time(self, elapsed_seconds: float) -> str:
+        """将已用秒数格式化为人类可读的字符串 (例: 5秒, 2分15秒, 1小时05分20秒)"""
+        seconds = max(0, int(elapsed_seconds))
+        if seconds < 60:
+            return f"{seconds}秒"
+        minutes = seconds // 60
+        rem_sec = seconds % 60
+        if minutes < 60:
+            return f"{minutes}分{rem_sec:02d}秒"
+        hours = minutes // 60
+        rem_min = minutes % 60
+        return f"{hours}小时{rem_min:02d}分{rem_sec:02d}秒"
 
     def _build_headers(self, referer=None):
         """构造完整的浏览器请求头，模拟真实浏览器行为"""
@@ -244,7 +258,10 @@ class BaseCrawler:
 
     def _run_test_mode(self, start_page):
         """测试模式：抓取第一页前 5 条并输出，不入库"""
-        self.log.info("【测试模式】正在抓取第一页以提供测试数据...")
+        if not hasattr(self, 'start_time') or self.start_time is None:
+            self.start_time = time.time()
+        elapsed_str = self.format_elapsed_time(time.time() - self.start_time)
+        self.log.info("【测试模式】正在抓取第一页以提供测试数据 (已用时: %s)...", elapsed_str)
         list_content = self.fetch_list_page(start_page)
         if not list_content:
             self.log.error("抓取列表页测试数据失败。")
@@ -521,11 +538,15 @@ class BaseCrawler:
         is_gha = not is_local_mode()
         early_break = False
 
+        if not hasattr(self, 'start_time') or self.start_time is None:
+            self.start_time = time.time()
+
         for page_num in range(start_page, end_page + 1):
+            elapsed_str = self.format_elapsed_time(time.time() - self.start_time)
             if is_gha:
-                print(f"::group::正在抓取第 {page_num}/{end_page} 页", flush=True)
+                print(f"::group::正在抓取第 {page_num}/{end_page} 页 (已用时: {elapsed_str})", flush=True)
             else:
-                self.log.info("\n================ 正在抓取第 %s/%s 页 ================", page_num, end_page)
+                self.log.info("\n================ 正在抓取第 %s/%s 页 (已用时: %s) ================", page_num, end_page, elapsed_str)
 
             try:
                 list_content = self.fetch_list_page(page_num)
@@ -656,6 +677,7 @@ class BaseCrawler:
         """
         统一的爬虫执行骨架，支持多板块爬取
         """
+        self.start_time = time.time()
         self.is_test = is_test
         self.quiet = kwargs.get('quiet', False)
         resume = kwargs.get('resume', False)

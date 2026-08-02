@@ -1,0 +1,23 @@
+[project]
+name = "fuli-crawler"
+version = "0.1.0"
+description = "Fuli Crawler Project"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "beautifulsoup4",
+    "lxml",
+    "playwright",
+    "supabase",
+    "boto3",
+    "python-dotenv",
+    "curl-cffi",
+    "aiohttp",
+    "aiohttp-socks",
+    "pysocks",
+    "lingua-language-detector",
+    "flask",
+]
+
+[tool.uv]
+managed = true
