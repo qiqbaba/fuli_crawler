@@ -168,17 +168,10 @@ jobs:
           path: temp_profiles/
           key: proxy-cache-latest
 
-      - name: 安装 Python 依赖和 Playwright Chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      - name: 安装 Python 依赖与 Playwright Chromium 浏览器
         run: |
           pip install -r requirements.txt
           playwright install chromium --with-deps
-
-      - name: 仅安装 Python 依赖（Playwright 已缓存）
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: |
-          pip install -r requirements.txt
-          playwright install-deps chromium
 
       - name: 创建临时 PDF 目录
         run: mkdir -p /tmp/pdfs
@@ -283,8 +276,8 @@ jobs:
           MERGED="stats/retry_stats.csv"
           HEADER="timestamp,source,title,url,attempts,retry_count,status,saved_path"
 
-          # 写入文件头
-          echo "$HEADER" > "$MERGED"
+          # 写入 UTF-8 BOM 头与文件头 (确保 Excel 直接打开中文不乱码)
+          printf '\xef\xbb\xbf%s\n' "$HEADER" > "$MERGED"
 
           # 遍历所有下载的 CSV，追加内容（跳过文件头行）
           for f in downloaded-stats/*.csv; do
