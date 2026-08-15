@@ -98,61 +98,41 @@ class PDFGenerator:
     def _setup_image_proxy(self, page):
         """在网络层添加图片代理请求拦截器，在 Python 后台下载图片喂给浏览器以绕过防盗链和 GFW"""
         try:
-            # 局部实例化 ClientSession，绑定在当前线程的事件循环中
-            session = aiohttp.ClientSession()
+            from config import get_effective_proxy
+            from curl_cffi import requests as cffi_requests
 
-            # 监听页面关闭，安全释放局部 session 资源
-            def on_page_close():
-                try:
-                    loop = asyncio.get_running_loop()
-                    if loop.is_running():
-                        loop.create_task(session.close())
-                except RuntimeError:
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if not loop.is_running():
-                            loop.run_until_complete(session.close())
-                    except Exception as ex:
-                        logger.warning("关闭局部 session 失败: %s", ex)
-                except Exception as ex:
-                    logger.warning("关闭局部 session 异常: %s", ex)
-
-            page.on("close", lambda p: on_page_close())
-
-            async def img_router(route):
+            def img_router(route):
                 try:
                     req_url = route.request.url
                     if "plugin/img_layer/data/" in req_url and "?src=" in req_url:
                         try:
                             real_url = urllib.parse.unquote(req_url.split("?src=")[1])
-                            
-                            from config import get_effective_proxy
                             p_dict = get_effective_proxy(exclusive=True)
-                            
+                            proxy_url = p_dict.get("http") if p_dict else None
                             headers = {
                                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
                             }
-                            
-                            async with session.get(real_url, headers=headers, proxy=p_dict.get("http") if p_dict else None, timeout=aiohttp.ClientTimeout(total=15)) as r:
-                                    if r.status == 200:
-                                        content = await r.read()
-                                        content_type = r.headers.get("Content-Type", "image/jpeg")
-                                        await route.fulfill(
-                                            status=200,
-                                            content_type=content_type,
-                                            body=content
-                                        )
-                                        return
-                        except asyncio.CancelledError:
-                            # 页面关闭时正在处理的路由任务会被取消，直接抛出
-                            raise
+                            proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+                            resp = cffi_requests.get(real_url, headers=headers, proxies=proxies, timeout=15)
+                            if resp.status_code == 200:
+                                content_type = resp.headers.get("Content-Type", "image/jpeg")
+                                route.fulfill(
+                                    status=200,
+                                    content_type=content_type,
+                                    body=resp.content
+                                )
+                                return
                         except Exception as route_err:
                             logger.warning("路由代理图片下载失败: %s", route_err)
-                    await route.continue_()
-                except asyncio.CancelledError:
-                    # 顶层 CancelledError 保护，直接抛出
-                    raise
+                    route.continue_()
+                except Exception as ex:
+                    logger.warning("路由处理异常: %s", ex)
+                    try:
+                        route.continue_()
+                    except Exception:
+                        pass
+
             page.route("**/*", img_router)
         except Exception as route_setup_err:
             logger.warning("配置网络拦截路由异常: %s", route_setup_err)
@@ -219,13 +199,14 @@ class PDFGenerator:
                     window.scrollTo(0, 0);
                     await new Promise(r => setTimeout(r, 500));
 
-                    // 4. 等待所有图片完全加载
+                    // 4. 等待所有图片完全加载（带 2.5s 单图超时兜底，防止挂起）
                     const images = Array.from(document.querySelectorAll('img'));
                     const imagePromises = images.map(img => {
                         if (img.complete) return Promise.resolve();
                         return new Promise(resolve => {
-                            img.addEventListener('load', resolve);
-                            img.addEventListener('error', resolve); // 即使加载失败也 resolve，避免卡死
+                            const timer = setTimeout(resolve, 2500);
+                            img.addEventListener('load', () => { clearTimeout(timer); resolve(); });
+                            img.addEventListener('error', () => { clearTimeout(timer); resolve(); });
                         });
                     });
                     await Promise.all(imagePromises);

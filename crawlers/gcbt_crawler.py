@@ -30,8 +30,9 @@ class GcbtCrawler(PlaywrightBaseCrawler):
 
         from utils.pdf_generator import PDFRenderConfig
         self.pdf_config = PDFRenderConfig(
-            need_img_proxy=True,
-            pre_access_url="https://gcbt.net/",
+            need_img_proxy=False,
+            wait_until="domcontentloaded",
+            pre_access_url=None,
             referer="https://gcbt.net/",
             need_lazy_scroll=True,
             emulate_media="screen",
