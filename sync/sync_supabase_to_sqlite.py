@@ -1,3 +1,14 @@
+"""
+Supabase 到本地 SQLite 数据同步与归档脚本
+
+主要功能与执行流程：
+1. 自动备份本地数据库：在同步前将本地 SQLite 备份为带时间戳的文件（.bak_YYYYMMDD_HHMMSS），防止数据异常。
+2. 初始化本地结构：确保本地 SQLite 数据库中的 resources 表结构及唯一键索引正常就绪。
+3. 分页拉取与去重合并：通过 ID 游标分页从 Supabase 云端批量拉取 resources 记录，采用 INSERT OR IGNORE 方式无损合并到本地 SQLite。
+4. 数据统计汇报：输出云端读取总数、本地新增条数、重复忽略条数及当前本地总记录数。
+5. 可选清理云端数据：同步完成后支持交互式确认（输入 'DELETE'）分批清理云端已同步的历史数据，以释放 Supabase 免费配额与存储空间。
+"""
+
 import os
 import sys
 import shutil

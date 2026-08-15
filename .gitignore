@@ -19,6 +19,8 @@ env/
 *.db-shm
 *.sqlite
 *.sqlite3
+*.db.bak*
+*.bak*
 
 # IDE
 .vscode/

@@ -133,6 +133,21 @@ def format_eta(seconds):
         return f"{secs}秒"
 
 
+def format_duration(seconds):
+    """把秒数格式化为易读的耗时字符串（如：1小时25分30秒、2分10秒、15.2秒）"""
+    if seconds < 0:
+        return "0.0秒"
+    if seconds < 60:
+        return f"{seconds:.2f}秒" if seconds < 10 else f"{seconds:.1f}秒"
+    seconds_int = int(seconds)
+    hours, remainder = divmod(seconds_int, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours}小时{minutes}分{secs}秒"
+    else:
+        return f"{minutes}分{secs}秒"
+
+
 # ========== 线程安全计数器与线程局部客户端 ==========
 _counter_lock = threading.Lock()
 _counter = {"success": 0, "skipped": 0, "failed": 0, "total_bytes": 0, "done": 0}
@@ -253,12 +268,14 @@ def download_all_pdfs(output_dir, pdfs, resume=True, workers=30):
         f = _counter["failed"]
         tb = _counter["total_bytes"]
 
+    elapsed = time.time() - start_time
     print(f"\n{'='*50}")
     print(f"下载完成！")
     print(f"  成功: {s}")
     print(f"  跳过: {sk}")
     print(f"  失败: {f}")
     print(f"  总大小: {format_size(tb)}")
+    print(f"  耗时: {format_duration(elapsed)}")
     print(f"  保存路径: {output_dir}")
     print(f"{'='*50}")
 
@@ -348,6 +365,8 @@ def delete_all_objects(client, objects, dry_run=False, max_workers=10):
     deleted = 0
     failed = 0
     done_count = 0
+    last_reported = 0
+    report_interval = 5000
     start_time = time.time()
 
     workers = min(max_workers, max(1, len(batches)))
@@ -365,12 +384,16 @@ def delete_all_objects(client, objects, dry_run=False, max_workers=10):
                 failed += b_len
 
             done_count += b_len
-            pct = done_count / total * 100
-            elapsed = time.time() - start_time
-            rate = done_count / elapsed if elapsed > 0 else 0
-            eta = (total - done_count) / rate if rate > 0 else 0
-            print(f"  [{done_count}/{total}] 🗑️ 已删 {deleted} | ❌ 失败 {failed} "
-                  f"({pct:.0f}%) | 速度: {rate:.0f} 个/秒 | 预计剩余: {eta:.0f}秒")
+            if (done_count // report_interval > last_reported // report_interval) or (done_count == total):
+                pct = done_count / total * 100
+                elapsed = time.time() - start_time
+                rate = done_count / elapsed if elapsed > 0 else 0
+                remaining = total - done_count
+                eta = remaining / rate if rate > 0 else 0
+                eta_str = format_eta(eta) if (remaining > 0 and eta > 0) else "0秒"
+                print(f"  [{done_count}/{total}] 🗑️ 已删 {deleted} | ❌ 失败 {failed} "
+                      f"({pct:.0f}%) | 速度: {rate:.0f} 个/秒 | 预计剩余: {eta_str}")
+                last_reported = done_count
 
     return deleted, failed
 
@@ -378,6 +401,7 @@ def delete_all_objects(client, objects, dry_run=False, max_workers=10):
 def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, show_details=True, extra_search_dirs=None):
     """独立执行删除流程：检查本地文件 → 自动删除有副本的 → 询问删除无副本的
     extra_search_dirs: 额外的本地搜索目录列表（如爬虫保存 PDF 的目录），用于检测本地副本"""
+    flow_start_time = time.time()
     total_size = sum(obj["size"] for obj in delete_candidates)
 
     print(f"\n{'='*50}")
@@ -468,12 +492,14 @@ def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, sho
         print(f"[*] 所有文件在本地均有副本，无需额外确认")
 
     # 最终汇总
+    flow_elapsed = time.time() - flow_start_time
     print(f"\n{'='*50}")
     print(f"删除操作完成！")
     print(f"  成功: {deleted_ok}")
     print(f"  失败: {deleted_fail}")
     if deleted_fail > 0:
         print(f"  ⚠️  有 {deleted_fail} 个文件删除失败，请重试")
+    print(f"  耗时: {format_duration(flow_elapsed)}")
     print(f"{'='*50}")
 
 
@@ -490,6 +516,7 @@ def _confirm_listing(prefix, args):
 
 
 def main():
+    script_start_time = time.time()
     parser = argparse.ArgumentParser(description="从 Cloudflare R2 下载所有 PDF 到本地")
     parser.add_argument("--output", "-o", default=None,
                         help="本地输出目录 (默认: 当前目录下的 r2_pdfs)")
@@ -566,6 +593,8 @@ def main():
 
         run_delete_flow(client, output_dir, delete_candidates, del_prefix, args,
                         show_details=show_details, extra_search_dirs=[pdf_dir])
+        total_elapsed = time.time() - script_start_time
+        print(f"\n✨ 脚本运行结束，总计耗时: {format_duration(total_elapsed)}\n")
         return
 
     # ========== 下载模式 ==========
@@ -593,6 +622,9 @@ def main():
 
         run_delete_flow(client, output_dir, delete_candidates, del_prefix, args,
                         show_details=show_details, extra_search_dirs=[pdf_dir])
+
+    total_elapsed = time.time() - script_start_time
+    print(f"\n✨ 脚本运行结束，总计耗时: {format_duration(total_elapsed)}\n")
 
 
 if __name__ == "__main__":
