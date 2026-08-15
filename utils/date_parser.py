@@ -4,10 +4,15 @@ from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
 def _safe_date(year, month, day):
-    """校验年月日是否合法，非法时自动修正（day 超出该月范围时取最大值）"""
-    max_day = calendar.monthrange(year, month)[1]
-    safe_day = min(day, max_day)
-    return f"{year}-{str(month).zfill(2)}-{str(safe_day).zfill(2)}"
+    """校验年月日是否合法，非法时自动修正（day 超出该月范围时取最大值，月份非法时返回 None）"""
+    if not (1 <= month <= 12):
+        return None
+    try:
+        max_day = calendar.monthrange(year, month)[1]
+        safe_day = max(1, min(day, max_day))
+        return f"{year}-{str(month).zfill(2)}-{str(safe_day).zfill(2)}"
+    except Exception:
+        return None
 
 def parse_date(date_str):
     """从字符串中提取/推算年份和格式化日期 (YYYY-MM-DD)"""
@@ -22,7 +27,10 @@ def parse_date(date_str):
         year = int(match_full.group(1))
         month = int(match_full.group(2))
         day = int(match_full.group(3))
-        return str(year), _safe_date(year, month, day)
+        safe_d = _safe_date(year, month, day)
+        if safe_d:
+            return str(year), safe_d
+        return "Unknown_Year", "Unknown_Date"
         
     # 格式2: X个月前
     match_month_ago = re.search(r'(\d+)\s*个?月前(?:[（(]?(\d{1,2})[^\d]+(\d{1,2})[）)])?', date_str)
@@ -35,7 +43,9 @@ def parse_date(date_str):
         if match_month_ago.group(2) and match_month_ago.group(3):
             month = int(match_month_ago.group(2))
             day = int(match_month_ago.group(3))
-            return str(target_year), _safe_date(target_year, month, day)
+            safe_d = _safe_date(target_year, month, day)
+            if safe_d:
+                return str(target_year), safe_d
         safe_day = min(int(now.strftime('%d')), calendar.monthrange(target_year, target_month)[1])
         return str(target_year), f"{target_year}-{str(target_month).zfill(2)}-{str(safe_day).zfill(2)}"        
     # 格式3: X天前
@@ -50,14 +60,12 @@ def parse_date(date_str):
         return str(now.year), now.strftime("%Y-%m-%d")
         
     # 格式5: MM-DD (默认今年)
-    # Bug 11 修复：增加负向前瞻 (?!\d) 和负向后顾，防止误匹配四位数字中的片段
-    # 例如 "10-11-2024" 应已被格式1捕获；此处只匹配纯粹的 MM-DD 格式
     match_short = re.search(r'(?<!\d)(\d{1,2})[-/月](\d{1,2})(?:日)?(?!\d)', date_str)
     if match_short:
         month_val = int(match_short.group(1))
         day_val = int(match_short.group(2))
-        # 月份范围验证：防止误匹配（如 "13-32" 这类无效日期）
-        if 1 <= month_val <= 12 and 1 <= day_val <= 31:
-            return str(now.year), _safe_date(now.year, month_val, day_val)
+        safe_d = _safe_date(now.year, month_val, day_val)
+        if safe_d:
+            return str(now.year), safe_d
         
     return "Unknown_Year", "Unknown_Date"

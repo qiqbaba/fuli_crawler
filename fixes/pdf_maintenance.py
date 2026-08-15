@@ -7,14 +7,13 @@ import random
 import time
 from collections import defaultdict
 from datetime import datetime
-from playwright.sync_api import sync_playwright
 
 # 将项目根目录加入 sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import get_db_path, PDF_BASE_DIR
 from utils import setup_console_utf8
-from utils.browser_manager import create_browser_context
+from utils.browser_factory import browser_factory
 from utils.metadata_parser import sanitize_filename
 from utils.pdf_utils import parse_filename, clean_title_suffix, to_relative_path, generate_unique_path
 
@@ -629,61 +628,64 @@ def run_redownload_small_pdfs(args):
     fail_count = 0
 
     try:
-        with sync_playwright() as p:
-            browser, context = create_browser_context(p, viewport={'width': 1280, 'height': 900})
-            for idx, (file_path, size_kb, r_id, title, url, publish_time) in enumerate(to_download, 1):
-                print(f"\n[*] [{idx}/{len(to_download)}] 正在请求: {url} (当前大小: {size_kb:.2f} KB)")
-                page = context.new_page()
+        _, browser, context = browser_factory.create_browser_context(
+            headless=True,
+            viewport={'width': 1280, 'height': 900}
+        )
+        for idx, (file_path, size_kb, r_id, title, url, publish_time) in enumerate(to_download, 1):
+            print(f"\n[*] [{idx}/{len(to_download)}] 正在请求: {url} (当前大小: {size_kb:.2f} KB)")
+            page = context.new_page()
+            try:
+                response = page.goto(url, timeout=45000, wait_until="domcontentloaded")
+                time.sleep(3.0)
+                if response and response.status == 404:
+                    print(f"  [-] 页面返回 404，不重新下载。")
+                    fail_count += 1
+                    continue
                 try:
-                    response = page.goto(url, timeout=45000, wait_until="domcontentloaded")
-                    time.sleep(3.0)
-                    if response and response.status == 404:
-                        print(f"  [-] 页面返回 404，不重新下载。")
-                        fail_count += 1
-                        continue
-                    try:
-                        page.evaluate("""() => {
-                            const breadcrumbs = document.querySelector('.breadcrumbs');
-                            if (breadcrumbs) {
-                                let prev = breadcrumbs.previousElementSibling;
-                                while (prev) {
-                                    if (prev.classList.contains('gs-isgood') &&
-                                        !prev.textContent.includes('永久地址') &&
-                                        !prev.textContent.includes('永久')) {
-                                        prev.remove();
-                                    }
-                                    prev = prev.previousElementSibling;
+                    page.evaluate("""() => {
+                        const breadcrumbs = document.querySelector('.breadcrumbs');
+                        if (breadcrumbs) {
+                            let prev = breadcrumbs.previousElementSibling;
+                            while (prev) {
+                                if (prev.classList.contains('gs-isgood') &&
+                                    !prev.textContent.includes('永久地址') &&
+                                    !prev.textContent.includes('永久')) {
+                                    prev.remove();
                                 }
+                                prev = prev.previousElementSibling;
                             }
-                            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
-                            adDivs.forEach(div => div.remove());
-                            const bottomFloat = document.getElementById('bottom_float');
-                            if (bottomFloat) bottomFloat.remove();
-                        }""")
-                    except Exception:
-                        pass
-                    page.pdf(path=file_path, format="A4", print_background=True,
-                             margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"})
-                    if os.path.exists(file_path):
-                        new_size_kb = os.path.getsize(file_path) / 1024.0
-                        if new_size_kb >= 20.0:
-                            success_count += 1
-                            print(f"  [+] 成功重新保存并覆盖! 新文件大小: {new_size_kb:.2f} KB")
-                        else:
-                            fail_count += 1
-                            print(f"  [-] 警告: 重新保存后体积依然小于 20KB ({new_size_kb:.2f} KB)")
+                        }
+                        const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
+                        adDivs.forEach(div => div.remove());
+                        const bottomFloat = document.getElementById('bottom_float');
+                        if (bottomFloat) bottomFloat.remove();
+                    }""")
+                except Exception:
+                    pass
+                page.pdf(path=file_path, format="A4", print_background=True,
+                         margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"})
+                if os.path.exists(file_path):
+                    new_size_kb = os.path.getsize(file_path) / 1024.0
+                    if new_size_kb >= 20.0:
+                        success_count += 1
+                        print(f"  [+] 成功重新保存并覆盖! 新文件大小: {new_size_kb:.2f} KB")
                     else:
                         fail_count += 1
-                        print("  [-] 错误: PDF 生成文件未在本地检测到")
-                except Exception as download_err:
-                    print(f"  [-] 下载失败: {download_err}")
+                        print(f"  [-] 警告: 重新保存后体积依然小于 20KB ({new_size_kb:.2f} KB)")
+                else:
                     fail_count += 1
-                finally:
-                    page.close()
-                time.sleep(random.uniform(2.0, 4.0))
-            browser.close()
+                    print("  [-] 错误: PDF 生成文件未在本地检测到")
+            except Exception as download_err:
+                print(f"  [-] 下载失败: {download_err}")
+                fail_count += 1
+            finally:
+                page.close()
+            time.sleep(random.uniform(2.0, 4.0))
     except Exception as run_e:
         print(f"[-] Playwright 运行异常: {run_e}")
+    finally:
+        browser_factory.destroy_thread_resources()
 
     conn.close()
     print("\n" + "=" * 60)
@@ -786,156 +788,156 @@ def run_rebuild(args):
             fail_download = 0
             not_found_download = 0
 
-            try:
-                from utils.pdf_generator import PDFGenerator, PDFRenderConfig
-                
-                CONFIG_MAP = {
-                    "seju": PDFRenderConfig(
-                        margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
-                    ),
-                    "gcbt": PDFRenderConfig(
-                        need_img_proxy=True,
-                        pre_access_url="https://gcbt.net/",
-                        referer="https://gcbt.net/",
-                        need_lazy_scroll=True,
-                        emulate_media="screen",
-                        ad_selectors=[
-                            '.layui-layer', '.layui-layer-shade',
-                            '.modal', '.modal-backdrop',
-                            '.swal-overlay', '.swal-modal', '.swal2-container',
-                            '[id*="layui-layer"]'
-                        ],
-                        ad_block_js="""() => {
-                            if (document.body) document.body.style.overflow = 'auto';
-                            if (document.documentElement) document.documentElement.style.overflow = 'auto';
-                        }"""
-                    ),
-                    "madou": PDFRenderConfig(
-                        ad_selectors=[
-                            'div[style*="height:60px"]',
-                            'div[style*="height:55px"]',
-                            'div[style*="height:70px"]',
-                            '#bottom_float'
-                        ]
-                    ),
-                    "datang": PDFRenderConfig(
-                        ad_block_js="""() => {
-                            const breadcrumbs = document.querySelector('.breadcrumbs');
-                            if (breadcrumbs) {
-                                let prev = breadcrumbs.previousElementSibling;
-                                while (prev) {
-                                    if (prev.classList.contains('gs-isgood') && 
-                                        !prev.textContent.includes('永久地址') && 
-                                        !prev.textContent.includes('永久')) {
-                                        prev.remove();
-                                    }
-                                    prev = prev.previousElementSibling;
+            from utils.pdf_generator import PDFGenerator, PDFRenderConfig
+            
+            CONFIG_MAP = {
+                "seju": PDFRenderConfig(
+                    margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
+                ),
+                "gcbt": PDFRenderConfig(
+                    need_img_proxy=True,
+                    pre_access_url="https://gcbt.net/",
+                    referer="https://gcbt.net/",
+                    need_lazy_scroll=True,
+                    emulate_media="screen",
+                    ad_selectors=[
+                        '.layui-layer', '.layui-layer-shade',
+                        '.modal', '.modal-backdrop',
+                        '.swal-overlay', '.swal-modal', '.swal2-container',
+                        '[id*="layui-layer"]'
+                    ],
+                    ad_block_js="""() => {
+                        if (document.body) document.body.style.overflow = 'auto';
+                        if (document.documentElement) document.documentElement.style.overflow = 'auto';
+                    }"""
+                ),
+                "madou": PDFRenderConfig(
+                    ad_selectors=[
+                        'div[style*="height:60px"]',
+                        'div[style*="height:55px"]',
+                        'div[style*="height:70px"]',
+                        '#bottom_float'
+                    ]
+                ),
+                "datang": PDFRenderConfig(
+                    ad_block_js="""() => {
+                        const breadcrumbs = document.querySelector('.breadcrumbs');
+                        if (breadcrumbs) {
+                            let prev = breadcrumbs.previousElementSibling;
+                            while (prev) {
+                                if (prev.classList.contains('gs-isgood') && 
+                                    !prev.textContent.includes('永久地址') && 
+                                    !prev.textContent.includes('永久')) {
+                                    prev.remove();
                                 }
+                                prev = prev.previousElementSibling;
                             }
-                            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
-                            adDivs.forEach(div => div.remove());
-                            const bottomFloat = document.getElementById('bottom_float');
-                            if (bottomFloat) {
-                                bottomFloat.remove();
-                            }
-                        }"""
-                    ),
-                    "jingpin_toupai": PDFRenderConfig(
-                        emulate_media="screen",
-                        ad_selectors=[
-                            'div[style*="height:60px"]', 
-                            'div[style*="height:55px"]', 
-                            'div[style*="height:70px"]',
-                            '#bottom_float',
-                            '.layui-layer',
-                            '.layui-layer-shade',
-                            '[id*="layui-layer"]',
-                            '.modal',
-                            '.modal-backdrop'
-                        ],
-                        ad_block_js="""() => {
-                            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
-                            if (document.body) document.body.style.overflow = 'auto';
-                            if (document.documentElement) document.documentElement.style.overflow = 'auto';
-                        }"""
-                    ),
-                    "taose": PDFRenderConfig(
-                        emulate_media="screen",
-                        ad_selectors=[
-                            'div[style*="height:60px"]',
-                            'div[style*="height:55px"]',
-                            'div[style*="height:70px"]',
-                            '#bottom_float',
-                            '.layui-layer',
-                            '.layui-layer-shade',
-                            '[id*="layui-layer"]',
-                            '.modal',
-                            '.modal-backdrop'
-                        ],
-                        ad_block_js="""() => {
-                            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
-                            if (document.body) document.body.style.overflow = 'auto';
-                            if (document.documentElement) document.documentElement.style.overflow = 'auto';
-                            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
-                            adDivs.forEach(div => div.remove());
-                            const bottomFloat = document.getElementById('bottom_float');
-                            if (bottomFloat) {
-                                bottomFloat.remove();
-                            }
-                        }"""
-                    )
-                }
+                        }
+                        const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
+                        adDivs.forEach(div => div.remove());
+                        const bottomFloat = document.getElementById('bottom_float');
+                        if (bottomFloat) {
+                            bottomFloat.remove();
+                        }
+                    }"""
+                ),
+                "jingpin_toupai": PDFRenderConfig(
+                    emulate_media="screen",
+                    ad_selectors=[
+                        'div[style*="height:60px"]', 
+                        'div[style*="height:55px"]', 
+                        'div[style*="height:70px"]',
+                        '#bottom_float',
+                        '.layui-layer',
+                        '.layui-layer-shade',
+                        '[id*="layui-layer"]',
+                        '.modal',
+                        '.modal-backdrop'
+                    ],
+                    ad_block_js="""() => {
+                        document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+                        if (document.body) document.body.style.overflow = 'auto';
+                        if (document.documentElement) document.documentElement.style.overflow = 'auto';
+                    }"""
+                ),
+                "taose": PDFRenderConfig(
+                    emulate_media="screen",
+                    ad_selectors=[
+                        'div[style*="height:60px"]',
+                        'div[style*="height:55px"]',
+                        'div[style*="height:70px"]',
+                        '#bottom_float',
+                        '.layui-layer',
+                        '.layui-layer-shade',
+                        '[id*="layui-layer"]',
+                        '.modal',
+                        '.modal-backdrop'
+                    ],
+                    ad_block_js="""() => {
+                        document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+                        if (document.body) document.body.style.overflow = 'auto';
+                        if (document.documentElement) document.documentElement.style.overflow = 'auto';
+                        const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
+                        adDivs.forEach(div => div.remove());
+                        const bottomFloat = document.getElementById('bottom_float');
+                        if (bottomFloat) {
+                            bottomFloat.remove();
+                        }
+                    }"""
+                )
+            }
 
-                generator = PDFGenerator(r2_uploader=None)
+            generator = PDFGenerator(r2_uploader=None)
 
-                with sync_playwright() as p:
-                    browser, context = create_browser_context(p)
-                    for idx, (r_id, title, url, publish_time, source) in enumerate(missing_records, 1):
+            try:
+                _, browser, context = browser_factory.create_browser_context(headless=True)
+                for idx, (r_id, title, url, publish_time, source) in enumerate(missing_records, 1):
+                    try:
+                        print(f"[*] [{idx}/{len(missing_records)}] 正在请求 URL: {url} (来源: {source})")
+                        
+                        config = CONFIG_MAP.get(source, PDFRenderConfig())
+
+                        # 预检查 404 状态
+                        temp_page = context.new_page()
+                        is_404 = False
                         try:
-                            print(f"[*] [{idx}/{len(missing_records)}] 正在请求 URL: {url} (来源: {source})")
-                            
-                            config = CONFIG_MAP.get(source, PDFRenderConfig())
+                            response = temp_page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                            if response and response.status == 404:
+                                is_404 = True
+                        except Exception:
+                            pass
+                        finally:
+                            temp_page.close()
 
-                            # 预检查 404 状态
-                            temp_page = context.new_page()
-                            is_404 = False
-                            try:
-                                response = temp_page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                                if response and response.status == 404:
-                                    is_404 = True
-                            except Exception:
-                                pass
-                            finally:
-                                temp_page.close()
-
-                            if is_404:
-                                print(f"  [-] 页面 404 未找到，清除该记录的 pdf_path。")
-                                cursor.execute("UPDATE resources SET pdf_path = '' WHERE id = ?", (r_id,))
-                                not_found_download += 1
+                        if is_404:
+                            print(f"  [-] 页面 404 未找到，清除该记录的 pdf_path。")
+                            cursor.execute("UPDATE resources SET pdf_path = '' WHERE id = ?", (r_id,))
+                            not_found_download += 1
+                        else:
+                            rel_pdf_path = generator.generate_pdf(
+                                page_or_context=context,
+                                target_url_or_page=url,
+                                publish_date=publish_time,
+                                title=title,
+                                source_name=source,
+                                config=config
+                            )
+                            if rel_pdf_path:
+                                cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (rel_pdf_path, r_id))
+                                success_download += 1
+                                print(f"  [+] 下载成功并更新数据库为相对路径: {rel_pdf_path}")
                             else:
-                                rel_pdf_path = generator.generate_pdf(
-                                    page_or_context=context,
-                                    target_url_or_page=url,
-                                    publish_date=publish_time,
-                                    title=title,
-                                    source_name=source,
-                                    config=config
-                                )
-                                if rel_pdf_path:
-                                    cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (rel_pdf_path, r_id))
-                                    success_download += 1
-                                    print(f"  [+] 下载成功并更新数据库为相对路径: {rel_pdf_path}")
-                                else:
-                                    print(f"  [-] 下载物理文件失败 ID: {r_id}")
-                                    fail_download += 1
-                            conn.commit()
-                        except Exception as e:
-                            print(f"  [-] 下载物理文件失败 ID: {r_id} | 错误: {e}")
-                            fail_download += 1
-                        time.sleep(random.uniform(1.5, 3.5))
-                    browser.close()
+                                print(f"  [-] 下载物理文件失败 ID: {r_id}")
+                                fail_download += 1
+                        conn.commit()
+                    except Exception as e:
+                        print(f"  [-] 下载物理文件失败 ID: {r_id} | 错误: {e}")
+                        fail_download += 1
+                    time.sleep(random.uniform(1.5, 3.5))
             except Exception as e:
                 print(f"[-] Playwright 运行异常: {e}")
+            finally:
+                browser_factory.destroy_thread_resources()
 
             print("\n" + "=" * 60)
             print("                      下载统计报告")

@@ -5,7 +5,6 @@ import random
 import threading
 import asyncio
 import urllib.parse
-import aiohttp
 
 from config import PDF_BASE_DIR
 from utils.logger import get_logger
@@ -56,7 +55,8 @@ class PDFGenerator:
     def _get_pdf_local_tmp_path(self, publish_date, title, source_name):
         """获取 PDF 本地临时/持久化保存路径"""
         if self.r2_uploader:
-            base = f"/tmp/{source_name}_pdfs"
+            import tempfile
+            base = os.path.join(tempfile.gettempdir(), f"{source_name}_pdfs")
         else:
             base = PDF_BASE_DIR
 

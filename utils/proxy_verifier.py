@@ -98,10 +98,8 @@ class ProxyVerifier:
         async def main_verify():
             stop_event = asyncio.Event()
             queue = asyncio.Queue()
-            # 随机化探测顺序，避免同网段IP集中出现
-            shuffled = proxies[:]
-            random.shuffle(shuffled)
-            for p in shuffled:
+            # 按评分降序入队，确保高评分优质代理优先验证
+            for p in proxies:
                 queue.put_nowait(p)
 
             workers = []
@@ -132,8 +130,6 @@ class ProxyVerifier:
                             continue
 
                         # 2. 完整协议与连通性检测
-                        proxy_url = f"{protocol}://address"
-                        # 等等，原来是 proxy_url = f"{protocol}://{address}"，让我们写对：
                         proxy_url = f"{protocol}://{address}"
                         connector = None
                         client_proxy = None

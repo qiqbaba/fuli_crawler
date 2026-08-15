@@ -1,9 +1,4 @@
 # utils package
-from utils.proxy_pool import ProxyPool
-from utils.proxy_manager import (
-    get_proxy_manager, init_proxy_manager, get_proxy_string, get_proxy_dict,
-    report_failure, report_success
-)
 
 
 def setup_console_utf8():
@@ -38,6 +33,20 @@ def ensure_project_root():
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
     return project_root
+
+
+def __getattr__(name):
+    """惰性导入代理池相关依赖，避免轻量工具脚本因缺少可选网络依赖而报错"""
+    if name == 'ProxyPool':
+        from utils.proxy_pool import ProxyPool
+        return ProxyPool
+    elif name in (
+        'get_proxy_manager', 'init_proxy_manager', 'get_proxy_string',
+        'get_proxy_dict', 'report_failure', 'report_success'
+    ):
+        import utils.proxy_manager as pm
+        return getattr(pm, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

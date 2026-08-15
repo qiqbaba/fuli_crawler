@@ -60,6 +60,8 @@ def get_r2_client(max_pool=50):
 
 def _list_single_prefix(client, prefix, max_keys=None):
     """单前缀检索所有 PDF 文件"""
+    if client is None:
+        client = _get_thread_client()
     pdfs = []
     paginator = client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=R2_BUCKET_NAME, Prefix=prefix):
@@ -93,7 +95,7 @@ def list_all_pdfs(client, prefix="pdfs/", max_keys=None):
         all_pdfs = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(common_prefixes))) as executor:
             future_to_prefix = {
-                executor.submit(_list_single_prefix, _get_thread_client(), p): p
+                executor.submit(_list_single_prefix, None, p): p
                 for p in common_prefixes
             }
             for future in concurrent.futures.as_completed(future_to_prefix):

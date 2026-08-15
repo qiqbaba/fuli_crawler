@@ -209,7 +209,7 @@ class DynamoDBDeduplicationService:
             return set()
         existing = set()
         
-        # 1. Bloom Filter 快速过滤：一定不在 Bloom Filter 中的 URL 肯定不存在
+        # 1. 优先比对本地内存中新写入的缓存 URL（线程安全）
         urls_to_query = []
         with self._lock:
             for url in urls:
@@ -217,12 +217,8 @@ class DynamoDBDeduplicationService:
                     continue
                 if url in self._cached_urls:
                     existing.add(url)
-                elif url in self._url_bloom:
-                    # Bloom Filter 命中（可能有假阳性），仍需查 DynamoDB 确认
-                    urls_to_query.append(url)
                 else:
-                    # Bloom Filter 未命中 → 肯定不存在，跳过 DynamoDB 查询
-                    pass
+                    urls_to_query.append(url)
         
         if not urls_to_query:
             return existing

@@ -23,7 +23,8 @@ setup_console_utf8()
 from fixes.db_utils import get_connection, get_columns, get_db_path  # noqa: E402
 
 # ========== 常量 ==========
-CSV_OUTPUT_DIR = "D:\\"
+CSV_OUTPUT_DIR = os.environ.get("CSV_OUTPUT_DIR") or ("D:\\" if os.path.exists("D:\\") else os.path.join(root, "cache"))
+os.makedirs(CSV_OUTPUT_DIR, exist_ok=True)
 DUPLICATE_FIELDS = [
     ("url", "URL 地址"),
     ("resource_link", "磁力/资源链接"),
@@ -352,7 +353,8 @@ def delete_duplicates_batch(
         ids_sorted = sorted(r.get("id", 0) or 0 for r in candidates)
         keep_id = ids_sorted[-1] if keep_newest else ids_sorted[0]  # 最大/最小
 
-        delete_ids = [str(i) for i in ids_sorted if i != keep_id]
+        keep_id_int = int(keep_id)
+        delete_ids = [str(r.get("id")) for r in group_sorted if (r.get("id", 0) or 0) != keep_id_int]
         if not delete_ids:
             continue
 
@@ -431,11 +433,13 @@ def interactive_menu():
         print(f"  主菜单")
         print(f"{'─' * 60}")
 
-        has_any = any(all_dup_data.values())
+        print("  当前重复状态:")
         for col_key, col_label in DUPLICATE_FIELDS:
             cnt = len(all_dup_data[col_key])
             status = f"{cnt} 条重复" if cnt else "无重复"
-            print(f"    1 - {col_label} 重复检查 ({status})")
+            print(f"    - {col_label}: {status}")
+
+        print(f"\n    1 - 检查/刷新指定类型的重复数据")
 
         print(f"    2 - 查看重复详情")
         print(f"    3 - 导出全部重复到 CSV")

@@ -336,7 +336,7 @@ class BaseCrawler:
             # 日语标题预过滤（使用批量检测结果）
             if not is_existing and is_jp_results[idx - 1]:
                 if not self.quiet:
-                    title_preview = raw_item.get('title', '')[:40]
+                    title_preview = (raw_item.get('title', '') if isinstance(raw_item, dict) else str(raw_item))[:40]
                     self.log.info("[%s] 标题检测为日语，跳过: %s", idx, title_preview)
                 continue
 
