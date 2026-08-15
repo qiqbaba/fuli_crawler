@@ -1,5 +1,4 @@
 import os
-import re
 import threading
 import time
 import random
@@ -10,6 +9,7 @@ from crawlers.base_crawler import PlaywrightBaseCrawler
 from utils.date_parser import parse_date
 from utils.proxy_manager import get_proxy_manager
 from utils.logger import get_logger
+from utils.resource_link_cleaner import clean_resource_lines
 
 logger = get_logger(__name__)
 
@@ -256,19 +256,8 @@ class SejuCrawler(PlaywrightBaseCrawler):
             
             cleaned_p_texts = [t for t in p_texts if t]
             if len(cleaned_p_texts) > 1:
-                resource_patterns = [
-                    r'^magnet:\?',
-                    r'^ed2k://',
-                    r'^thunder://',
-                    r'^https?://',
-                    r'提取码',
-                    r'解压密码',
-                    r'天翼'
-                ]
-                last_line = cleaned_p_texts[-1].lower()
-                is_res = any(re.search(pat, last_line) for pat in resource_patterns)
-                if not is_res:
-                    cleaned_p_texts = cleaned_p_texts[:-1]
+                # 剔除首部纯标签行（如 "115 ed2k:"）与尾部说明行（如 "ed2k请用115保存…"）
+                cleaned_p_texts = clean_resource_lines(cleaned_p_texts)
 
             res_link = "\n".join(cleaned_p_texts)
             link_type = ""

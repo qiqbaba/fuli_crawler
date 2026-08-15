@@ -3,7 +3,7 @@
 功能：
 1. 扫描数据库中按 url 或 resource_link 分组有重复的记录
 2. 将所有重复记录的所有字段信息导出到 CSV 文件
-3. 提供交互式删除功能（保留一条记录，删除其余）
+3. 提供交互式删除功能（保留一条记录，删除其余，可同时删除关联的 PDF 文件）
 """
 
 import csv
@@ -32,6 +32,23 @@ DUPLICATE_FIELDS = [
 
 
 ColumnSpec = str | tuple[str, str]
+
+
+def resolve_pdf_path(pdf_path: str) -> str:
+    """将数据库中可能为相对路径的 pdf_path 转为绝对路径
+
+    Args:
+        pdf_path: 数据库中存储的 pdf_path（相对或绝对路径）
+
+    Returns:
+        绝对路径；若为空则返回空字符串
+    """
+    if not pdf_path:
+        return ""
+    if os.path.isabs(pdf_path):
+        return pdf_path
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(project_dir, pdf_path)
 
 
 def get_all_duplicates(
@@ -229,25 +246,81 @@ def print_detail(records: List[Dict], column: ColumnSpec):
             print()
 
 
-def delete_duplicates_interactive(
+def format_size(num_bytes: float) -> str:
+    """将字节数格式化为易读的大小字符串"""
+    if num_bytes >= 1024 ** 3:
+        return f"{num_bytes / 1024 ** 3:.2f} GB"
+    if num_bytes >= 1024 ** 2:
+        return f"{num_bytes / 1024 ** 2:.2f} MB"
+    if num_bytes >= 1024:
+        return f"{num_bytes / 1024:.1f} KB"
+    return f"{num_bytes:.0f} B"
+
+
+def collect_pdf_stats(records: List[Dict], keep_oldest: bool = False) -> Tuple[int, int]:
+    """统计按指定保留策略删除重复记录时会移除的 PDF 文件
+
+    Args:
+        records: 重复记录列表
+        keep_oldest: True 表示保留最旧一条 (ID 最小)，False 表示保留最新一条 (ID 最大)
+
+    Returns:
+        (会删除的 PDF 文件数, 总字节数)，仅统计物理存在的文件，跨组去重
+    """
+    groups: Dict[str, List[Dict]] = {}
+    for rec in records:
+        key = rec["_group_key"]
+        groups.setdefault(key, []).append(rec)
+
+    pdf_files: List[str] = []
+    seen: set = set()
+    for group in groups.values():
+        group_sorted = sorted(group, key=lambda r: r.get("id", 0) or 0)
+        # 与删除逻辑一致：优先保留有 PDF 的记录
+        with_pdf = [r for r in group_sorted if (r.get("pdf_path") or "").strip()]
+        candidates = with_pdf if with_pdf else group_sorted
+        kept_id = candidates[0].get("id") if keep_oldest else candidates[-1].get("id")
+        for rec in group_sorted:
+            if (rec.get("id", 0) or 0) == kept_id:
+                continue
+            p = rec.get("pdf_path") or ""
+            if not p:
+                continue
+            abs_p = resolve_pdf_path(p)
+            key_p = abs_p.lower().replace("\\", "/")
+            if key_p in seen:
+                continue
+            seen.add(key_p)
+            if os.path.exists(abs_p):
+                pdf_files.append(abs_p)
+
+    total_bytes = sum(os.path.getsize(f) for f in pdf_files)
+    return len(pdf_files), total_bytes
+
+
+def delete_duplicates_batch(
     conn,
     records: List[Dict],
     column: ColumnSpec,
     label: str,
-) -> int:
-    """交互式删除重复记录
+    keep_newest: bool = True,
+    delete_pdf: bool = False,
+) -> Tuple[int, int, int, int]:
+    """批量删除重复记录，统一保留策略应用于所有重复组
 
     Args:
         conn: 数据库连接
         records: 重复记录列表
         column: 重复列名
         label: 显示标签
+        keep_newest: True 保留最新一条 (ID 最大)，False 保留最旧一条 (ID 最小)
+        delete_pdf: 是否同时删除关联的 PDF 文件
 
     Returns:
-        删除的记录数
+        (删除的记录数, 删除的 PDF 文件数, 删除失败的 PDF 文件数, 删除的 PDF 总字节数)
     """
     if not records:
-        return 0
+        return 0, 0, 0, 0
 
     groups: Dict[str, List[Dict]] = {}
     for rec in records:
@@ -255,61 +328,63 @@ def delete_duplicates_interactive(
         groups.setdefault(key, []).append(rec)
 
     total_deleted = 0
+    total_pdf_deleted = 0
+    total_pdf_failed = 0
+    total_pdf_bytes = 0
     cursor = conn.cursor()
 
-    is_composite = isinstance(column, tuple)
+    n_groups = len(groups)
+    # 进度间隔：最多 100 行，最少每 5 组一行
+    progress_interval = max(5, (n_groups + 99) // 100)
 
     for gidx, (key, group) in enumerate(groups.items(), 1):
-        print(f"\n{'=' * 70}")
-        print(f"  [{gidx}/{len(groups)}] {label} 重复组")
-        if is_composite:
-            parts = key.split("|||", 1)
-            print(f"  标题: {parts[0][:60] if len(parts) > 0 else ''}")
-            if len(parts) > 1:
-                print(f"  链接: {parts[1][:80]}{'...' if len(parts[1]) > 80 else ''}")
-        else:
-            print(f"  重复值: {key[:100]}")
-        print(f"{'=' * 70}")
+        # 进度指示
+        if gidx % progress_interval == 0 or gidx == n_groups:
+            print(f"  处理中... {gidx}/{n_groups} 组 ({gidx * 100 // n_groups}%)")
 
         # 按 ID 排序显示
         group_sorted = sorted(group, key=lambda r: r.get("id", 0) or 0)
 
-        for i, rec in enumerate(group_sorted):
-            title = (rec.get("title") or "")[:60]
-            rid = rec.get("id", "?")
-            print(f"    [{i + 1}] ID={rid}, title={title}")
-
-        print(f"\n  该组共 {len(group_sorted)} 条重复记录。")
-        print(f"  操作选项：")
-        print(f"    k - 保留最新一条 (ID 最大)，删除其余")
-        print(f"    o - 保留最旧一条 (ID 最小)，删除其余")
-        print(f"    s - 跳过此组")
-        print(f"    q - 退出删除流程")
-
-        choice = input(f"  请选择 [k/o/s/q] (默认 s): ").strip().lower()
-        if choice == "q":
-            print("  退出删除流程。")
-            break
-        if choice == "s" or not choice:
-            print("  已跳过。")
-            continue
-
-        # 确定保留的 ID
-        ids_sorted = sorted(
-            [r.get("id", 0) or 0 for r in group_sorted]
-        )
-        if choice == "k":
-            keep_id = ids_sorted[-1]  # 最大
-        elif choice == "o":
-            keep_id = ids_sorted[0]  # 最小
-        else:
-            print("  无效选项，已跳过。")
-            continue
+        # 确定保留的 ID：优先保留有 PDF 的记录（无 PDF 的记录优先删除），
+        # 仅当组内都无 PDF 时才在全部记录中按策略选择
+        with_pdf = [r for r in group_sorted if (r.get("pdf_path") or "").strip()]
+        candidates = with_pdf if with_pdf else group_sorted
+        ids_sorted = sorted(r.get("id", 0) or 0 for r in candidates)
+        keep_id = ids_sorted[-1] if keep_newest else ids_sorted[0]  # 最大/最小
 
         delete_ids = [str(i) for i in ids_sorted if i != keep_id]
         if not delete_ids:
-            print("  没有可删除的记录。")
             continue
+
+        # 收集待删除记录关联的 PDF 文件（去重，避免多个记录引用同一文件）
+        keep_id_int = int(keep_id)
+        pdf_files_to_delete: List[str] = []
+        seen: set = set()
+        for rec in group_sorted:
+            if (rec.get("id", 0) or 0) == keep_id_int:
+                continue
+            p = rec.get("pdf_path") or ""
+            if not p:
+                continue
+            abs_p = resolve_pdf_path(p)
+            key_p = abs_p.lower().replace("\\", "/")
+            if key_p not in seen and os.path.exists(abs_p):
+                seen.add(key_p)
+                pdf_files_to_delete.append(abs_p)
+
+        deleted_pdfs = 0
+        failed_pdfs = 0
+        deleted_pdf_bytes = 0
+        if delete_pdf:
+            for pdf_path in pdf_files_to_delete:
+                try:
+                    size = os.path.getsize(pdf_path)
+                    os.remove(pdf_path)
+                    deleted_pdfs += 1
+                    deleted_pdf_bytes += size
+                except Exception as e:
+                    failed_pdfs += 1
+                    print(f"    [删除PDF失败] {pdf_path}: {e}")
 
         placeholders = ",".join("?" for _ in delete_ids)
         cursor.execute(
@@ -319,9 +394,11 @@ def delete_duplicates_interactive(
         conn.commit()
         deleted = cursor.rowcount
         total_deleted += deleted
-        print(f"  [✓] 已删除 {deleted} 条记录，保留 ID={keep_id}。")
+        total_pdf_deleted += deleted_pdfs
+        total_pdf_failed += failed_pdfs
+        total_pdf_bytes += deleted_pdf_bytes
 
-    return total_deleted
+    return total_deleted, total_pdf_deleted, total_pdf_failed, total_pdf_bytes
 
 
 def interactive_menu():
@@ -373,8 +450,30 @@ def interactive_menu():
             break
 
         elif choice == "1":
-            # 重复检查 — 重新扫描
-            for col_key, col_label in DUPLICATE_FIELDS:
+            # 重复检查 — 选择检查标准
+            print(f"\n  选择要检查的重复类型：")
+            for i, (col_key, col_label) in enumerate(DUPLICATE_FIELDS, 1):
+                cnt = len(all_dup_data[col_key])
+                print(f"    {i} - {col_label} (当前 {cnt} 条)")
+            print(f"    a - 全部类型")
+            sub = input(f"  请选择 [1-{len(DUPLICATE_FIELDS)}/a]: ").strip().lower()
+
+            targets = []
+            if sub == "a":
+                targets = DUPLICATE_FIELDS
+            else:
+                try:
+                    idx = int(sub) - 1
+                    if 0 <= idx < len(DUPLICATE_FIELDS):
+                        targets = [DUPLICATE_FIELDS[idx]]
+                    else:
+                        print("  无效选择。")
+                        continue
+                except ValueError:
+                    print("  无效输入。")
+                    continue
+
+            for col_key, col_label in targets:
                 print(f"\n  >>> 正在检查 {col_label} 重复...")
                 all_dup_data[col_key] = get_all_duplicates(
                     conn, col_key, all_columns
@@ -447,22 +546,100 @@ def interactive_menu():
                     print("  无效输入。")
                     continue
 
+            # ===== 删除前概况确认 =====
+            grand_records = 0
+            grand_pdfs_k = 0
+            grand_bytes_k = 0
+            grand_pdfs_o = 0
+            grand_bytes_o = 0
+            overview_lines = []
+            for col_key, col_label in targets:
+                recs = all_dup_data[col_key]
+                if not recs:
+                    continue
+                n_groups = len({r["_group_key"] for r in recs})
+                pdfs_k, bytes_k = collect_pdf_stats(recs, keep_oldest=False)
+                pdfs_o, bytes_o = collect_pdf_stats(recs, keep_oldest=True)
+                overview_lines.append(
+                    f"  - {col_label}: {n_groups} 组重复, {len(recs)} 条记录, "
+                    f"预计删除 {len(recs) - n_groups} 条\n"
+                    f"      保留最新: 删 PDF {pdfs_k} 个, 释放 {format_size(bytes_k)}\n"
+                    f"      保留最旧: 删 PDF {pdfs_o} 个, 释放 {format_size(bytes_o)}"
+                )
+                grand_records += len(recs) - n_groups
+                grand_pdfs_k += pdfs_k
+                grand_bytes_k += bytes_k
+                grand_pdfs_o += pdfs_o
+                grand_bytes_o += bytes_o
+
+            if not grand_records:
+                print("\n  所选类型没有可删除的重复记录。")
+                continue
+
+            print(f"\n{'=' * 60}")
+            print(f"  [概况确认] 删除前预览")
+            print(f"{'=' * 60}")
+            for line in overview_lines:
+                print(line)
+            print(f"  {'-' * 56}")
+            print(f"  合计: 预计删除重复记录 {grand_records} 条")
+            print(f"    保留最新策略: 同时删除 PDF {grand_pdfs_k} 个, 释放 {format_size(grand_bytes_k)}")
+            print(f"    保留最旧策略: 同时删除 PDF {grand_pdfs_o} 个, 释放 {format_size(grand_bytes_o)}")
+            print(f"{'=' * 60}")
+            confirm = input("  确认开始删除？[y/N]: ").strip().lower()
+            if confirm != "y":
+                print("  已取消删除。")
+                continue
+
+            # ===== 一次性确认保留策略（应用于全部重复组） =====
+            print(f"\n  请选择保留策略（一次性确认，应用于全部重复组）：")
+            print(f"    k - 保留最新一条 (ID 最大)，删除其余")
+            print(f"    o - 保留最旧一条 (ID 最小)，删除其余")
+            keep_input = input("  请选择 [k/o] (默认 k): ").strip().lower()
+            keep_newest = keep_input != "o"
+
+            pdf_input = input("  是否同时删除关联的 PDF 文件？[y/N] (默认 N): ").strip().lower()
+            delete_pdf = pdf_input == "y"
+
+            print(f"\n  >>> 开始删除（策略: {'保留最新' if keep_newest else '保留最旧'}"
+                  f"{', 含 PDF' if delete_pdf else ', 不含 PDF'}）...")
+
             total_deleted = 0
+            total_pdf_deleted = 0
+            total_pdf_failed = 0
+            total_pdf_bytes = 0
             for col_key, col_label in targets:
                 if not all_dup_data[col_key]:
                     print(f"  {col_label} 无重复记录，跳过。")
                     continue
-                deleted = delete_duplicates_interactive(
-                    conn, all_dup_data[col_key], col_key, col_label
+                del_recs, del_pdfs, fail_pdfs, del_bytes = delete_duplicates_batch(
+                    conn, all_dup_data[col_key], col_key, col_label,
+                    keep_newest=keep_newest,
+                    delete_pdf=delete_pdf,
                 )
-                total_deleted += deleted
+                msg_type = f"  [✓] {col_label}: 删除 {del_recs} 条记录"
+                if del_pdfs:
+                    msg_type += f", PDF {del_pdfs} 个, 共 {format_size(del_bytes)}"
+                    if fail_pdfs:
+                        msg_type += f"（失败 {fail_pdfs} 个）"
+                print(msg_type)
+                total_deleted += del_recs
+                total_pdf_deleted += del_pdfs
+                total_pdf_failed += fail_pdfs
+                total_pdf_bytes += del_bytes
                 # 删除后重新扫描
                 all_dup_data[col_key] = get_all_duplicates(
                     conn, col_key, all_columns
                 )
 
             if total_deleted:
-                print(f"\n  [✓] 共删除 {total_deleted} 条重复记录。")
+                msg = f"\n  [✓] 共删除 {total_deleted} 条重复记录"
+                if total_pdf_deleted:
+                    msg += f"，PDF 文件 {total_pdf_deleted} 个，共 {format_size(total_pdf_bytes)}"
+                    if total_pdf_failed:
+                        msg += f"（失败 {total_pdf_failed} 个）"
+                msg += "。"
+                print(msg)
             else:
                 print(f"\n  未删除任何记录。")
 

@@ -1,5 +1,4 @@
 import os
-import re
 import time
 import random
 from playwright.sync_api import sync_playwright
@@ -11,37 +10,13 @@ setup_fixes_module()
 from config import get_db_path
 from utils.browser_manager import create_browser_context
 from utils.logger import get_logger
+from utils.resource_link_cleaner import clean_resource_lines
 
 logger = get_logger(__name__)
 
-resource_patterns = [
-    r'^magnet:\?',
-    r'^ed2k://',
-    r'^thunder://',
-    r'^https?://',
-    r'提取码',
-    r'解压密码',
-    r'天翼'
-]
-
-def is_resource_line(text):
-    text_lower = text.lower()
-    for pattern in resource_patterns:
-        if re.search(pattern, text_lower):
-            return True
-    return False
 
 def parse_res_link(p_texts):
-    cleaned_p_texts = [t.strip() for t in p_texts if t.strip()]
-    if not cleaned_p_texts:
-        return ""
-    
-    if len(cleaned_p_texts) > 1:
-        last_line = cleaned_p_texts[-1].lower()
-        is_res = any(re.search(pat, last_line) for pat in resource_patterns)
-        if not is_res:
-            cleaned_p_texts = cleaned_p_texts[:-1]
-            
+    cleaned_p_texts = clean_resource_lines(p_texts)
     return "\n".join(cleaned_p_texts)
 
 def main():
