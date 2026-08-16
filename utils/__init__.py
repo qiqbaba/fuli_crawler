@@ -45,7 +45,9 @@ def __getattr__(name):
         'get_proxy_dict', 'report_failure', 'report_success'
     ):
         import utils.proxy_manager as pm
-        return getattr(pm, name)
+    elif name in ('extract_fanhao', 'has_fanhao', 'batch_has_fanhao'):
+        import utils.fanhao_filter as ff
+        return getattr(ff, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -53,4 +55,5 @@ __all__ = [
     'ProxyPool', 'get_proxy_manager', 'init_proxy_manager',
     'get_proxy_string', 'get_proxy_dict', 'report_failure', 'report_success',
     'setup_console_utf8', 'ensure_project_root',
+    'extract_fanhao', 'has_fanhao', 'batch_has_fanhao',
 ]

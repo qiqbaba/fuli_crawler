@@ -1,49 +1,46 @@
 """
-日语标题过滤脚本
+严格番号过滤维护脚本
 
-从数据库中扫描所有标题，通过语言检测识别日语标题后，提供两种操作：
-  1. 导出匹配记录到新数据库（不含非日语记录）
-  2. 删除匹配记录（同时删除对应 PDF 文件）
+从数据库中扫描所有标题，严格识别包含日本AV番号的记录后，提供两种操作：
+  1. 导出匹配记录到新数据库（不含非番号记录）
+  2. 删除匹配记录（同时删除对应 PDF 文件并执行 VACUUM 释放空间）
 
 用法:
   python fixes/filter_fanhao.py                        # 交互式模式（逐步询问）
   python fixes/filter_fanhao.py --interactive           # 显式进入交互式模式
-  python fixes/filter_fanhao.py --mode export           # 导出日语记录到新库
-  python fixes/filter_fanhao.py --mode delete           # 删除日语记录 (含 PDF)
+  python fixes/filter_fanhao.py --mode export           # 导出番号记录到新库
+  python fixes/filter_fanhao.py --mode delete           # 删除番号记录 (含 PDF)
   python fixes/filter_fanhao.py --mode export --dry-run # 预览导出
   python fixes/filter_fanhao.py --mode delete --dry-run # 预览删除
 """
 
 import os
+import re
 import sys
 import shutil
 import sqlite3
 import argparse
 from datetime import datetime
 
-from fixes.db_utils import setup_fixes_module, get_connection, get_columns, get_db_path
+# 将项目根目录加入 sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-setup_fixes_module()
+from utils import setup_console_utf8
+setup_console_utf8()
 
 from config import get_db_path, PDF_BASE_DIR
+from fixes.db_utils import get_columns
+from utils.fanhao_filter import extract_fanhao, has_fanhao, batch_has_fanhao
 
 
 # ============================================================
-# 1. 日语检测（复用 utils.lang_filter 的共享实现）
+# 1. 数据库扫描与操作
 # ============================================================
 
-from utils.lang_filter import is_japanese, _LINGUA_AVAILABLE
-
-
-# ============================================================
-# 2. 数据库操作
-# ============================================================
-
-def scan_japanese_records(conn):
+def scan_fanhao_records(conn):
     """
-    扫描数据库，返回日语标题的记录列表。
-    每项为 (matched_text_prefix, row_data_dict)
-    matched_text_prefix 为标题前 60 个字符，方便展示。
+    扫描数据库，返回包含番号的记录列表。
+    每项为 (matched_fanhao, row_data_dict)
     """
     cursor = conn.cursor()
     columns = get_columns(cursor)
@@ -54,16 +51,15 @@ def scan_japanese_records(conn):
     for row in rows:
         row_dict = dict(zip(columns, row))
         title = row_dict.get('title', '')
-        if is_japanese(title):
-            # 取标题前 60 字符作为标识
-            title_prefix = title[:60]
-            matches.append((title_prefix, row_dict))
+        found, fanhao = extract_fanhao(title)
+        if found:
+            matches.append((fanhao, row_dict))
 
     return matches, columns
 
 
 def export_to_new_db(matches, columns, output_path):
-    """将匹配的记录导出到新的 SQLite 数据库"""
+    """将匹配的番号记录导出到新的 SQLite 数据库"""
     print(f"\n[*] 正在导出 {len(matches)} 条记录到: {output_path}")
 
     if os.path.exists(output_path):
@@ -81,13 +77,20 @@ def export_to_new_db(matches, columns, output_path):
         )
     ''')
 
-    col_list = ', '.join(columns)
-    placeholders = ', '.join(['?' for _ in columns])
+    # 确保有 fanhao 列
+    try:
+        cursor.execute("ALTER TABLE resources ADD COLUMN fanhao TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+    col_list = ', '.join(columns + ['fanhao'])
+    placeholders = ', '.join(['?' for _ in range(len(columns) + 1)])
 
     cursor.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_url ON resources(url)")
 
-    for _, row_dict in matches:
+    for fanhao, row_dict in matches:
         values = [row_dict.get(col) for col in columns]
+        values.append(fanhao)
         cursor.execute(
             f"INSERT OR IGNORE INTO resources ({col_list}) VALUES ({placeholders})",
             values
@@ -98,8 +101,8 @@ def export_to_new_db(matches, columns, output_path):
     conn.close()
 
 
-def delete_records(conn, matches, dry_run=False):
-    """删除匹配的记录，并可选删除对应的 PDF 文件"""
+def delete_records(conn, matches, dry_run=False, force=False):
+    """删除匹配的番号记录，并可选删除对应的 PDF 文件"""
     ids_to_delete = [row_dict['id'] for _, row_dict in matches]
     pdf_files_to_delete = []
 
@@ -121,19 +124,20 @@ def delete_records(conn, matches, dry_run=False):
 
     if dry_run:
         print("\n[预览模式] 以下记录将被删除:")
-        for i, (_, row_dict) in enumerate(matches, 1):
+        for i, (fanhao, row_dict) in enumerate(matches, 1):
             title = row_dict.get('title', '')[:60]
             pdf = row_dict.get('pdf_path', '')
-            print(f"  {i:4d}. {title}")
+            print(f"  {i:4d}. [{fanhao}] {title}")
             if pdf:
                 print(f"       PDF: {pdf}")
         print(f"\n[预览] 共 {len(ids_to_delete)} 条记录, {len(pdf_files_to_delete)} 个 PDF 文件将被删除")
         return
 
-    confirm = input(f"\n[?] 确定要删除这 {len(ids_to_delete)} 条记录 {'和 '+str(len(pdf_files_to_delete))+' 个 PDF 文件' if pdf_files_to_delete else ''}？(yes/NO): ").strip().lower()
-    if confirm != 'yes':
-        print("[-] 已取消操作")
-        return
+    if not force:
+        confirm = input(f"\n[?] 确定要删除这 {len(ids_to_delete)} 条记录 {'和 '+str(len(pdf_files_to_delete))+' 个 PDF 文件' if pdf_files_to_delete else ''}？(yes/NO): ").strip().lower()
+        if confirm != 'yes':
+            print("[-] 已取消操作")
+            return
 
     cursor = conn.cursor()
 
@@ -176,7 +180,7 @@ def get_total_count(conn):
 
 
 # ============================================================
-# 3. 交互式控制台询问
+# 2. 交互式控制台询问
 # ============================================================
 
 def ask_yes_no(prompt, default=False):
@@ -230,16 +234,28 @@ def ask_path(prompt, default=None, must_exist=False):
 def show_results_preview(matches):
     """显示匹配结果的预览列表"""
     print(f"\n{'='*60}")
-    print(f"[*] 匹配到 {len(matches)} 条日语标题记录:")
+    print(f"[*] 匹配到 {len(matches)} 条包含番号的记录:")
     print(f"{'='*60}")
+
+    # 按番号前缀统计
+    prefix_stats = {}
+    for fanhao, _ in matches:
+        prefix = re.sub(r'[\d\-_ ].*$', '', fanhao).upper()
+        if not prefix:
+            prefix = fanhao.upper()
+        prefix_stats[prefix] = prefix_stats.get(prefix, 0) + 1
+
+    print(f"\n[*] 番号前缀分布 (Top 20):")
+    for prefix, count in sorted(prefix_stats.items(), key=lambda x: -x[1])[:20]:
+        print(f"    {prefix:<12s} : {count:5d} 条")
 
     show_detail = ask_yes_no("\n[*] 是否查看详细匹配列表?", False)
     if show_detail:
         print(f"\n[*] 匹配详情:")
-        for i, (title_prefix, row_dict) in enumerate(matches, 1):
-            title = title_prefix[:70]
+        for i, (fanhao, row_dict) in enumerate(matches, 1):
+            title = row_dict.get('title', '')[:70]
             url = row_dict.get('url', '')
-            print(f"  {i:4d}. {title}")
+            print(f"  {i:4d}. [{fanhao}] {title}")
             if url:
                 print(f"       URL: {url}")
             if i >= 100:
@@ -250,12 +266,8 @@ def show_results_preview(matches):
 def interactive_mode():
     """交互式控制台模式：逐步询问用户"""
     print(f"\n{'='*60}")
-    print("  日语标题过滤工具 - 交互式模式")
+    print("  严格番号过滤工具 - 交互式模式")
     print(f"{'='*60}\n")
-
-    if not _LINGUA_AVAILABLE:
-        print("[!] 警告: lingua-language-detector 未安装，将仅基于假名(平假名/片假名)判断日语。")
-        print("    若要更精确的检测，请执行: pip install lingua-language-detector\n")
 
     # 1. 询问数据库路径
     default_db = get_db_path()
@@ -268,12 +280,12 @@ def interactive_mode():
     total = get_total_count(conn)
     print(f"\n[*] 数据库总记录数: {total}")
 
-    print("[*] 正在扫描所有标题中的日语文本...")
-    matches, columns = scan_japanese_records(conn)
-    print(f"[*] 找到日语标题记录: {len(matches)} 条 ({len(matches)/total*100:.1f}%)")
+    print("[*] 正在扫描所有标题中的番号 (严格判定标准)...")
+    matches, columns = scan_fanhao_records(conn)
+    print(f"[*] 找到含番号记录: {len(matches)} 条 ({len(matches)/total*100:.1f}%)")
 
     if not matches:
-        print("[*] 没有找到任何日语标题的记录，退出。")
+        print("[*] 没有找到任何包含番号的记录，退出。")
         conn.close()
         return
 
@@ -298,7 +310,7 @@ def interactive_mode():
         base_dir = os.path.dirname(db_path)
         base_name = os.path.splitext(os.path.basename(db_path))[0]
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_output = os.path.join(base_dir, f"{base_name}_japanese_only_{timestamp}.db")
+        default_output = os.path.join(base_dir, f"{base_name}_fanhao_only_{timestamp}.db")
         output_path = ask_path("请输入导出数据库路径", default=default_output)
 
     # 5. 询问是否显示详细日志
@@ -325,9 +337,9 @@ def interactive_mode():
     if mode == "export":
         if dry_run:
             print("\n[预览模式] 导出预览:")
-            for i, (_, row_dict) in enumerate(matches, 1):
+            for i, (fanhao, row_dict) in enumerate(matches, 1):
                 title = row_dict.get('title', '')[:60]
-                print(f"  {i:4d}. {title}")
+                print(f"  {i:4d}. [{fanhao}] {title}")
             print(f"\n[预览] 共 {len(matches)} 条记录【将会】导出到: {output_path}")
         else:
             export_to_new_db(matches, columns, output_path)
@@ -342,13 +354,12 @@ def interactive_mode():
 
 
 # ============================================================
-# 4. 命令行入口
+# 3. 命令行入口
 # ============================================================
 
 def main():
-    setup_console_utf8()
     parser = argparse.ArgumentParser(
-        description="日语标题过滤工具 - 识别并导出/删除数据库中标题为日语的记录"
+        description="严格番号过滤工具 - 识别并导出/删除数据库中包含日本AV番号的记录"
     )
     parser.add_argument(
         '--interactive', action='store_true',
@@ -371,26 +382,24 @@ def main():
         help='预览模式: 仅显示将要执行的操作，不实际修改数据'
     )
     parser.add_argument(
+        '--yes', '-y', action='store_true',
+        help='跳过确认提示，直接执行操作'
+    )
+    parser.add_argument(
         '--verbose', action='store_true',
         help='显示每条记录的详细匹配信息'
     )
 
     args = parser.parse_args()
 
-    # 如果未提供任何参数，或指定了 --interactive，进入交互式模式
     if args.interactive or not (args.mode or args.db or args.output or args.dry_run):
         interactive_mode()
         return
 
-    # 非交互式模式
     if not args.mode:
         print("[-] 请指定 --mode (export/delete) 或使用 --interactive 进入交互模式")
         parser.print_help()
         sys.exit(1)
-
-    if not _LINGUA_AVAILABLE:
-        print("[!] 警告: lingua-language-detector 未安装，将仅基于假名判断日语。")
-        print("    建议安装: pip install lingua-language-detector\n")
 
     db_path = args.db or get_db_path()
     if not os.path.exists(db_path):
@@ -401,33 +410,32 @@ def main():
     total = get_total_count(conn)
     print(f"[*] 数据库: {db_path} (共 {total} 条记录)")
 
-    print("[*] 正在扫描日语标题...")
-    matches, columns = scan_japanese_records(conn)
-    print(f"[*] 找到日语标题记录: {len(matches)} 条 ({len(matches)/total*100:.1f}%)")
+    print("[*] 正在扫描标题中的番号 (严格判定)...")
+    matches, columns = scan_fanhao_records(conn)
+    print(f"[*] 找到含番号记录: {len(matches)} 条 ({len(matches)/total*100:.1f}%)")
 
     if not matches:
-        print("[*] 没有找到任何日语标题的记录，退出。")
+        print("[*] 没有找到任何含番号的记录，退出。")
         conn.close()
         return
 
-    # 非交互模式下，直接执行
     if args.mode == "export":
         output_path = args.output or os.path.join(
             os.path.dirname(db_path),
-            f"{os.path.splitext(os.path.basename(db_path))[0]}_japanese_only_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            f"{os.path.splitext(os.path.basename(db_path))[0]}_fanhao_only_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
         )
         if args.dry_run:
             print(f"\n[预览模式] 共 {len(matches)} 条记录【将会】导出到: {output_path}")
-            for i, (_, row_dict) in enumerate(matches, 1):
+            for i, (fanhao, row_dict) in enumerate(matches, 1):
                 title = row_dict.get('title', '')[:60]
-                print(f"  {i:4d}. {title}")
+                print(f"  {i:4d}. [{fanhao}] {title}")
         else:
             conn.close()
             export_to_new_db(matches, columns, output_path)
     else:
         conn.close()
         conn = sqlite3.connect(db_path)
-        delete_records(conn, matches, dry_run=args.dry_run)
+        delete_records(conn, matches, dry_run=args.dry_run, force=args.yes)
         conn.close()
 
 

@@ -11,6 +11,7 @@ from utils.pdf_generator import PDFGenerator, PDFRenderConfig
 from utils.date_parser import parse_date
 from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak_link
 from utils.lang_filter import is_japanese, batch_is_japanese
+from utils.fanhao_filter import has_fanhao, batch_has_fanhao
 from utils.logger import get_logger, get_source_logger
 from config import USER_AGENTS
 from curl_cffi import requests
@@ -93,6 +94,7 @@ class BaseCrawler:
         self.max_consecutive_duplicate_pages = None
         self.check_resource_link = False  # 是否额外检查 resource_link（磁力链接）去重，子类按需开启
         self.skip_japanese = True  # 是否跳过日语标题
+        self.skip_fanhao = True  # 是否跳过包含番号的标题（在语言过滤之后执行）
         self.is_test = False
         self.quiet = False  # 静音模式，在 run() 中可被覆盖
         self.no_pdf = False  # 无 PDF 模式，在 run() 中可被覆盖
@@ -324,6 +326,16 @@ class BaseCrawler:
         else:
             is_jp_results = [False] * len(raw_items)
 
+        # 批量番号预过滤：在语言过滤之后进行
+        if self.skip_fanhao:
+            titles = [
+                raw_item.get('title', '') if isinstance(raw_item, dict) else ''
+                for raw_item in raw_items
+            ]
+            is_fh_results = batch_has_fanhao(titles)
+        else:
+            is_fh_results = [False] * len(raw_items)
+
         for idx, raw_item in enumerate(raw_items, 1):
             url = raw_item if isinstance(raw_item, str) else raw_item.get('url')
             
@@ -338,6 +350,13 @@ class BaseCrawler:
                 if not self.quiet:
                     title_preview = (raw_item.get('title', '') if isinstance(raw_item, dict) else str(raw_item))[:40]
                     self.log.info("[%s] 标题检测为日语，跳过: %s", idx, title_preview)
+                continue
+
+            # 番号预过滤（在语言过滤之后进行）
+            if not is_existing and self.skip_fanhao and is_fh_results[idx - 1]:
+                if not self.quiet:
+                    title_preview = (raw_item.get('title', '') if isinstance(raw_item, dict) else str(raw_item))[:40]
+                    self.log.info("[%s] 标题检测包含番号，跳过: %s", idx, title_preview)
                 continue
 
             if is_existing:
@@ -476,6 +495,23 @@ class BaseCrawler:
             if jp_skipped > 0:
                 self.log.info("[*] 日语标题后置过滤掉 %s 条", jp_skipped)
             results = filtered_jp
+
+        # 番号后置过滤（在语言过滤之后进行）
+        if self.skip_fanhao:
+            titles = [d.get('title', '') for d in results]
+            is_fh_results = batch_has_fanhao(titles)
+            filtered_fh = []
+            fh_skipped = 0
+            for d, is_fh in zip(results, is_fh_results):
+                if is_fh:
+                    fh_skipped += 1
+                    if not self.quiet:
+                        self.log.info("[*] 结果标题检测包含番号，过滤: %s", d.get('title', '')[:40])
+                else:
+                    filtered_fh.append(d)
+            if fh_skipped > 0:
+                self.log.info("[*] 番号后置过滤掉 %s 条", fh_skipped)
+            results = filtered_fh
 
         # 磁力链接二次去重
         if self.check_resource_link:
