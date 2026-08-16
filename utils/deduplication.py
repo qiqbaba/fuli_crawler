@@ -3,12 +3,49 @@ import json
 import threading
 import time
 import hashlib
+import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def extract_url_relative_path(url: str, include_query: bool = True) -> str:
+    """提取 URL 的相对路径（可选包含标准化排序后的 query 参数），去除协议和域名"""
+    if not url:
+        return ""
+    try:
+        parsed = urllib.parse.urlparse(url)
+        path = parsed.path or "/"
+        while "//" in path:
+            path = path.replace("//", "/")
+        if include_query and parsed.query:
+            query_parts = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            query_parts.sort(key=lambda x: x[0])
+            sorted_query = urllib.parse.urlencode(query_parts)
+            return f"{path}?{sorted_query}"
+        return path
+    except Exception:
+        return url
+
+
+def get_url_dedup_key(url: str, source: str = None) -> str:
+    """生成用于去重的规范化键（相对路径 + 数据源命名空间）
+    
+    例如: 
+      url = 'https://ekd.686932.xyz/html/movie/pc/guochan_123.html', source = 'jingpin'
+      -> 'rel:jingpin:/html/movie/pc/guochan_123.html'
+    """
+    if not url:
+        return ""
+    if url.startswith("rel:"):
+        return url
+    rel_path = extract_url_relative_path(url)
+    if source:
+        return f"rel:{source}:{rel_path}"
+    return f"rel:{rel_path}"
 
 
 class BloomFilter:
@@ -181,56 +218,86 @@ class DynamoDBDeduplicationService:
             logger.error("创建 AWS DynamoDB 表失败: %s", e)
             raise
 
-    def check_url_exists(self, url):
-        """检查单条 URL 是否已存在于 AWS DynamoDB"""
+    def check_url_exists(self, url, source: str = None):
+        """检查单条 URL 或其规范化相对路径是否已存在于 AWS DynamoDB"""
         if not url:
             return False
+        rel_key = get_url_dedup_key(url, source)
         with self._lock:
-            if url in self._cached_urls:
+            if url in self._cached_urls or (rel_key and rel_key in self._cached_urls):
                 return True
         try:
+            # 优先查完整 URL
             response = self.client.get_item(
                 TableName=self.table_name,
                 Key={"url": {"S": url}},
                 ProjectionExpression="#u",
                 ExpressionAttributeNames={"#u": "url"}
             )
-            return "Item" in response
+            if "Item" in response:
+                return True
+            # 次查规范化相对路径键
+            if rel_key and rel_key != url:
+                response = self.client.get_item(
+                    TableName=self.table_name,
+                    Key={"url": {"S": rel_key}},
+                    ProjectionExpression="#u",
+                    ExpressionAttributeNames={"#u": "url"}
+                )
+                return "Item" in response
+            return False
         except Exception as e:
             logger.error("AWS DynamoDB check_url_exists 失败: %s", e)
             return False
 
-    def filter_existing_urls(self, urls):
+    def filter_existing_urls(self, urls, source: str = None):
         """批量检查哪些 URL 已存在于 AWS DynamoDB 中，返回已存在的 URL 集合
         
-        使用 Bloom Filter 作为一级缓存，减少 DynamoDB 查询次数。
+        支持完整 URL 比对与相对路径（Relative Path + Source）规范化键比对，
+        能够跨域名轮换（*.xyz）有效命中历史已抓取数据。
         """
         if not urls:
             return set()
         existing = set()
         
-        # 1. 优先比对本地内存中新写入的缓存 URL（线程安全）
-        urls_to_query = []
+        # key_to_original 记录用于查询的每个 key 对应哪些原始输入 URL
+        key_to_original = {}
+        urls_to_query = set()
+        
         with self._lock:
             for url in urls:
                 if not url:
                     continue
-                if url in self._cached_urls:
+                rel_key = get_url_dedup_key(url, source)
+                
+                # 1. 优先比对本地内存中新写入的缓存 URL / 相对路径键
+                if url in self._cached_urls or (rel_key and rel_key in self._cached_urls):
                     existing.add(url)
-                else:
-                    urls_to_query.append(url)
+                    continue
+                
+                # 2. 登记映射关系
+                if url not in key_to_original:
+                    key_to_original[url] = []
+                key_to_original[url].append(url)
+                urls_to_query.add(url)
+                
+                if rel_key and rel_key != url:
+                    if rel_key not in key_to_original:
+                        key_to_original[rel_key] = []
+                    key_to_original[rel_key].append(url)
+                    urls_to_query.add(rel_key)
         
         if not urls_to_query:
             return existing
 
-        urls_list = list(urls_to_query)
+        query_keys_list = list(urls_to_query)
         # batch_get_item 每次最多获取 100 个
-        for i in range(0, len(urls_list), 100):
-            chunk = urls_list[i:i+100]
+        for i in range(0, len(query_keys_list), 100):
+            chunk = query_keys_list[i:i+100]
             try:
                 request_items = {
                     self.table_name: {
-                        "Keys": [{"url": {"S": url}} for url in chunk],
+                        "Keys": [{"url": {"S": k}} for k in chunk],
                         "ProjectionExpression": "#u",
                         "ExpressionAttributeNames": {"#u": "url"}
                     }
@@ -240,16 +307,18 @@ class DynamoDBDeduplicationService:
                 # 处理已返回的 Items
                 responses = response.get("Responses", {}).get(self.table_name, [])
                 for item in responses:
-                    url_val = item.get("url", {}).get("S")
-                    if url_val:
-                        existing.add(url_val)
+                    key_val = item.get("url", {}).get("S")
+                    if key_val and key_val in key_to_original:
+                        for orig_url in key_to_original[key_val]:
+                            existing.add(orig_url)
                 
-                # 将 DynamoDB 中已存在的 URL 同步回 Bloom Filter，减少未来查询
+                # 将 DynamoDB 中已存在的 key 同步回 Bloom Filter 和本地内存缓存
                 with self._lock:
                     for item in responses:
-                        url_val = item.get("url", {}).get("S")
-                        if url_val:
-                            self._url_bloom.add(url_val)
+                        key_val = item.get("url", {}).get("S")
+                        if key_val:
+                            self._cached_urls.add(key_val)
+                            self._url_bloom.add(key_val)
                             self._bloom_dirty = True
                 
                 # 处理未处理完的 Keys（最大重试 5 次）
@@ -262,9 +331,10 @@ class DynamoDBDeduplicationService:
                     response = self.client.batch_get_item(RequestItems=unprocessed)
                     responses = response.get("Responses", {}).get(self.table_name, [])
                     for item in responses:
-                        url_val = item.get("url", {}).get("S")
-                        if url_val:
-                            existing.add(url_val)
+                        key_val = item.get("url", {}).get("S")
+                        if key_val and key_val in key_to_original:
+                            for orig_url in key_to_original[key_val]:
+                                existing.add(orig_url)
                     unprocessed = response.get("UnprocessedKeys", {}).get(self.table_name, {})
                 if unprocessed and "Keys" in unprocessed and unprocessed["Keys"]:
                     logger.warning("AWS DynamoDB filter_existing_urls 有 %s 个未处理 Keys，已超过最大重试次数 %s", len(unprocessed['Keys']), max_retries)
@@ -404,15 +474,20 @@ class DynamoDBDeduplicationService:
                 break
         return existing_links
 
-    def insert_resource(self, url, resource_link):
-        """向 AWS DynamoDB 异步写入一条数据"""
+    def insert_resource(self, url, resource_link, source: str = None):
+        """向 AWS DynamoDB 异步写入一条数据（双键写入：完整 URL 与相对路径规范化键）"""
         if not url:
             return False
+        
+        rel_key = get_url_dedup_key(url, source)
         
         # 立即更新本地内存缓存和 Bloom Filter，防去重击穿（线程安全）
         with self._lock:
             self._cached_urls.add(url)
             self._url_bloom.add(url)
+            if rel_key and rel_key != url:
+                self._cached_urls.add(rel_key)
+                self._url_bloom.add(rel_key)
             self._bloom_dirty = True
             if resource_link:
                 self._cached_resource_links.add(resource_link)
@@ -422,37 +497,47 @@ class DynamoDBDeduplicationService:
         # 异步提交写入任务
         if self._executor:
             self._executor.submit(self._async_put_item, url, resource_link)
+            if rel_key and rel_key != url:
+                self._executor.submit(self._async_put_item, rel_key, resource_link)
         return True
 
-    def insert_resources_batch(self, items_list):
-        """向 AWS DynamoDB 异步批量写入数据列表"""
+    def insert_resources_batch(self, items_list, source: str = None):
+        """向 AWS DynamoDB 异步批量写入数据列表（双键写入）"""
         if not items_list:
             return
         
+        keys_to_put = []
         with self._lock:
             for d in items_list:
                 url = d.get('url')
+                item_source = d.get('source') or source
                 resource_link = d.get('resource_link')
                 if url:
                     self._cached_urls.add(url)
                     self._url_bloom.add(url)
-                    self._bloom_dirty = True
+                    keys_to_put.append((url, resource_link))
+                    
+                    rel_key = get_url_dedup_key(url, item_source)
+                    if rel_key and rel_key != url:
+                        self._cached_urls.add(rel_key)
+                        self._url_bloom.add(rel_key)
+                        keys_to_put.append((rel_key, resource_link))
+                        
                 if resource_link:
                     self._cached_resource_links.add(resource_link)
                     if self._scanned_resource_links is not None:
                         self._scanned_resource_links.add(resource_link)
+            self._bloom_dirty = True
 
         if self._executor:
-            for d in items_list:
-                url = d.get('url')
-                resource_link = d.get('resource_link')
-                if url:
-                    self._executor.submit(self._async_put_item, url, resource_link)
+            for u, r in keys_to_put:
+                self._executor.submit(self._async_put_item, u, r)
 
     def _async_put_item(self, url, resource_link):
         """实际在线程池中运行的 DynamoDB 写入任务"""
         item = {"url": {"S": url}}
-        if resource_link:
+        # 针对 GSI resource_link-index（最大限制 2048 字节），超长则跳过写入索引字段，避免 ValidationException
+        if resource_link and len(resource_link.encode('utf-8')) <= 2048:
             item["resource_link"] = {"S": resource_link}
 
         try:

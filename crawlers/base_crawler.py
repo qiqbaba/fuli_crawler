@@ -564,7 +564,7 @@ class BaseCrawler:
 
                 # === 步骤 1: URL 级去重过滤 ===
                 urls_to_check = [raw_item if isinstance(raw_item, str) else raw_item.get('url') for raw_item in raw_items]
-                existing_urls = self.db_manager.filter_existing_urls(urls_to_check)
+                existing_urls = self.db_manager.filter_existing_urls(urls_to_check, source=self.source_name)
                 items_to_process, skipped_count, consecutive_count, early_stop_triggered = self._filter_new_items(
                     raw_items, existing_urls, consecutive_count
                 )

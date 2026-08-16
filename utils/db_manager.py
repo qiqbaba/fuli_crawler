@@ -12,13 +12,13 @@ logger = get_logger(__name__)
 class BaseDBManager(ABC):
     """数据库管理器抽象基类，封装 AWS DynamoDB 去重与状态管理的公共逻辑"""
 
-    def check_url_exists(self, url):
-        """去重检查：单条 URL 是否已存在于 AWS DynamoDB 中"""
-        return self.aws_helper.check_url_exists(url)
+    def check_url_exists(self, url, source=None):
+        """去重检查：单条 URL 是否已存在于 AWS DynamoDB 中（支持相对路径匹配）"""
+        return self.aws_helper.check_url_exists(url, source=source)
 
-    def filter_existing_urls(self, urls):
-        """去重检查：批量检查哪些 URL 已存在于 AWS DynamoDB 中"""
-        return self.aws_helper.filter_existing_urls(urls)
+    def filter_existing_urls(self, urls, source=None):
+        """去重检查：批量检查哪些 URL 已存在于 AWS DynamoDB 中（支持相对路径匹配）"""
+        return self.aws_helper.filter_existing_urls(urls, source=source)
 
     def filter_existing_resource_links(self, resource_links):
         """去重检查：批量检查哪些 resource_link 已存在于 AWS DynamoDB 中"""
@@ -102,7 +102,7 @@ class DBManager(BaseDBManager):
         """
         inserted = self.persistence.insert_resource(data)
         if inserted:
-            self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'))
+            self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'), source=data.get('source'))
             return True
         return False
 
@@ -163,7 +163,7 @@ class SupabaseDBManager(BaseDBManager):
         """
         result = self.persistence.insert_resource(data)
         if result is True:
-            self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'))
+            self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'), source=data.get('source'))
             return True
         return False
 

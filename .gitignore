@@ -38,6 +38,10 @@ r2_pdfs/
 
 # 本地环境变量（含密钥，禁止提交）
 .env
+pikpak_token.json
+result_*.json
+*.pkl
+
 
 # 日志
 logs/
