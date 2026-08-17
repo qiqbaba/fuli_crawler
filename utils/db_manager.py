@@ -24,6 +24,11 @@ class BaseDBManager(ABC):
         """去重检查：批量检查哪些 resource_link 已存在于 AWS DynamoDB 中"""
         return self.aws_helper.filter_existing_resource_links(resource_links)
 
+    def mark_urls_processed(self, urls, source=None):
+        """将已处理（如过滤/跳过）的 URL 标记为已存在，避免后续重复爬取详情页"""
+        if hasattr(self, 'aws_helper') and self.aws_helper:
+            self.aws_helper.mark_urls_processed(urls, source=source)
+
     @abstractmethod
     def insert_resource(self, data):
         """持久化写入并同步去重标记"""

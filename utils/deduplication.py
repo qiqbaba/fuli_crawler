@@ -533,6 +533,31 @@ class DynamoDBDeduplicationService:
             for u, r in keys_to_put:
                 self._executor.submit(self._async_put_item, u, r)
 
+    def mark_urls_processed(self, urls, source: str = None):
+        """批量将已处理但未入主库的 URL（如磁力重复、语言/番号过滤）标记到去重缓存与 DynamoDB 中"""
+        if not urls:
+            return
+        
+        keys_to_put = []
+        with self._lock:
+            for url in urls:
+                if not url:
+                    continue
+                self._cached_urls.add(url)
+                self._url_bloom.add(url)
+                keys_to_put.append((url, None))
+                
+                rel_key = get_url_dedup_key(url, source)
+                if rel_key and rel_key != url:
+                    self._cached_urls.add(rel_key)
+                    self._url_bloom.add(rel_key)
+                    keys_to_put.append((rel_key, None))
+            self._bloom_dirty = True
+
+        if self._executor:
+            for u, r in keys_to_put:
+                self._executor.submit(self._async_put_item, u, r)
+
     def _async_put_item(self, url, resource_link):
         """实际在线程池中运行的 DynamoDB 写入任务"""
         item = {"url": {"S": url}}

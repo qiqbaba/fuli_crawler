@@ -479,6 +479,8 @@ class BaseCrawler:
         skipped_count = 0
         early_stop_triggered = False
 
+        filtered_out_urls = []
+
         # 日语标题后置过滤（批量检测）
         if self.skip_japanese:
             titles = [d.get('title', '') for d in results]
@@ -488,6 +490,8 @@ class BaseCrawler:
             for d, is_jp in zip(results, is_jp_results):
                 if is_jp:
                     jp_skipped += 1
+                    if d.get('url'):
+                        filtered_out_urls.append(d.get('url'))
                     if not self.quiet:
                         self.log.info("[*] 结果标题检测为日语，过滤: %s", d.get('title', '')[:40])
                 else:
@@ -505,6 +509,8 @@ class BaseCrawler:
             for d, is_fh in zip(results, is_fh_results):
                 if is_fh:
                     fh_skipped += 1
+                    if d.get('url'):
+                        filtered_out_urls.append(d.get('url'))
                     if not self.quiet:
                         self.log.info("[*] 结果标题检测包含番号，过滤: %s", d.get('title', '')[:40])
                 else:
@@ -523,6 +529,8 @@ class BaseCrawler:
                 link = d.get('resource_link', '')
                 if link and link in existing_links:
                     resource_link_skipped += 1
+                    if d.get('url'):
+                        filtered_out_urls.append(d.get('url'))
                     if not self.quiet:
                         self.log.info("[*] 磁力链接已存在数据库中，跳过: %s...", link[:60])
                 else:
@@ -530,6 +538,10 @@ class BaseCrawler:
             if resource_link_skipped > 0:
                 self.log.info("[*] 磁力链接去重过滤掉 %s 条", resource_link_skipped)
             results = filtered_results
+
+        # 将所有被过滤/跳过的数据的 URL 标记到去重库中，避免下次重复抓取详情页
+        if filtered_out_urls:
+            self.db_manager.mark_urls_processed(filtered_out_urls, source=self.source_name)
 
         self.log.info("[*] 正在批量写入 %s 条新纪录到数据库...", len(results))
         if results:
@@ -541,6 +553,16 @@ class BaseCrawler:
                     consecutive_count += skipped_count
                     if not self.quiet:
                         self.log.info("[*] 批量写入跳过 %s 条已存在数据，连续已存在计数: %s/%s", skipped_count, consecutive_count, self.max_consecutive_existing)
+                    if consecutive_count >= self.max_consecutive_existing:
+                        early_stop_triggered = True
+        else:
+            # 当整批数据都被过滤/跳过时，如果启用了早停机制，累加跳过数量
+            if filtered_out_urls:
+                skipped_count = len(filtered_out_urls)
+                if self.max_consecutive_existing is not None:
+                    consecutive_count += skipped_count
+                    if not self.quiet:
+                        self.log.info("[*] 过滤跳过 %s 条已存在/不合格数据，连续已存在计数: %s/%s", skipped_count, consecutive_count, self.max_consecutive_existing)
                     if consecutive_count >= self.max_consecutive_existing:
                         early_stop_triggered = True
 
@@ -733,10 +755,8 @@ class BaseCrawler:
             self.log.info("[*] 禁用早停机制，将强制爬取指定范围内所有页面。")
             self.max_consecutive_existing = None
             self.max_consecutive_duplicate_pages = None
-        elif not resume:
-            # 非断点续爬模式时，禁用早停（避免数据库已有历史数据时误触发提前退出）
-            self.max_consecutive_existing = None
-            self.max_consecutive_duplicate_pages = None
+        else:
+            self.log.info("[*] 早停机制已启用 (连续已存在阈值: %s, 连续重复页阈值: %s)", self.max_consecutive_existing, self.max_consecutive_duplicate_pages)
 
         if max_workers is None:
             max_workers = self.get_default_max_workers()
