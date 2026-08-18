@@ -233,19 +233,21 @@ jobs:
         if: steps.check-crawler.outputs.skip != 'true'
         run: python main.py ${{ steps.build-args.outputs.args }}
 
-      - name: 准备重试统计文件（重命名为唯一名称）
+      - name: 准备重试统计与运行摘要文件
         if: always()
         run: |
           if [ -f logs/resource_retry_stats.csv ]; then
             cp logs/resource_retry_stats.csv logs/retry_${{ matrix.crawler }}.csv
           fi
 
-      - name: 上传重试统计 CSV
+      - name: 上传重试统计 CSV 与运行摘要
         if: always()
         uses: actions/upload-artifact@v4.6.0
         with:
           name: retry-stats-${{ matrix.crawler }}
-          path: logs/retry_${{ matrix.crawler }}.csv
+          path: |
+            logs/retry_${{ matrix.crawler }}.csv
+            logs/summary_${{ matrix.crawler }}.json
           if-no-files-found: ignore
 
       - name: 清理临时 PDF 目录
@@ -280,7 +282,7 @@ jobs:
           printf '\xef\xbb\xbf%s\n' "$HEADER" > "$MERGED"
 
           # 遍历所有下载的 CSV，追加内容（跳过文件头行）
-          for f in downloaded-stats/*.csv; do
+          for f in downloaded-stats/retry_*.csv; do
             if [ -f "$f" ]; then
               tail -n +2 "$f" >> "$MERGED"
               echo "已合并: $f"
@@ -290,6 +292,50 @@ jobs:
           echo "=== 合并后的统计文件 ==="
           wc -l "$MERGED"
 
+          # 解析所有爬虫的运行摘要 JSON，汇总到 GITHUB_STEP_SUMMARY 并提取熔断列表
+          python -c "
+          import glob
+          import json
+          import os
+
+          summary_files = glob.glob('downloaded-stats/summary_*.json')
+          summaries = []
+          circuit_broken = []
+
+          for sf in sorted(summary_files):
+              try:
+                  with open(sf, 'r', encoding='utf-8') as f:
+                      data = json.load(f)
+                      summaries.append(data)
+                      if data.get('circuit_break'):
+                          circuit_broken.append(data.get('crawler', 'unknown'))
+              except Exception as e:
+                  print(f'Error reading {sf}: {e}')
+
+          step_summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          if step_summary and summaries:
+              with open(step_summary, 'a', encoding='utf-8') as f:
+                  f.write('## 🚀 全量爬虫任务运行总览大屏\n\n')
+                  f.write('| 爬虫模块 | 运行状态 | 入库条数 | 跳过/重复 | 抓取页数 | 失败/空页数 | 耗时 | 备注 / 诊断 |\n')
+                  f.write('| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |\n')
+                  for s in summaries:
+                      status = '🔴 **已熔断**' if s.get('circuit_break') else '🟢 **正常完成**'
+                      cname = s.get('crawler', '')
+                      ins = s.get('total_inserted', 0)
+                      skp = s.get('total_skipped', 0)
+                      pgs = s.get('total_crawled_pages', 0)
+                      fpgs = s.get('total_failed_pages', 0)
+                      dur = s.get('duration', '-')
+                      rsn = s.get('circuit_break_reason') if s.get('circuit_break') else '正常'
+                      f.write(f'| `{cname}` | {status} | {ins} | {skp} | {pgs} | {fpgs} | {dur} | {rsn} |\n')
+                  f.write('\n')
+
+          with open('stats/circuit_break_crawlers.txt', 'w', encoding='utf-8') as f:
+              f.write(','.join(circuit_broken))
+          "
+
+          CB_CRAWLERS=$(cat stats/circuit_break_crawlers.txt 2>/dev/null || echo "")
+
           # 配置 git 并提交
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -297,7 +343,12 @@ jobs:
           if git diff --cached --quiet; then
             echo "无变更，跳过提交"
           else
-            git commit -m "chore: 更新重试统计数据 ($(date +'%Y-%m-%d'))"
+            if [ -n "$CB_CRAWLERS" ]; then
+              COMMIT_MSG="chore: 更新重试统计数据 ($(date +'%Y-%m-%d')) [⚠️ 熔断: $CB_CRAWLERS]"
+            else
+              COMMIT_MSG="chore: 更新重试统计数据 ($(date +'%Y-%m-%d'))"
+            fi
+            git commit -m "$COMMIT_MSG"
             git push
-            echo "已提交并推送重试统计数据"
+            echo "已提交并推送重试统计数据: $COMMIT_MSG"
           fi

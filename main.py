@@ -186,7 +186,7 @@ def main():
         help="非交互模式：跳过所有交互式提示，使用默认值 (CI/CD 环境推荐)"
     )
     
-    # 重试次数相关参数
+    # 重试与熔断相关参数
     parser.add_argument(
         "--max-retries",
         type=int,
@@ -198,6 +198,12 @@ def main():
         type=int,
         default=None,
         help="最大 PDF 生成重试次数"
+    )
+    parser.add_argument(
+        "--max-failed-pages",
+        type=int,
+        default=5,
+        help="连续失败/未提取到有效项的熔断阈值页数 (默认: 5)"
     )
     
     args = parser.parse_args()
@@ -294,11 +300,13 @@ def main():
         if args.workers is None:
             args.workers = default_workers
         
-        # 用命令行参数覆盖爬虫的重试设置
+        # 用命令行参数覆盖爬虫的重试与熔断设置
         if args.max_retries is not None:
             crawler.max_retries = args.max_retries
         if args.max_pdf_retries is not None:
             crawler.max_pdf_retries = args.max_pdf_retries
+        if args.max_failed_pages is not None:
+            crawler.max_consecutive_failed_pages = args.max_failed_pages
 
     if crawler is None:
         logger.error("[-] 找不到指定的爬虫: %s", args.crawler)
@@ -376,6 +384,13 @@ def main():
                 logger.info("[*] 正在释放数据库资源...")
                 db_manager.close()
                 logger.info("[+] 数据库已安全关闭！")
+                
+                # 检查是否触发熔断 (方案 2: 熔断时以非零状态码退出，GitHub Action Job 标红)
+                if getattr(crawler, 'circuit_breaker_tripped', False):
+                    logger.critical("\n" + "!" * 60)
+                    logger.critical("🚨 [爬虫熔断退出] 爬虫 [%s] 触发连续失败熔断: %s", args.crawler, getattr(crawler, 'circuit_breaker_reason', ''))
+                    logger.critical("!" * 60)
+                    sys.exit(1)
         else:
             # 中断时仅释放资源，跳过统计
             logger.info("[*] 正在释放数据库资源...")

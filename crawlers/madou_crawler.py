@@ -15,7 +15,8 @@ class MadouCrawler(DecryptSiteBaseCrawler):
             source_name="madou",
             categories=["guochan", "oumei"],
             initial_domains=["hfc.232668.xyz"],
-            main_domain="https://ypb.295282.xyz",
+            main_domain="http://ypb.295282.xyz",
+            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
         )
         super().__init__(db_manager, "madou", config=config)
         self.current_class = "guochan"

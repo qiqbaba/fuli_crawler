@@ -57,7 +57,7 @@ class CrawlConfig:
     categories: List[str] = field(default_factory=list)
     initial_domains: List[str] = field(default_factory=list)
     main_domain: str = ""
-    domain_pattern: str = r'([a-z]{2,5}\.\d{5,7}\.xyz)'
+    domain_pattern: str = r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)'
     list_url_template: str = "{base}/list.php?class={cat}&page={page}"
     check_resource_link: bool = True
     max_consecutive_existing: Optional[int] = 15
@@ -69,10 +69,10 @@ class CrawlConfig:
 
     def __post_init__(self):
         self.domains = list(self.initial_domains)
-        if self.main_domain:
-            self.base_domain = self.main_domain
-        elif self.domains:
+        if self.domains:
             self.base_domain = f"https://{self.domains[0]}"
+        elif self.main_domain:
+            self.base_domain = self.main_domain
         else:
             self.base_domain = ""
         self.base_list_url = self.list_url_template.format(
@@ -92,6 +92,13 @@ class BaseCrawler:
         self.log = get_source_logger(__name__, source_name)
         self.max_consecutive_existing = 20
         self.max_consecutive_duplicate_pages = None
+        self.max_consecutive_failed_pages = 5  # 连续5页抓取失败或无有效数据时触发熔断
+        self.circuit_breaker_tripped = False
+        self.circuit_breaker_reason = ""
+        self.total_inserted_count = 0
+        self.total_skipped_count = 0
+        self.total_failed_pages = 0
+        self.total_crawled_pages = 0
         self.check_resource_link = False  # 是否额外检查 resource_link（磁力链接）去重，子类按需开启
         self.skip_japanese = True  # 是否跳过日语标题
         self.skip_fanhao = True  # 是否跳过包含番号的标题（在语言过滤之后执行）
@@ -176,13 +183,69 @@ class BaseCrawler:
 
         return url, None
 
+    def _check_circuit_breaker(self, consecutive_failed_pages: int, page_num: int, class_name: Optional[str] = None) -> bool:
+        """检查并触发爬虫连续失败熔断机制"""
+        if self.max_consecutive_failed_pages is not None and consecutive_failed_pages >= self.max_consecutive_failed_pages:
+            self.circuit_breaker_tripped = True
+            section_info = f"板块: {class_name}, " if class_name else ""
+            reason = f"连续 {consecutive_failed_pages} 页未提取到有效项或网络超时 (在 {section_info}第 {page_num} 页触发)"
+            self.circuit_breaker_reason = reason
+            self.log.critical("\n" + "=" * 60)
+            self.log.critical("🚨 [爬虫熔断触发] 爬虫 [%s] %s，已强制终止爬取！", self.source_name, reason)
+            self.log.critical("=" * 60)
+            
+            # 方案 1: 输出 GitHub Actions Annotation 错误警告（在 Actions 运行首页顶部高亮展示）
+            print(f"::error title=爬虫熔断报警 [{self.source_name}]::[{self.source_name}] {reason}，已触发熔断终止！", flush=True)
+            return True
+        return False
+
+    def _write_crawler_summary(self):
+        """保存爬虫运行摘要 JSON 并写入 GitHub Step Summary"""
+        os.makedirs("logs", exist_ok=True)
+        duration_str = self.format_elapsed_time(time.time() - self.start_time) if self.start_time else "0秒"
+        summary_data = {
+            "crawler": self.source_name,
+            "status": "circuit_break" if self.circuit_breaker_tripped else "success",
+            "circuit_break": self.circuit_breaker_tripped,
+            "circuit_break_reason": self.circuit_breaker_reason,
+            "total_crawled_pages": self.total_crawled_pages,
+            "total_failed_pages": self.total_failed_pages,
+            "total_inserted": self.total_inserted_count,
+            "total_skipped": self.total_skipped_count,
+            "duration": duration_str
+        }
+        summary_path = os.path.join("logs", f"summary_{self.source_name}.json")
+        try:
+            with open(summary_path, "w", encoding="utf-8") as f:
+                json.dump(summary_data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.log.warning("保存爬虫运行摘要 JSON 失败: %s", e)
+
+        step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if step_summary:
+            try:
+                status_str = "🔴 **已触发熔断**" if self.circuit_breaker_tripped else "🟢 **正常完成**"
+                reason_str = f"⚠️ {self.circuit_breaker_reason}" if self.circuit_breaker_tripped else "正常完成"
+                content = [
+                    f"### 🕷️ 爬虫运行总结: `{self.source_name}`",
+                    "",
+                    "| 爬虫模块 | 运行状态 | 入库条数 | 跳过/重复 | 成功抓取页数 | 失败/空页数 | 耗时 | 备注 / 诊断 |",
+                    "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |",
+                    f"| `{self.source_name}` | {status_str} | {self.total_inserted_count} | {self.total_skipped_count} | {self.total_crawled_pages} | {self.total_failed_pages} | {duration_str} | {reason_str} |",
+                    ""
+                ]
+                with open(step_summary, "a", encoding="utf-8") as f:
+                    f.write("\n".join(content) + "\n")
+            except Exception as e:
+                self.log.warning("写入 GITHUB_STEP_SUMMARY 失败: %s", e)
+
     def on_start(self):
         """生命周期钩子：爬网开始前（子类可选覆盖）"""
         pass
 
     def on_finish(self):
         """生命周期钩子：爬网结束后（子类可选覆盖）"""
-        pass
+        self._write_crawler_summary()
 
     def release_thread_resources(self):
         """生命周期钩子：释放线程局部资源（子类可选覆盖）"""
@@ -592,6 +655,7 @@ class BaseCrawler:
         consecutive_count = 0
         consecutive_subpage_count = 0
         consecutive_duplicate_pages = 0
+        consecutive_failed_pages = 0
         from config import is_local_mode
         is_gha = not is_local_mode()
         early_break = False
@@ -609,14 +673,28 @@ class BaseCrawler:
             try:
                 list_content = self.fetch_list_page(page_num)
                 if not list_content:
-                    self.log.error("页面 %s 抓取失败或无内容，跳过。", page_num)
+                    consecutive_failed_pages += 1
+                    self.total_failed_pages += 1
+                    self.log.error("页面 %s 抓取失败或无内容 (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
+                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name):
+                        early_break = True
+                        break
                     continue
 
                 raw_items = self.parse_list_page(list_content, page_num)
                 if not raw_items:
-                    self.log.error("页面 %s 未提取到有效项。", page_num)
+                    consecutive_failed_pages += 1
+                    self.total_failed_pages += 1
+                    self.log.error("页面 %s 未提取到有效项 (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
+                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name):
+                        early_break = True
+                        break
                     time.sleep(random.uniform(1.0, 2.0))
                     continue
+
+                # 成功获取并提取到有效项，重置连续失败计数器
+                consecutive_failed_pages = 0
+                self.total_crawled_pages += 1
 
                 self.log.info("本页共解析到 %s 条记录。", len(raw_items))
 
@@ -644,6 +722,7 @@ class BaseCrawler:
                 if not items_to_process or early_stop_triggered:
                     if not items_to_process:
                         self.log.info("页面 %s 所有项均已被跳过。", page_num)
+                        self.total_skipped_count += skipped_count
                     else:
                         self.log.info("页面 %s 触发早停，跳过 %s 条待处理项。", page_num, len(items_to_process))
                     if class_name is not None:
@@ -672,6 +751,9 @@ class BaseCrawler:
                 else:
                     inserted_count = 0
                     db_skipped = 0
+
+                self.total_inserted_count += inserted_count
+                self.total_skipped_count += (skipped_count + db_skipped)
 
                 self.log.info("页面 %s 处理完成：写入 %s 条，跳过 %s 条。", page_num, inserted_count, skipped_count + db_skipped)
                 self.db_manager.commit()
@@ -807,6 +889,10 @@ class BaseCrawler:
                         self.log.info("[*] 未检测到历史断点，从头开始爬取")
 
                 for category in categories:
+                    if self.circuit_breaker_tripped:
+                        self.log.warning("[*] 熔断机制已触发，跳过后续板块: %s", category)
+                        break
+
                     if resume and resume_category is not None:
                         category_index = categories.index(category)
                         resume_index = categories.index(resume_category)
@@ -824,10 +910,14 @@ class BaseCrawler:
                     self.log.info("\n[*] ================= 开始爬取板块: %s (起始页码: %s) =================", category, actual_start)
                     self._crawl_pages(actual_start, end_page, max_workers, class_name=category)
                     
+                    if self.circuit_breaker_tripped:
+                        self.log.warning("[*] 板块 %s 触发熔断，中止全部后续板块爬取", category)
+                        break
+
                     if resume and category == resume_category:
                         resume_category = None
                 
-                if not is_test and resume:
+                if not is_test and resume and not self.circuit_breaker_tripped:
                     self.db_manager.mark_source_completed(self.source_name)
                     self.log.info("[+] %s 所有板块爬取完成，已标记完成状态", self.source_name)
             else:
@@ -953,6 +1043,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
             self.log.warning("释放 Playwright 全局资源失败: %s", e)
         
         self.db_manager.commit()
+        super().on_finish()
 
     def _get_thread_resources(self, no_proxy=False):
         """获取当前线程特有的 Playwright 实例
@@ -1114,6 +1205,70 @@ class DomainRotationMixin:
         os.makedirs(cache_dir, exist_ok=True)
         return os.path.join(cache_dir, f"{self.source_name}_domains.json")
 
+    def _extract_domains_from_text(self, content: str) -> List[str]:
+        """从 HTML 或文本内容中提取镜像域名，支持明文正则与 Base64 编码 (例如 d("...") 包装)"""
+        if not content:
+            return []
+        
+        import re
+        import base64
+        pattern = getattr(self, "domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)')
+        found_domains = set()
+
+        # 1. 直接明文正则匹配
+        for d in re.findall(pattern, content):
+            found_domains.add(d)
+
+        # 2. 匹配 d("...") 中的 Base64 编码字符串并解码
+        b64_d_matches = re.findall(r'd\(["\']([A-Za-z0-9+/=]{4,})["\']\)', content)
+        for b64_str in b64_d_matches:
+            try:
+                decoded = base64.b64decode(b64_str).decode('utf-8', errors='ignore')
+                for d in re.findall(pattern, decoded):
+                    found_domains.add(d)
+            except Exception:
+                pass
+
+        # 3. 匹配页面中可能的通用 Base64 引号字符串（兜底）
+        general_b64 = re.findall(r'["\']([A-Za-z0-9+/=]{12,})["\']', content)
+        for b64_str in general_b64:
+            try:
+                decoded = base64.b64decode(b64_str).decode('utf-8', errors='ignore')
+                for d in re.findall(pattern, decoded):
+                    found_domains.add(d)
+            except Exception:
+                pass
+
+        # 排除主站域名本身（如果存在）
+        main_dom = getattr(self, "main_domain", "")
+        result = []
+        for d in found_domains:
+            if main_dom and d in main_dom:
+                continue
+            result.append(d)
+
+        return result
+
+    def _update_base_domain(self, domain_idx=0):
+        """根据当前域名索引更新 self.base_domain 和 self.base_list_url，线程安全由外部调用者保证"""
+        if not self.domains:
+            return
+        self.current_domain_idx = domain_idx % len(self.domains)
+        self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
+        
+        template = getattr(self, "list_url_template", "{base}/list.php?class={cat}&page={page}")
+        if "{base}" in template:
+            self.base_list_url = template.format(base=self.base_domain, cat="{cat}", page="{page}")
+        elif getattr(self, "base_list_url", None):
+            import re
+            pattern = getattr(self, "domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)')
+            if re.search(pattern, self.base_list_url):
+                self.base_list_url = re.sub(pattern, self.domains[self.current_domain_idx], self.base_list_url)
+            else:
+                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+        else:
+            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+
     def _load_domains_from_cache(self):
         """从本地缓存加载之前发现的最新域名，如果有则替换 self.domains"""
         cache_path = self._get_domain_cache_path()
@@ -1124,7 +1279,7 @@ class DomainRotationMixin:
                 if isinstance(cached, list) and len(cached) > 0:
                     # 验证缓存中的域名格式
                     import re
-                    pattern = getattr(self, "domain_pattern", r'([a-z]{2,5}\.\d{5,7}\.xyz)')
+                    pattern = getattr(self, "domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)')
                     valid = [d for d in cached if re.search(pattern, d)]
                     if valid:
                         with self._domain_lock:
@@ -1136,13 +1291,7 @@ class DomainRotationMixin:
                                     seen.add(d)
                                     unique_domains.append(d)
                             self.domains = unique_domains
-                            self.current_domain_idx = 0
-                            old_base = self.base_domain
-                            self.base_domain = f"https://{self.domains[0]}"
-                            if old_base and getattr(self, "base_list_url", None):
-                                self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
-                            else:
-                                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+                            self._update_base_domain(0)
                             self._domain_cooldown.clear()
                         self.log.info("[+] %s 从缓存加载 %s 个域名:", self.source_name.upper(), len(unique_domains))
                         for d in unique_domains:
@@ -1176,13 +1325,7 @@ class DomainRotationMixin:
                 candidate = self.domains[candidate_idx]
                 last_fail = self._domain_cooldown.get(candidate, 0)
                 if now - last_fail >= self._cooldown_seconds:
-                    self.current_domain_idx = candidate_idx
-                    old_base = self.base_domain
-                    self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
-                    if old_base and getattr(self, "base_list_url", None):
-                        self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
-                    else:
-                        self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+                    self._update_base_domain(candidate_idx)
                     self.log.warning("[!] %s 域名切换至: %s", self.source_name.upper(), self.base_domain)
                     return
             
@@ -1199,13 +1342,8 @@ class DomainRotationMixin:
                 wait_time = random.uniform(2, 5)
                 time.sleep(wait_time)
                 
-            old_base = self.base_domain
-            self.current_domain_idx = (self.current_domain_idx + 1) % len(self.domains)
-            self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
-            if old_base and getattr(self, "base_list_url", None):
-                self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
-            else:
-                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            next_idx = (self.current_domain_idx + 1) % len(self.domains)
+            self._update_base_domain(next_idx)
             self._domain_cooldown.pop(self.domains[self.current_domain_idx], None)
             self.log.warning("[!] 冷却结束，%s 域名切换至: %s", self.source_name.upper(), self.base_domain)
 
@@ -1221,13 +1359,10 @@ class DomainRotationMixin:
         Returns:
             True 如果域名列表已更新，False 如果无变化或未检测到跳转页
         """
-        if not content or "正在检测" not in content:
+        if not content or ("正在检测" not in content and "available_domain_html" not in content and "403 Forbidden" not in content):
             return False
         
-        import re
-        # 匹配域名格式
-        pattern = getattr(self, "domain_pattern", r'([a-z]{2,5}\.\d{5,7}\.xyz)')
-        new_domains = re.findall(pattern, content)
+        new_domains = self._extract_domains_from_text(content)
         if not new_domains:
             self.log.warning("[!] 检测到跳转页面但未能提取到域名")
             return False
@@ -1249,13 +1384,7 @@ class DomainRotationMixin:
             
             old_domains = self.domains[:]
             self.domains = unique_domains
-            self.current_domain_idx = 0
-            old_base = self.base_domain
-            self.base_domain = f"https://{self.domains[0]}"
-            if old_base and getattr(self, "base_list_url", None):
-                self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
-            else:
-                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            self._update_base_domain(0)
             self._domain_cooldown.clear()
             
             added = new_set - old_set
@@ -1329,7 +1458,7 @@ class DomainRotationMixin:
                         page.close()
                     except Exception:
                         pass
-
+ 
         try:
             with ThreadPoolExecutor(max_workers=2) as executor:
                 fut_curl = executor.submit(_curl_fetch)
@@ -1373,12 +1502,10 @@ class DomainRotationMixin:
             
         content_to_parse = decrypted if decrypted else html
         
-        # 5. 提取域名
-        import re
-        pattern = getattr(self, "domain_pattern", r'([a-z]{2,5}\.\d{5,7}\.xyz)')
-        new_domains = re.findall(pattern, content_to_parse)
+        # 5. 提取域名（支持明文与 Base64 编码）
+        new_domains = self._extract_domains_from_text(content_to_parse)
         if not new_domains:
-            self.log.warning("[!] 未能在主站内容中匹配提取到镜像域名 (正则: %s)", pattern)
+            self.log.warning("[!] 未能在主站内容中匹配提取到镜像域名")
             return False
             
         # 去重并保留顺序，排除主站本身
@@ -1397,13 +1524,7 @@ class DomainRotationMixin:
             
         with self._domain_lock:
             self.domains = unique_domains
-            self.current_domain_idx = 0
-            old_base = self.base_domain
-            self.base_domain = f"https://{self.domains[0]}"
-            if old_base and getattr(self, "base_list_url", None):
-                self.base_list_url = self.base_list_url.replace(old_base, self.base_domain)
-            else:
-                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            self._update_base_domain(0)
             self._domain_cooldown.clear()
             
         self.log.info("[+] 成功从主站拉取并更新了 %s 个最新域名:", len(unique_domains))

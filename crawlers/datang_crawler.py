@@ -15,7 +15,7 @@ class DatangCrawler(DecryptSiteBaseCrawler):
             source_name="datang",
             categories=["guochan", "wuma", "oumei"],
             main_domain="https://dtbt7.com",
-            domain_pattern=r'([a-z]{2,5}\.\d{5,7}\.xyz)',
+            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
         )
         super().__init__(db_manager, "datang", config=config)
         self.current_class = "guochan"
