@@ -200,7 +200,7 @@ class BaseCrawler:
         return False
 
     def _write_crawler_summary(self):
-        """保存爬虫运行摘要 JSON 并写入 GitHub Step Summary"""
+        """保存爬虫运行摘要 JSON 并供汇总 Job 使用"""
         os.makedirs("logs", exist_ok=True)
         duration_str = self.format_elapsed_time(time.time() - self.start_time) if self.start_time else "0秒"
         summary_data = {
@@ -220,24 +220,6 @@ class BaseCrawler:
                 json.dump(summary_data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             self.log.warning("保存爬虫运行摘要 JSON 失败: %s", e)
-
-        step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
-        if step_summary:
-            try:
-                status_str = "🔴 **已触发熔断**" if self.circuit_breaker_tripped else "🟢 **正常完成**"
-                reason_str = f"⚠️ {self.circuit_breaker_reason}" if self.circuit_breaker_tripped else "正常完成"
-                content = [
-                    f"### 🕷️ 爬虫运行总结: `{self.source_name}`",
-                    "",
-                    "| 爬虫模块 | 运行状态 | 入库条数 | 跳过/重复 | 成功抓取页数 | 失败/空页数 | 耗时 | 备注 / 诊断 |",
-                    "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |",
-                    f"| `{self.source_name}` | {status_str} | {self.total_inserted_count} | {self.total_skipped_count} | {self.total_crawled_pages} | {self.total_failed_pages} | {duration_str} | {reason_str} |",
-                    ""
-                ]
-                with open(step_summary, "a", encoding="utf-8") as f:
-                    f.write("\n".join(content) + "\n")
-            except Exception as e:
-                self.log.warning("写入 GITHUB_STEP_SUMMARY 失败: %s", e)
 
     def on_start(self):
         """生命周期钩子：爬网开始前（子类可选覆盖）"""
