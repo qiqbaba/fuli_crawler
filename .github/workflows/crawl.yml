@@ -293,53 +293,7 @@ jobs:
           wc -l "$MERGED"
 
           # 解析所有爬虫的运行摘要 JSON，汇总到 GITHUB_STEP_SUMMARY 并提取熔断列表
-          python -c "
-          import glob
-          import json
-          import os
-
-          summary_files = glob.glob('downloaded-stats/summary_*.json')
-          summaries = []
-          circuit_broken = []
-
-          for sf in sorted(summary_files):
-              try:
-                  with open(sf, 'r', encoding='utf-8') as f:
-                      data = json.load(f)
-                      summaries.append(data)
-                      if data.get('circuit_break'):
-                          circuit_broken.append(data.get('crawler', 'unknown'))
-              except Exception as e:
-                  print(f'Error reading {sf}: {e}')
-
-          step_summary = os.environ.get('GITHUB_STEP_SUMMARY')
-          if step_summary and summaries:
-              tot_ins = sum(s.get('total_inserted', 0) for s in summaries)
-              tot_skp = sum(s.get('total_skipped', 0) for s in summaries)
-              tot_pgs = sum(s.get('total_crawled_pages', 0) for s in summaries)
-              tot_fpgs = sum(s.get('total_failed_pages', 0) for s in summaries)
-
-              with open(step_summary, 'a', encoding='utf-8') as f:
-                  f.write('## 🚀 爬虫任务运行汇总\n\n')
-                  f.write('| 爬虫模块 | 运行状态 | 入库条数 | 跳过/重复 | 成功抓取页数 | 失败/空页数 | 耗时 | 备注 / 诊断 |\n')
-                  f.write('| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |\n')
-                  for s in summaries:
-                      status = '🔴 **已熔断**' if s.get('circuit_break') else '🟢 **正常完成**'
-                      cname = s.get('crawler', '')
-                      ins = s.get('total_inserted', 0)
-                      skp = s.get('total_skipped', 0)
-                      pgs = s.get('total_crawled_pages', 0)
-                      fpgs = s.get('total_failed_pages', 0)
-                      dur = s.get('duration', '-')
-                      rsn = f'⚠️ {s.get(\"circuit_break_reason\")}' if s.get('circuit_break') else '正常完成'
-                      f.write(f'| `{cname}` | {status} | {ins} | {skp} | {pgs} | {fpgs} | {dur} | {rsn} |\n')
-                  if len(summaries) > 1:
-                      f.write(f'| **总计 ({len(summaries)} 个模块)** | - | **{tot_ins}** | **{tot_skp}** | **{tot_pgs}** | **{tot_fpgs}** | - | - |\n')
-                  f.write('\n')
-
-          with open('stats/circuit_break_crawlers.txt', 'w', encoding='utf-8') as f:
-              f.write(','.join(circuit_broken))
-          "
+          python utils/merge_summary.py
 
           CB_CRAWLERS=$(cat stats/circuit_break_crawlers.txt 2>/dev/null || echo "")
 

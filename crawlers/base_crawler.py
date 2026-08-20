@@ -95,6 +95,8 @@ class BaseCrawler:
         self.max_consecutive_failed_pages = 5  # 连续5页抓取失败或无有效数据时触发熔断
         self.circuit_breaker_tripped = False
         self.circuit_breaker_reason = ""
+        self.failed_categories: List[str] = []  # 记录连续失败跳过的子板块
+        self.completed_categories: List[str] = []  # 记录正常完成的子板块
         self.total_inserted_count = 0
         self.total_skipped_count = 0
         self.total_failed_pages = 0
@@ -183,18 +185,28 @@ class BaseCrawler:
 
         return url, None
 
-    def _check_circuit_breaker(self, consecutive_failed_pages: int, page_num: int, class_name: Optional[str] = None) -> bool:
-        """检查并触发爬虫连续失败熔断机制"""
+    def _check_circuit_breaker(self, consecutive_failed_pages: int, page_num: int, class_name: Optional[str] = None, is_multi_category: bool = False) -> bool:
+        """检查并触发连续失败熔断机制或多板块级隔离跳过"""
         if self.max_consecutive_failed_pages is not None and consecutive_failed_pages >= self.max_consecutive_failed_pages:
-            self.circuit_breaker_tripped = True
             section_info = f"板块: {class_name}, " if class_name else ""
             reason = f"连续 {consecutive_failed_pages} 页未提取到有效项或网络超时 (在 {section_info}第 {page_num} 页触发)"
+            
+            # 多板块爬虫：若为多板块任务中的子板块连续失败，进行板块级故障隔离，记录并跳过该板块，避免直接杀死整个爬虫任务
+            if is_multi_category and class_name:
+                if class_name not in self.failed_categories:
+                    self.failed_categories.append(class_name)
+                self.log.warning("\n" + "=" * 60)
+                self.log.warning("⚠️ [板块连续失败跳过] 爬虫 [%s] %s，已跳过当前板块 [%s]，继续后续任务！", self.source_name, reason, class_name)
+                self.log.warning("=" * 60)
+                print(f"::warning title=板块抓取失败跳过 [{self.source_name}]::[{self.source_name}] {reason}，已跳过板块 [{class_name}]", flush=True)
+                return True
+
+            # 单板块爬虫或全局熔断
+            self.circuit_breaker_tripped = True
             self.circuit_breaker_reason = reason
             self.log.critical("\n" + "=" * 60)
             self.log.critical("🚨 [爬虫熔断触发] 爬虫 [%s] %s，已强制终止爬取！", self.source_name, reason)
             self.log.critical("=" * 60)
-            
-            # 方案 1: 输出 GitHub Actions Annotation 错误警告（在 Actions 运行首页顶部高亮展示）
             print(f"::error title=爬虫熔断报警 [{self.source_name}]::[{self.source_name}] {reason}，已触发熔断终止！", flush=True)
             return True
         return False
@@ -203,11 +215,20 @@ class BaseCrawler:
         """保存爬虫运行摘要 JSON 并供汇总 Job 使用"""
         os.makedirs("logs", exist_ok=True)
         duration_str = self.format_elapsed_time(time.time() - self.start_time) if self.start_time else "0秒"
+        
+        status = "success"
+        if self.circuit_breaker_tripped:
+            status = "circuit_break"
+        elif self.failed_categories:
+            status = "partial_success"
+
         summary_data = {
             "crawler": self.source_name,
-            "status": "circuit_break" if self.circuit_breaker_tripped else "success",
+            "status": status,
             "circuit_break": self.circuit_breaker_tripped,
             "circuit_break_reason": self.circuit_breaker_reason,
+            "failed_categories": self.failed_categories,
+            "completed_categories": self.completed_categories,
             "total_crawled_pages": self.total_crawled_pages,
             "total_failed_pages": self.total_failed_pages,
             "total_inserted": self.total_inserted_count,
@@ -641,6 +662,7 @@ class BaseCrawler:
         from config import is_local_mode
         is_gha = not is_local_mode()
         early_break = False
+        is_multi_category = bool(class_name and hasattr(self, 'get_categories') and len(self.get_categories()) > 1)
 
         if not hasattr(self, 'start_time') or self.start_time is None:
             self.start_time = time.time()
@@ -658,7 +680,7 @@ class BaseCrawler:
                     consecutive_failed_pages += 1
                     self.total_failed_pages += 1
                     self.log.error("页面 %s 抓取失败或无内容 (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
-                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name):
+                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category):
                         early_break = True
                         break
                     continue
@@ -668,7 +690,7 @@ class BaseCrawler:
                     consecutive_failed_pages += 1
                     self.total_failed_pages += 1
                     self.log.error("页面 %s 未提取到有效项 (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
-                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name):
+                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category):
                         early_break = True
                         break
                     time.sleep(random.uniform(1.0, 2.0))
@@ -870,7 +892,7 @@ class BaseCrawler:
                     else:
                         self.log.info("[*] 未检测到历史断点，从头开始爬取")
 
-                for category in categories:
+                for idx, category in enumerate(categories):
                     if self.circuit_breaker_tripped:
                         self.log.warning("[*] 熔断机制已触发，跳过后续板块: %s", category)
                         break
@@ -888,18 +910,32 @@ class BaseCrawler:
                     else:
                         actual_start = start_page
 
+                    # 板块间冷却等待（非首个执行板块）
+                    if idx > 0 and self.completed_categories:
+                        cooldown_secs = random.uniform(5.0, 10.0)
+                        self.log.info("\n[*] 上一板块已结束，执行板块间冷却等待 %.1f 秒...", cooldown_secs)
+                        time.sleep(cooldown_secs)
+
                     self.before_category_crawl(category)
                     self.log.info("\n[*] ================= 开始爬取板块: %s (起始页码: %s) =================", category, actual_start)
                     self._crawl_pages(actual_start, end_page, max_workers, class_name=category)
                     
+                    if category not in self.failed_categories:
+                        self.completed_categories.append(category)
+
                     if self.circuit_breaker_tripped:
-                        self.log.warning("[*] 板块 %s 触发熔断，中止全部后续板块爬取", category)
+                        self.log.warning("[*] 触发全局熔断，中止全部后续板块爬取")
                         break
 
                     if resume and category == resume_category:
                         resume_category = None
                 
-                if not is_test and resume and not self.circuit_breaker_tripped:
+                # 如果所有尝试过的板块全部失败且没有任何数据入库，则标记全局熔断
+                if self.failed_categories and not self.completed_categories and self.total_inserted_count == 0:
+                    self.circuit_breaker_tripped = True
+                    self.circuit_breaker_reason = f"所有板块抓取均失败 ({', '.join(self.failed_categories)})"
+
+                if not is_test and resume and not self.circuit_breaker_tripped and not self.failed_categories:
                     self.db_manager.mark_source_completed(self.source_name)
                     self.log.info("[+] %s 所有板块爬取完成，已标记完成状态", self.source_name)
             else:
@@ -1612,10 +1648,13 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 self.log.warning("[!] 域名列表为空且从主站获取失败，无法继续抓取")
                 return None
 
+        consecutive_ssl_or_403_domains = 0
+
         for _ in range(len(self.domains)):
             url = self._get_full_list_url(page_num)
             headers = self._build_headers()
             redirect_content = None
+            domain_hit_anti_bot = False
 
             for attempt in range(3):
                 proxies = None
@@ -1635,19 +1674,33 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                             redirect_content = response.text
                     elif response.status_code == 403:
                         self.log.warning("[!] 列表页返回 403，疑似触发反爬: %s", url)
+                        domain_hit_anti_bot = True
                         if proxies and is_proxy_manager_enabled():
                             from utils.proxy_manager import get_proxy_manager
                             manager = get_proxy_manager()
                             if manager and "http" in proxies:
-                                manager.report_failure(proxies["http"])
+                                manager.report_failure(proxies["http"], source=self.source_name)
                         break
-                except Exception:
+                except Exception as e:
+                    err_msg = str(e).lower()
+                    if "ssl" in err_msg or "tls" in err_msg or "certificate" in err_msg or "handshake" in err_msg or "403" in err_msg:
+                        self.log.warning("[!] 请求列表页发生 TLS/SSL 连接异常或反爬 (%s): %s", url, e)
+                        domain_hit_anti_bot = True
                     if proxies and is_proxy_manager_enabled():
                         from utils.proxy_manager import get_proxy_manager
                         manager = get_proxy_manager()
                         if manager and "http" in proxies:
-                            manager.report_failure(proxies["http"])
-                time.sleep(random.uniform(2.0, 4.0))
+                            manager.report_failure(proxies["http"], source=self.source_name)
+                time.sleep(random.uniform(1.5, 3.0))
+
+            if domain_hit_anti_bot:
+                consecutive_ssl_or_403_domains += 1
+                # 如果连续 2 个域名都遇到 403/SSL 握手重置，提前尝试从主站拉取最新可用镜像
+                if consecutive_ssl_or_403_domains >= 2 and getattr(self, 'main_domain', None) and retry_with_main:
+                    self.log.warning("[!] 连续多个镜像域名触发 403/TLS 异常，提前尝试从主站拉取最新域名列表...")
+                    if self._fetch_domains_from_main_station():
+                        self.log.info("[+] 成功从主站拉取到新域名，开始重新尝试请求列表页...")
+                        return self.fetch_list_page(page_num, retry_with_main=False)
 
             # Playwright 兜底
             self.log.info("[*] 使用 Playwright 兜底访问列表页: %s", url)
@@ -1675,7 +1728,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                     if manager:
                         proxy_url = manager._thread_proxy_map.get(threading.get_ident())
                         if proxy_url:
-                            manager.report_failure(proxy_url)
+                            manager.report_failure(proxy_url, source=self.source_name)
                 self._destroy_thread_resources()
 
             if redirect_content and self._update_domains_from_redirect(redirect_content):
@@ -1683,7 +1736,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 continue
 
             self.log.warning("[!] 当前域名疑似被封，冷却等待后切换...")
-            time.sleep(random.uniform(8.0, 15.0))
+            time.sleep(random.uniform(4.0, 8.0))
             self._rotate_domain()
 
         if getattr(self, 'main_domain', None) and retry_with_main:
@@ -1704,6 +1757,12 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
     def before_category_crawl(self, category):
         """爬取分类前的准备工作，覆盖父类"""
         self.current_class = category
+        # 切换板块时重置并主动轮换到未冷却的活跃镜像域名，释放旧连接
+        if hasattr(self, "domains") and len(self.domains) > 1:
+            self._rotate_domain()
+            self.log.info("[*] 切换至板块 [%s]，已主动轮换基准域名为: %s", category, self.base_domain)
+        if hasattr(self, "_destroy_thread_resources"):
+            self._destroy_thread_resources()
 
     def get_default_max_workers(self):
         """根据爬虫类型获取默认并发数，覆盖父类"""

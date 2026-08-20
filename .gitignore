@@ -52,7 +52,9 @@ decrypted_*.html
 raw_*.html
 datang_top10.txt
 proxies.txt
+stats/circuit_break_crawlers.txt
 
 temp_profiles/
 /upload_to_dynamodb.py
+
 
