@@ -14,7 +14,7 @@ class TaoseCrawler(DecryptSiteBaseCrawler):
         config = CrawlConfig(
             source_name="taose",
             categories=["guochan", "oumei"],
-            initial_domains=["ctk.558226.xyz", "hyx.396225.xyz", "ckp.635599.xyz"],
+            initial_domains=["pdr.292368.xyz", "udt.399695.xyz", "miy.282969.xyz"],
             main_domain="https://taosebt.com",
             domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
         )
@@ -69,29 +69,53 @@ class TaoseCrawler(DecryptSiteBaseCrawler):
 
     def _is_valid_list_page(self, html):
         """判断 Playwright 兜底时页面是否有效"""
-        return 'class="list"' in html or "class='list'" in html or "桃色BT" in html
+        return 'class="movie_list"' in html or 'class="list"' in html or "class='list'" in html or "桃色BT" in html or "list.php" in html
 
     def parse_list_page(self, list_page_content, page_num):
         """解析解密后的列表页，提取条目信息"""
         soup = BeautifulSoup(list_page_content, "lxml")
-        ul = soup.find('ul', class_='list')
+        
+        # 1. 优先按传统类名查找
+        ul = soup.find('ul', class_='list') or soup.find('ul', class_='bt_ul')
+        
+        # 2. 适配新版结构：从 <div class="movie_list"> 容器查找 <ul>
+        if not ul:
+            movie_list_div = soup.find('div', class_='movie_list')
+            if movie_list_div:
+                ul = movie_list_div.find('ul')
+
+        # 3. 兜底查找：遍历所有 ul，排除 pagination 分页控件，匹配详情链接 (支持 /html/ 与 movie.php)
+        if not ul:
+            for u in soup.find_all('ul'):
+                classes = u.get('class') or []
+                if 'pagination' in classes:
+                    continue
+                if u.find('a', href=re.compile(r'(/html/|movie\.php\?)')):
+                    ul = u
+                    break
+
         if not ul:
             return []
 
         parsed_items = []
         rows = ul.find_all('li')
         for li in rows:
+            # 提取日期：优先读取 <span class="date">，兼容正则
             date_str = ""
-            li_text = li.get_text()
-            date_match = re.search(r"\[(\d{2}-\d{2})\]", li_text)
-            if date_match:
-                date_str = date_match.group(1)
+            date_span = li.find(class_='date')
+            if date_span:
+                date_str = date_span.get_text().strip()
+            else:
+                li_text = li.get_text()
+                date_match = re.search(r"\[?(\d{2}-\d{2})\]?", li_text)
+                if date_match:
+                    date_str = date_match.group(1)
 
             a = li.find('a')
             if not a:
                 continue
             href = a.get('href', '')
-            if not href:
+            if not href or href.startswith('javascript:'):
                 continue
             url = urljoin(self.base_domain, href)
 
@@ -99,8 +123,8 @@ class TaoseCrawler(DecryptSiteBaseCrawler):
             title = ""
             script = a.find('script')
             if script:
-                script_text = script.string or ""
-                title_match = re.search(r"d\(['\"](.*?)['\"]\)", script_text)
+                script_text = script.string or script.get_text() or ""
+                title_match = re.search(r"d\(['\"](.*?)['\"]", script_text)
                 if title_match:
                     encrypted_title = title_match.group(1)
                     title = self.decrypt_title(encrypted_title)

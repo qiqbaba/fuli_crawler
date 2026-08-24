@@ -1668,12 +1668,14 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         decrypted = self.decrypt_html(response.text)
                         if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                             return decrypted
-                        if decrypted and "正在检测" in decrypted:
+                        if decrypted and ("正在检测" in decrypted or "403 Forbidden" in decrypted or "js.php?jump" in decrypted or "available_domain" in decrypted):
                             redirect_content = decrypted
-                        elif "正在检测" in response.text:
+                        elif "正在检测" in response.text or "403 Forbidden" in response.text or "js.php?jump" in response.text or "available_domain" in response.text:
                             redirect_content = response.text
                     elif response.status_code == 403:
                         self.log.warning("[!] 列表页返回 403，疑似触发反爬: %s", url)
+                        if response.text and ("js.php?jump" in response.text or "atob" in response.text):
+                            redirect_content = response.text
                         domain_hit_anti_bot = True
                         if proxies and is_proxy_manager_enabled():
                             from utils.proxy_manager import get_proxy_manager
@@ -1716,9 +1718,9 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 decrypted = self.decrypt_html(html)
                 if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                     return decrypted
-                if decrypted and "正在检测" in decrypted:
+                if decrypted and ("正在检测" in decrypted or "403 Forbidden" in decrypted or "js.php?jump" in decrypted or "available_domain" in decrypted):
                     redirect_content = decrypted
-                elif "正在检测" in html:
+                elif "正在检测" in html or "403 Forbidden" in html or "js.php?jump" in html or "available_domain" in html:
                     redirect_content = html
             except Exception as e:
                 self.log.error("[-] Playwright 兜底抓取列表页异常: %s", e)
@@ -1880,12 +1882,14 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                             detail_html = decrypted
                             break
-                        if decrypted and "正在检测" in decrypted:
+                        if decrypted and ("正在检测" in decrypted or "403 Forbidden" in decrypted or "js.php?jump" in decrypted or "available_domain" in decrypted):
                             redirect_content = decrypted
-                        elif "正在检测" in response.text:
+                        elif "正在检测" in response.text or "403 Forbidden" in response.text or "js.php?jump" in response.text or "available_domain" in response.text:
                             redirect_content = response.text
                     elif response.status_code == 403:
                         self.log.warning("[!] 详情页返回 403，疑似触发反爬: %s", url)
+                        if response.text and ("js.php?jump" in response.text or "atob" in response.text):
+                            redirect_content = response.text
                         break
                 except Exception:
                     pass
@@ -1912,9 +1916,9 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                         if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                             detail_html = decrypted
                             break
-                        if decrypted and "正在检测" in decrypted:
+                        if decrypted and ("正在检测" in decrypted or "403 Forbidden" in decrypted or "js.php?jump" in decrypted or "available_domain" in decrypted):
                             redirect_content = decrypted
-                        elif "正在检测" in html:
+                        elif "正在检测" in html or "403 Forbidden" in html or "js.php?jump" in html or "available_domain" in html:
                             redirect_content = html
                 except Exception as e:
                     self.log.error("[-] Playwright 兜底抓取详情页异常 (%s): %s", url, e)
