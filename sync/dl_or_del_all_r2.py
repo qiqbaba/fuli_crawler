@@ -521,7 +521,7 @@ def main():
     script_start_time = time.time()
     parser = argparse.ArgumentParser(description="从 Cloudflare R2 下载所有 PDF 到本地")
     parser.add_argument("--output", "-o", default=None,
-                        help="本地输出目录 (默认: 当前目录下的 r2_pdfs)")
+                        help="本地输出目录 (默认: 项目根目录下的 pdf/)")
     parser.add_argument("--year", "-y", default=None,
                         help="只下载指定年份 (如 2025)")
     parser.add_argument("--max", "-m", type=int, default=None,
@@ -544,17 +544,16 @@ def main():
                         help="仅执行删除操作，不下载（可配合 --year/--delete-prefix/--dry-run/--delete-force 使用）")
     args = parser.parse_args()
 
-    # 确定输出目录
-    if args.output:
-        output_dir = args.output
-    else:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        output_dir = os.path.join(script_dir, "r2_pdfs")
-
-    # 爬虫保存 PDF 的目录（项目根目录下的 pdf/），用于检测本地副本
+    # 爬虫/下载保存 PDF 的目录（项目根目录下的 pdf/）
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)  # sync/ 的上一级
     pdf_dir = os.path.join(project_root, "pdf")
+
+    # 确定输出目录（默认保存到项目根目录下的 pdf/，与本地对比目录一致）
+    if args.output:
+        output_dir = args.output
+    else:
+        output_dir = pdf_dir
 
     # ========== 交互模式：没有指定任何操作时，询问用户 ==========
     if not args.delete_only and not args.delete:

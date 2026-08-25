@@ -30,6 +30,13 @@ CRAWLER_ORDER = [
     "mianfei_guochan",
 ]
 
+# 板块失败原因类型 -> 展示文案
+CATEGORY_REASON_LABELS = {
+    "network": "网络请求失败/超时",
+    "empty_parse": "解析为空/结构变更",
+    "unknown": "原因未知",
+}
+
 
 def merge_summaries(
     stats_dir: str = "downloaded-stats",
@@ -102,7 +109,11 @@ def merge_summaries(
                 rsn = f"⚠️ {reason}"
             elif failed_cats or status_str == "partial_success":
                 status = "🟡 **部分完成**"
-                skipped_info = ", ".join(failed_cats)
+                failed_reasons = s.get("failed_category_reasons", {}) or {}
+                skipped_info = ", ".join(
+                    f"{cat}({CATEGORY_REASON_LABELS.get(failed_reasons.get(cat, 'unknown'), '原因未知')})"
+                    for cat in failed_cats
+                )
                 if completed_cats:
                     comp_info = ", ".join(completed_cats)
                     rsn = f"⚠️ 跳过异常板块: {skipped_info} (已完成: {comp_info})"

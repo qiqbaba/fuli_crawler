@@ -88,6 +88,8 @@ jobs:
         with:
           path: temp_profiles/
           key: proxy-cache-latest
+          restore-keys: |
+            proxy-cache-
 
       - name: 抓取并验证代理（供所有爬虫共享）
         run: |
@@ -101,24 +103,42 @@ jobs:
               print('代理管理器未启用')
           "
 
-      - name: 删除旧的代理缓存（避免堆积）
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: 清理临时浏览器 profile（仅保留代理缓存数据库，防止缓存无限膨胀）
         run: |
-          CACHE_ID=$(gh actions cache list --key proxy-cache-latest --repo ${{ github.repository }} --json id --jq '.[0].id' 2>/dev/null || echo "")
-          if [ -n "$CACHE_ID" ]; then
-            gh actions cache delete "$CACHE_ID" --repo ${{ github.repository }}
-            echo "已删除旧缓存 (ID: $CACHE_ID)"
-          else
-            echo "没有找到旧缓存，跳过删除"
+          if [ -d temp_profiles ]; then
+            # profile_* 为浏览器持久化上下文目录，体积大且跨运行无复用价值，爬虫 job 会自行重建
+            find temp_profiles -maxdepth 1 -type d -name 'profile_*' -exec rm -rf {} + || true
           fi
+          echo "temp_profiles 清理后内容:"
+          ls -la temp_profiles/ 2>/dev/null || true
+          echo "清理后大小: $(du -sh temp_profiles 2>/dev/null | cut -f1 || echo '0M')"
 
-      - name: 保存代理 IP 缓存（共享，始终使用固定 key）
+      - name: 保存代理 IP 缓存（唯一键，绝不与旧缓存冲突）
+        continue-on-error: true   # 缓存保存失败不阻塞爬虫运行（爬虫会回退到独立获取）
         uses: actions/cache/save@v4.2.3
         with:
           path: temp_profiles/
-          key: proxy-cache-latest
+          key: proxy-cache-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: 删除旧的代理缓存（保留本次最新，防止配额堆积）
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_KEY: proxy-cache-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          OLD_IDS=$(gh api "repos/${{ github.repository }}/actions/caches?per_page=100" --paginate \
+            --jq '.actions_caches[] | select(.key != $ENV.CURRENT_KEY and (.key | startswith("proxy-cache-"))) | .id' 2>/dev/null || echo "")
+          if [ -z "$OLD_IDS" ]; then
+            echo "没有需要清理的旧代理缓存"
+          else
+            for CID in $OLD_IDS; do
+              if gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$CID" >/dev/null 2>&1; then
+                echo "已删除旧缓存 (ID: $CID)"
+              else
+                echo "删除旧缓存失败 (ID: $CID)，忽略"
+              fi
+            done
+          fi
 
   # ========== 爬虫并行 job ==========
   crawl:
@@ -167,6 +187,8 @@ jobs:
         with:
           path: temp_profiles/
           key: proxy-cache-latest
+          restore-keys: |
+            proxy-cache-
 
       - name: 安装 Python 依赖与 Playwright Chromium 浏览器
         run: |

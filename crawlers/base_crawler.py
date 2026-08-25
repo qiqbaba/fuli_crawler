@@ -6,7 +6,7 @@ import csv
 import random
 import threading
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Dict
 from utils.pdf_generator import PDFGenerator, PDFRenderConfig
 from utils.date_parser import parse_date
 from utils.metadata_parser import parse_title, parse_link_metadata, parse_pikpak_link
@@ -96,7 +96,9 @@ class BaseCrawler:
         self.circuit_breaker_tripped = False
         self.circuit_breaker_reason = ""
         self.failed_categories: List[str] = []  # 记录连续失败跳过的子板块
+        self.failed_category_reasons: Dict[str, str] = {}  # 板块 -> 失败原因类型: network(网络请求失败/超时) / empty_parse(页面解析为空)
         self.completed_categories: List[str] = []  # 记录正常完成的子板块
+        self.category_retry_cooldown = 60  # 板块级补救重试前的冷却秒数
         self.total_inserted_count = 0
         self.total_skipped_count = 0
         self.total_failed_pages = 0
@@ -185,16 +187,27 @@ class BaseCrawler:
 
         return url, None
 
-    def _check_circuit_breaker(self, consecutive_failed_pages: int, page_num: int, class_name: Optional[str] = None, is_multi_category: bool = False) -> bool:
-        """检查并触发连续失败熔断机制或多板块级隔离跳过"""
+    def _check_circuit_breaker(self, consecutive_failed_pages: int, page_num: int, class_name: Optional[str] = None, is_multi_category: bool = False, fail_type: str = "unknown") -> bool:
+        """检查并触发连续失败熔断机制或多板块级隔离跳过
+
+        fail_type: 本次触发熔断的失败原因类型
+            - "network": 列表页网络请求失败/超时 (fetch_list_page 返回空)
+            - "empty_parse": 页面抓取成功但解析不到有效条目
+        """
         if self.max_consecutive_failed_pages is not None and consecutive_failed_pages >= self.max_consecutive_failed_pages:
             section_info = f"板块: {class_name}, " if class_name else ""
-            reason = f"连续 {consecutive_failed_pages} 页未提取到有效项或网络超时 (在 {section_info}第 {page_num} 页触发)"
-            
+            if fail_type == "network":
+                reason = f"连续 {consecutive_failed_pages} 页列表页网络请求失败或超时 (在 {section_info}第 {page_num} 页触发)"
+            elif fail_type == "empty_parse":
+                reason = f"连续 {consecutive_failed_pages} 页未提取到有效条目，页面可能为空或结构变更 (在 {section_info}第 {page_num} 页触发)"
+            else:
+                reason = f"连续 {consecutive_failed_pages} 页未提取到有效项或网络超时 (在 {section_info}第 {page_num} 页触发)"
+
             # 多板块爬虫：若为多板块任务中的子板块连续失败，进行板块级故障隔离，记录并跳过该板块，避免直接杀死整个爬虫任务
             if is_multi_category and class_name:
                 if class_name not in self.failed_categories:
                     self.failed_categories.append(class_name)
+                self.failed_category_reasons[class_name] = fail_type
                 self.log.warning("\n" + "=" * 60)
                 self.log.warning("⚠️ [板块连续失败跳过] 爬虫 [%s] %s，已跳过当前板块 [%s]，继续后续任务！", self.source_name, reason, class_name)
                 self.log.warning("=" * 60)
@@ -228,6 +241,7 @@ class BaseCrawler:
             "circuit_break": self.circuit_breaker_tripped,
             "circuit_break_reason": self.circuit_breaker_reason,
             "failed_categories": self.failed_categories,
+            "failed_category_reasons": self.failed_category_reasons,
             "completed_categories": self.completed_categories,
             "total_crawled_pages": self.total_crawled_pages,
             "total_failed_pages": self.total_failed_pages,
@@ -659,6 +673,8 @@ class BaseCrawler:
         consecutive_subpage_count = 0
         consecutive_duplicate_pages = 0
         consecutive_failed_pages = 0
+        fetch_fail_pages = 0  # 本次循环中"网络请求失败"页数累计
+        empty_parse_pages = 0  # 本次循环中"解析为空"页数累计
         from config import is_local_mode
         is_gha = not is_local_mode()
         early_break = False
@@ -679,8 +695,9 @@ class BaseCrawler:
                 if not list_content:
                     consecutive_failed_pages += 1
                     self.total_failed_pages += 1
-                    self.log.error("页面 %s 抓取失败或无内容 (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
-                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category):
+                    fetch_fail_pages += 1
+                    self.log.error("页面 %s 抓取失败或无内容 [网络/请求失败] (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
+                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category, fail_type="network"):
                         early_break = True
                         break
                     continue
@@ -689,8 +706,9 @@ class BaseCrawler:
                 if not raw_items:
                     consecutive_failed_pages += 1
                     self.total_failed_pages += 1
-                    self.log.error("页面 %s 未提取到有效项 (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
-                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category):
+                    empty_parse_pages += 1
+                    self.log.error("页面 %s 未提取到有效项 [解析为空] (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
+                    if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category, fail_type="empty_parse"):
                         early_break = True
                         break
                     time.sleep(random.uniform(1.0, 2.0))
@@ -817,6 +835,66 @@ class BaseCrawler:
         else:
             return 50
 
+    def _get_category_resume_page(self, category, start_page, end_page):
+        """获取指定板块的断点页码（供板块级补救重试使用，避免重爬已入库数据触发早停）"""
+        try:
+            states = self.db_manager.load_crawl_state(self.source_name) or {}
+            state = states.get(category)
+            if state:
+                saved_page = int(state.get("page_num", start_page))
+                if start_page <= saved_page <= end_page:
+                    return saved_page
+        except Exception:
+            pass
+        return start_page
+
+    def _retry_failed_categories(self, categories, start_page, end_page, max_workers):
+        """板块级补救重试：对首轮因连续失败被跳过的板块再尝试一次
+
+        重试前清空域名冷却并尝试从主站刷新最新镜像；每个板块从其已保存的断点页继续。
+        重试成功则从 failed_categories 中移除并记入 completed_categories，失败则保留跳过标记。
+        """
+        retry_categories = list(self.failed_categories)
+        cooldown = getattr(self, "category_retry_cooldown", 60)
+        self.log.warning(
+            "\n[补救重试] 检测到 %s 个板块首轮抓取失败被跳过: %s，冷却 %s 秒后进行一次补救重试...",
+            len(retry_categories), ", ".join(retry_categories), cooldown
+        )
+        time.sleep(cooldown)
+
+        # 重试前重置域名冷却，并尝试从主站拉取最新可用镜像域名
+        if hasattr(self, "_domain_cooldown"):
+            self._domain_cooldown.clear()
+        if getattr(self, "main_domain", None) and hasattr(self, "_fetch_domains_from_main_station"):
+            try:
+                self._fetch_domains_from_main_station()
+            except Exception as e:
+                self.log.warning("[补救重试] 从主站刷新域名列表失败: %s", e)
+
+        for category in retry_categories:
+            if self.circuit_breaker_tripped:
+                self.log.warning("[补救重试] 熔断已触发，终止剩余板块重试")
+                break
+
+            retry_start = self._get_category_resume_page(category, start_page, end_page)
+            self.log.info("\n[补救重试] ================= 重试板块: %s (起始页码: %s) =================", category, retry_start)
+
+            # 先移除失败标记：重试成功则保持移除，若再次失败会被重新加入
+            if category in self.failed_categories:
+                self.failed_categories.remove(category)
+            self.failed_category_reasons.pop(category, None)
+
+            self.before_category_crawl(category)
+            self._crawl_pages(retry_start, end_page, max_workers, class_name=category)
+
+            if category not in self.failed_categories:
+                if category not in self.completed_categories:
+                    self.completed_categories.append(category)
+                self.log.info("[补救重试] 板块 %s 重试成功", category)
+            else:
+                self.log.warning("[补救重试] 板块 %s 重试仍失败，保持跳过标记 (原因: %s)",
+                                 category, self.failed_category_reasons.get(category, "未知"))
+
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """
         统一的爬虫执行骨架，支持多板块爬取
@@ -929,7 +1007,14 @@ class BaseCrawler:
 
                     if resume and category == resume_category:
                         resume_category = None
-                
+
+                # ========== 板块级补救重试：对首轮被跳过的板块再尝试一次 ==========
+                if self.failed_categories and not self.circuit_breaker_tripped:
+                    try:
+                        self._retry_failed_categories(categories, start_page, end_page, max_workers)
+                    except Exception as e:
+                        self.log.error("[补救重试] 重试流程发生异常: %s", e)
+
                 # 如果所有尝试过的板块全部失败且没有任何数据入库，则标记全局熔断
                 if self.failed_categories and not self.completed_categories and self.total_inserted_count == 0:
                     self.circuit_breaker_tripped = True
