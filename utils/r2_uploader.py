@@ -30,8 +30,8 @@ class R2Uploader:
         上传 PDF 文件到 R2。
 
         Args:
-            local_path: 本地文件路径（如 /tmp/pdfs/2025/xxx.pdf）
-            remote_key: R2 对象 Key（如 pdfs/2025/xxx.pdf）
+            local_path: 本地文件路径（如 /tmp/pdf/2025/xxx.pdf）
+            remote_key: R2 对象 Key（如 pdf/2025/xxx.pdf）
 
         Returns:
             上传成功时返回 remote_key；失败时返回空字符串。

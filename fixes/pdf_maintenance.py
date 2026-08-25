@@ -1,8 +1,8 @@
 """PDF 文件全生命周期维护与数据库同步工具合集 (fixes/pdf_maintenance.py)
 
-本脚本整合了 PDF 物理文件与 SQLite 数据库之间的一致性检查、路径规范、异常修复、缺失重建、孤儿隔离及脏数据清理等全生命周期维护功能。
+本脚本整合了 PDF 物理文件与 SQLite 数据库之间的一致性检查、路径规范、异常修复、缺失重建、孤儿隔离、智能关联、脏数据清理及多维查重去重等全生命周期维护功能。
 
-包含以下 6 大核心子命令与维护流程：
+包含以下 8 大核心子命令与维护流程：
 
 1. check-dates: PDF 文件与数据库发布日期比对审计
    - 功能用途: 递归扫描本地 pdf/ 目录下的全部物理 PDF 文件，提取文件名中的日期与标题，并与数据库中对应的 publish_time 及记录信息进行比对。
@@ -16,40 +16,57 @@
    - 功能用途: 扫描物理目录中体积小于 20KB 的异常 PDF 文件（通常因反爬拦截、页面 404 或未加载完全导致）。
    - 修复方式: 拉起 Playwright 无头浏览器重新访问源 URL，注入针对性的广告屏蔽脚本，重新渲染生成标准 A4 边距 PDF 并覆盖旧文件。
 
-4. rebuild: 重建缺失 PDF 文件与路径相对化
+4. rebuild: 重建缺失 PDF 文件与路径相对化 (多线程并发)
    - 路径相对化: 扫描数据库中所有包含 pdf_path 的有效记录，将绝对路径统一转为相对路径 (如 pdf/2025/xxx.pdf)。
-   - 缺失重建: 找出物理文件不存在的有效记录，根据 source 适配各站点的渲染配置 (CONFIG_MAP，包括 seju, gcbt, madou, datang, jingpin_toupai, taose 等针对性的反爬、滚动加载及去广告规则)，重新拉起 Playwright 抓取并生成 PDF。
-   - 选项: 支持 --skip-download 仅执行路径相对化与数据库纠偏。
+   - 缺失并发重建: 找出物理文件不存在的有效记录，支持多线程 (默认 4-6 线程) Playwright 并发请求渲染生成 PDF，遇到 404 自动清理失效路径，并实时记录进度至 logs/pdf_redownload_progress.json。
+   - 选项: 支持 --skip-download 仅执行路径相对化与数据库纠偏；支持 --workers 指定并发线程数。
 
 5. orphan: 多余/孤立 PDF 文件管理与还原
    - 模式 1 (检查多余): 扫描各年份目录下的 PDF，比对数据库中是否有匹配记录；将数据库中无记录的多余/废弃 PDF 隔离移至 /pdf 根目录。
    - 模式 2 (恢复归位): 扫描 /pdf 根目录下的隔离 PDF，通过文件名日期或数据库标题索引智能分析归属，自动移回对应年份子目录并补齐日期前缀。
 
-6. clean-missing: 清理数据库中对应物理 PDF 已丢失的残留脏记录
+6. associate: 扫描磁盘未关联/断链 PDF 智能回填数据库
+   - 功能用途: 扫描磁盘物理 PDF 文件，精准比对数据库 resources 表，找出物理文件存在但数据库 pdf_path 为空或断链的记录，通过标题与站点来源自动关联回填，免去重复下载。
+
+7. clean-missing: 清理数据库中对应物理 PDF 已丢失的残留脏记录
    - 功能用途: 反向扫描数据库，检测 pdf_path 指向的物理文件是否真实存在（支持 --scope unknown 仅检查 Unknown_Year 或 --scope all 检查全量）。
    - 清理机制: 批量删除物理文件已不存在的数据库记录，并在删除后自动执行 VACUUM 回收数据库物理空间。
 
+8. dedup: PDF 物理文件多维查重、去重与数据库引用纠偏
+   - 功能用途: 支持基于内容 MD5 哈希查重、文件名/标题变体 (_1.pdf) 查重及数据库 pdf_path 共享检测。
+   - 智能处理: 优先保留规范命名与大文件版本，清理多余物理副本时自动将数据库指向重定向至保留的主文件，杜绝断链。
+
 用法与命令示例:
-  python fixes/pdf_maintenance.py                             # 交互式主菜单 (包含 1-6 选项)
+  python fixes/pdf_maintenance.py                             # 交互式主菜单 (包含 1-8 选项)
   python fixes/pdf_maintenance.py check-dates                 # 运行日期检查并生成报告
   python fixes/pdf_maintenance.py fix-paths                   # 预览路径与文件名修复计划 (Dry Run)
   python fixes/pdf_maintenance.py fix-paths --run             # 正式执行路径与文件名纠偏
   python fixes/pdf_maintenance.py redownload --run            # 重新下载覆盖 <20KB 的 PDF 文件
-  python fixes/pdf_maintenance.py rebuild --run               # 路径相对化并重新生成缺失 PDF
+  python fixes/pdf_maintenance.py rebuild --run               # 路径相对化并多线程并发重新生成缺失 PDF
+  python fixes/pdf_maintenance.py rebuild --run --workers 6   # 6 线程并发重建缺失 PDF
   python fixes/pdf_maintenance.py rebuild --run --skip-download # 仅执行路径相对化更新
   python fixes/pdf_maintenance.py orphan                      # 孤儿文件隔离/还原交互菜单
+  python fixes/pdf_maintenance.py associate                   # 预览孤儿文件与断链记录关联计划 (Dry Run)
+  python fixes/pdf_maintenance.py associate --run             # 正式将未关联物理文件回填入库
   python fixes/pdf_maintenance.py clean-missing --run         # 清理物理文件已丢失的数据库记录
+  python fixes/pdf_maintenance.py dedup                       # PDF 查重与去重交互管理
+  python fixes/pdf_maintenance.py dedup --mode hash --run     # 执行 MD5 哈希查重与去重纠偏
 """
 
 import os
 import re
 import sys
+import json
+import base64
 import sqlite3
 import argparse
 import random
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 from datetime import datetime
+from urllib.parse import urlparse, urlunparse
 
 # 将项目根目录加入 sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -59,9 +76,544 @@ from utils import setup_console_utf8
 from utils.browser_factory import browser_factory
 from utils.metadata_parser import sanitize_filename
 from utils.pdf_utils import parse_filename, clean_title_suffix, to_relative_path, generate_unique_path
-from fixes.db_utils import vacuum_db
+from utils.pdf_generator import PDFGenerator, PDFRenderConfig
+from fixes.db_utils import vacuum_db, backup_db, format_size
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROGRESS_FILE = os.path.join(PROJECT_ROOT, "logs", "pdf_redownload_progress.json")
 
 date_regex = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# ===================================================================
+# 站点配置与永久域名/镜像域名管理
+# ===================================================================
+SITE_CONFIG = {
+    "datang": {
+        "main_domain": "https://dtbt7.com",
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "cache_name": "datang_domains.json",
+    },
+    "dashen": {
+        "main_domain": "https://j4f4.com",
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "cache_name": "dashen_domains.json",
+    },
+    "jingpin": {
+        "main_domain": "https://jpbt3.com",
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "cache_name": "jingpin_domains.json",
+    },
+    "tanhua": {
+        "main_domain": "https://thbt8.com",
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "cache_name": "tanhua_domains.json",
+    },
+    "taose": {
+        "main_domain": "https://taosebt.com",
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "cache_name": "taose_domains.json",
+    },
+    "mianfei_guochan": {
+        "main_domain": "https://mfgc3.com",
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "cache_name": "mianfei_guochan_domains.json",
+    },
+    "madou": {
+        "main_domain": "http://ypb.295282.xyz",
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "cache_name": "madou_domains.json",
+    },
+    "jingpin_toupai": {
+        "main_domain": "",
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "cache_name": "jingpin_toupai_domains.json",
+    },
+}
+
+CONFIG_MAP = {
+    "seju": PDFRenderConfig(
+        margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
+    ),
+    "gcbt": PDFRenderConfig(
+        need_img_proxy=False,
+        wait_until="domcontentloaded",
+        pre_access_url=None,
+        referer="https://gcbt.net/",
+        need_lazy_scroll=True,
+        emulate_media="screen",
+        ad_selectors=[
+            '.layui-layer', '.layui-layer-shade',
+            '.modal', '.modal-backdrop',
+            '.swal-overlay', '.swal-modal', '.swal2-container',
+            '[id*="layui-layer"]'
+        ],
+        ad_block_js="""() => {
+            if (document.body) document.body.style.overflow = 'auto';
+            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+        }"""
+    ),
+    "madou": PDFRenderConfig(
+        ad_selectors=[
+            'div[style*="height:60px"]',
+            'div[style*="height:55px"]',
+            'div[style*="height:70px"]',
+            '#bottom_float'
+        ]
+    ),
+    "datang": PDFRenderConfig(
+        ad_block_js="""() => {
+            const breadcrumbs = document.querySelector('.breadcrumbs');
+            if (breadcrumbs) {
+                let prev = breadcrumbs.previousElementSibling;
+                while (prev) {
+                    if (prev.classList.contains('gs-isgood') && 
+                        !prev.textContent.includes('永久地址') && 
+                        !prev.textContent.includes('永久')) {
+                        prev.remove();
+                    }
+                    prev = prev.previousElementSibling;
+                }
+            }
+            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
+            adDivs.forEach(div => div.remove());
+            const bottomFloat = document.getElementById('bottom_float');
+            if (bottomFloat) {
+                bottomFloat.remove();
+            }
+        }"""
+    ),
+    "dashen": PDFRenderConfig(
+        emulate_media="screen",
+        ad_selectors=[
+            'div[style*="height:60px"]',
+            'div[style*="height:140px"]',
+            'div[style*="height:150px"]',
+            '#bottom_float',
+            '.bottom_float',
+            '.dp-container',
+            '#dp-container',
+            '.layui-layer',
+            '.layui-layer-shade',
+            '[id*="layui-layer"]',
+        ],
+        ad_block_js="""() => {
+            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+            if (document.body) document.body.style.overflow = 'auto';
+            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:140px"], div[style*="height:150px"]');
+            adDivs.forEach(div => div.remove());
+            const bottomFloat = document.getElementById('bottom_float') || document.querySelector('.bottom_float') || document.getElementById('dp-container') || document.querySelector('.dp-container');
+            if (bottomFloat) {
+                bottomFloat.remove();
+            }
+        }""",
+        ad_url_patterns=[
+            r'(?:doubleclick|googleads|googlesyndication|google-analytics)\.com',
+            r'(?:adservice|pagead2|partnerads)\.googlesyndication',
+            r'(?:cas\.pm|syndication|adsystem)\.com',
+            r'(?:googleadservices|googletagmanager)\.com',
+            r'\.css\?ver=.*&(?:ad|ads|banner)',
+            r'(?:popup|pop-under|popunder)',
+            r'(?:layer|float)_?(?:ad|adv|ads)',
+            r'/ad(?:s|sense|unit|server|frame|script)\.',
+            r'(?:s\d+\.cnzz|cnzz\.com|h5\.cnzz)',
+            r'(?:hm\.baidu|posbaidu|cpro\.baidu)',
+            r'(?:tanx|alimama|mmstat)\.com',
+            r'(?:qzs\.qq|qq\.com)/ad',
+        ]
+    ),
+    "jingpin": PDFRenderConfig(
+        emulate_media="screen",
+        ad_selectors=[
+            'div[style*="height:60px"]',
+            'div[style*="height:55px"]',
+            'div[style*="height:70px"]',
+            '#bottom_float',
+            '.bottom_float',
+            '.layui-layer',
+            '.layui-layer-shade',
+            '[id*="layui-layer"]',
+            '.modal',
+            '.modal-backdrop'
+        ],
+        ad_block_js="""() => {
+            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+            if (document.body) document.body.style.overflow = 'auto';
+            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
+            adDivs.forEach(div => div.remove());
+            const bottomFloat = document.getElementById('bottom_float') || document.querySelector('.bottom_float');
+            if (bottomFloat) {
+                bottomFloat.remove();
+            }
+        }""",
+        ad_url_patterns=[
+            r'(?:doubleclick|googleads|googlesyndication|google-analytics)\.com',
+            r'(?:adservice|pagead2|partnerads)\.googlesyndication',
+            r'(?:cas\.pm|syndication|adsystem)\.com',
+            r'(?:googleadservices|googletagmanager)\.com',
+            r'\.css\?ver=.*&(?:ad|ads|banner)',
+            r'(?:popup|pop-under|popunder)',
+            r'(?:layer|float)_?(?:ad|adv|ads)',
+            r'/ad(?:s|sense|unit|server|frame|script)\.',
+            r'(?:s\d+\.cnzz|cnzz\.com|h5\.cnzz)',
+            r'(?:hm\.baidu|posbaidu|cpro\.baidu)',
+            r'(?:tanx|alimama|mmstat)\.com',
+            r'(?:qzs\.qq|qq\.com)/ad',
+        ]
+    ),
+    "tanhua": PDFRenderConfig(
+        emulate_media="screen",
+        ad_selectors=[
+            'div[style*="height:60px"]',
+            'div[style*="height:55px"]',
+            'div[style*="height:70px"]',
+            '#bottom_float',
+            '.bottom_float',
+            '.layui-layer',
+            '.layui-layer-shade',
+            '[id*="layui-layer"]',
+            '.modal',
+            '.modal-backdrop'
+        ],
+        ad_block_js="""() => {
+            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+            if (document.body) document.body.style.overflow = 'auto';
+            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
+            adDivs.forEach(div => div.remove());
+            const bottomFloat = document.getElementById('bottom_float') || document.querySelector('.bottom_float');
+            if (bottomFloat) {
+                bottomFloat.remove();
+            }
+        }""",
+        ad_url_patterns=[
+            r'(?:doubleclick|googleads|googlesyndication|google-analytics)\.com',
+            r'(?:adservice|pagead2|partnerads)\.googlesyndication',
+            r'(?:cas\.pm|syndication|adsystem)\.com',
+            r'(?:googleadservices|googletagmanager)\.com',
+            r'\.css\?ver=.*&(?:ad|ads|banner)',
+            r'(?:popup|pop-under|popunder)',
+            r'(?:layer|float)_?(?:ad|adv|ads)',
+            r'/ad(?:s|sense|unit|server|frame|script)\.',
+            r'(?:s\d+\.cnzz|cnzz\.com|h5\.cnzz)',
+            r'(?:hm\.baidu|posbaidu|cpro\.baidu)',
+            r'(?:tanx|alimama|mmstat)\.com',
+            r'(?:qzs\.qq|qq\.com)/ad',
+        ]
+    ),
+    "taose": PDFRenderConfig(
+        emulate_media="screen",
+        ad_selectors=[
+            'div[style*="height:60px"]',
+            'div[style*="height:55px"]',
+            'div[style*="height:70px"]',
+            '#bottom_float',
+            '.layui-layer',
+            '.layui-layer-shade',
+            '[id*="layui-layer"]',
+            '.modal',
+            '.modal-backdrop'
+        ],
+        ad_block_js="""() => {
+            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+            if (document.body) document.body.style.overflow = 'auto';
+            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
+            adDivs.forEach(div => div.remove());
+            const bottomFloat = document.getElementById('bottom_float');
+            if (bottomFloat) {
+                bottomFloat.remove();
+            }
+        }""",
+        ad_url_patterns=[
+            r'(?:doubleclick|googleads|googlesyndication|google-analytics)\.com',
+            r'(?:adservice|pagead2|partnerads)\.googlesyndication',
+            r'(?:cas\.pm|syndication|adsystem)\.com',
+            r'(?:googleadservices|googletagmanager)\.com',
+            r'\.css\?ver=.*&(?:ad|ads|banner)',
+            r'(?:popup|pop-under|popunder)',
+            r'(?:layer|float)_?(?:ad|adv|ads)',
+            r'/ad(?:s|sense|unit|server|frame|script)\.',
+            r'(?:s\d+\.cnzz|cnzz\.com|h5\.cnzz)',
+            r'(?:hm\.baidu|posbaidu|cpro\.baidu)',
+            r'(?:tanx|alimama|mmstat)\.com',
+            r'(?:qzs\.qq|qq\.com)/ad',
+        ]
+    ),
+    "mianfei_guochan": PDFRenderConfig(
+        emulate_media="screen",
+        ad_selectors=[
+            'div[style*="height:60px"]',
+            'div[style*="height:55px"]',
+            'div[style*="height:70px"]',
+            '#bottom_float',
+            '.bottom_float',
+            '.layui-layer',
+            '.layui-layer-shade',
+            '[id*="layui-layer"]',
+            '.modal',
+            '.modal-backdrop'
+        ],
+        ad_block_js="""() => {
+            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+            if (document.body) document.body.style.overflow = 'auto';
+            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
+            adDivs.forEach(div => div.remove());
+            const bottomFloat = document.getElementById('bottom_float') || document.querySelector('.bottom_float');
+            if (bottomFloat) {
+                bottomFloat.remove();
+            }
+        }""",
+        ad_url_patterns=[
+            r'(?:doubleclick|googleads|googlesyndication|google-analytics)\.com',
+            r'(?:adservice|pagead2|partnerads)\.googlesyndication',
+            r'(?:cas\.pm|syndication|adsystem)\.com',
+            r'(?:googleadservices|googletagmanager)\.com',
+            r'\.css\?ver=.*&(?:ad|ads|banner)',
+            r'(?:popup|pop-under|popunder)',
+            r'(?:layer|float)_?(?:ad|adv|ads)',
+            r'/ad(?:s|sense|unit|server|frame|script)\.',
+            r'(?:s\d+\.cnzz|cnzz\.com|h5\.cnzz)',
+            r'(?:hm\.baidu|posbaidu|cpro\.baidu)',
+            r'(?:tanx|alimama|mmstat)\.com',
+            r'(?:qzs\.qq|qq\.com)/ad',
+        ]
+    ),
+    "jingpin_toupai": PDFRenderConfig(
+        emulate_media="screen",
+        ad_selectors=[
+            'div[style*="height:60px"]', 
+            'div[style*="height:55px"]', 
+            'div[style*="height:70px"]',
+            '#bottom_float',
+            '.layui-layer',
+            '.layui-layer-shade',
+            '[id*="layui-layer"]',
+            '.modal',
+            '.modal-backdrop'
+        ],
+        ad_block_js="""() => {
+            document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
+            if (document.body) document.body.style.overflow = 'auto';
+            if (document.documentElement) document.documentElement.style.overflow = 'auto';
+        }"""
+    )
+}
+
+
+def infer_source(source, url="", pdf_path="", title=""):
+    """推断资源所属的爬虫站点标识"""
+    if source and str(source).strip():
+        return str(source).strip()
+    if pdf_path:
+        base = os.path.basename(pdf_path).lower()
+        for s in SITE_CONFIG:
+            if f"_{s}.pdf" in base or f"_{s}_" in base:
+                return s
+        for s in ("seju", "gcbt", "u3c3"):
+            if f"_{s}.pdf" in base or f"_{s}_" in base:
+                return s
+    if url:
+        netloc = urlparse(url).netloc.lower()
+        for s, cfg in SITE_CONFIG.items():
+            cached = load_cached_domains(s)
+            if netloc in cached:
+                return s
+        if "seju.life" in netloc:
+            return "seju"
+        if "gcbt.net" in netloc:
+            return "gcbt"
+        if "u3c3.com" in netloc:
+            return "u3c3"
+        if "movie.php?id=" in url:
+            return "madou"
+        if "torrent/" in url:
+            return "jingpin_toupai"
+    return "datang"
+
+
+def extract_domains_from_text(content: str, pattern: str = r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)') -> list:
+    """从 HTML 或文本中提取镜像域名，支持明文正则与 Base64 编码"""
+    if not content:
+        return []
+    found = set()
+    for d in re.findall(pattern, content):
+        found.add(d)
+    b64_d_matches = re.findall(r'd\(["\']([A-Za-z0-9+/=]{4,})["\']\)', content)
+    for b64_str in b64_d_matches:
+        try:
+            decoded = base64.b64decode(b64_str).decode('utf-8', errors='ignore')
+            for d in re.findall(pattern, decoded):
+                found.add(d)
+        except Exception:
+            pass
+    general_b64 = re.findall(r'["\']([A-Za-z0-9+/=]{12,})["\']', content)
+    for b64_str in general_b64:
+        try:
+            decoded = base64.b64decode(b64_str).decode('utf-8', errors='ignore')
+            for d in re.findall(pattern, decoded):
+                found.add(d)
+        except Exception:
+            pass
+    return list(found)
+
+
+def load_cached_domains(source: str) -> list:
+    """从本地缓存加载有效域名列表"""
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache")
+    cache_path = os.path.join(cache_dir, f"{source}_domains.json")
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+    return []
+
+
+def save_cached_domains(source: str, domains: list):
+    """保存域名列表到本地缓存"""
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"{source}_domains.json")
+    try:
+        to_save = list(dict.fromkeys(domains))
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump(to_save, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[-] 保存域名缓存失败: {e}")
+
+
+def fetch_domains_from_permanent(source: str) -> list:
+    """从站点的永久域名（main_domain）动态拉取并解密最新镜像域名列表"""
+    cfg = SITE_CONFIG.get(source)
+    if not cfg or not cfg.get("main_domain"):
+        return []
+    main_domain = cfg["main_domain"]
+    pattern = cfg.get("domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)')
+    print(f"  [*] 正在从 {source.upper()} 永久主站 {main_domain} 动态拉取最新镜像域名...")
+    try:
+        from curl_cffi import requests as cffi_requests
+        from crawlers.base_crawler import DecryptMixin
+        resp = cffi_requests.get(main_domain, timeout=15, impersonate="chrome120")
+        if resp.status_code == 200:
+            decrypted = DecryptMixin().decrypt_html(resp.text)
+            content_to_parse = decrypted if decrypted else resp.text
+            new_domains = extract_domains_from_text(content_to_parse, pattern)
+            unique = [d for d in dict.fromkeys(new_domains) if d not in main_domain]
+            if unique:
+                save_cached_domains(source, unique)
+                print(f"  [+] 成功从永久主站获取到 {len(unique)} 个最新镜像域名: {unique}")
+                return unique
+    except Exception as e:
+        print(f"  [-] 从永久主站 {main_domain} 获取最新域名失败: {e}")
+    return []
+
+
+def get_latest_mirror_domains(source: str, exclude_domain: str = None) -> list:
+    """获取最新可用的镜像域名列表（优先缓存，无有效则从永久域名拉取）"""
+    cached = load_cached_domains(source)
+    valid = [d for d in cached if d != exclude_domain] if exclude_domain else cached
+    if valid:
+        return valid
+    
+    # 缓存中没有或者排除后为空，从永久域名获取
+    fresh = fetch_domains_from_permanent(source)
+    if exclude_domain:
+        fresh = [d for d in fresh if d != exclude_domain]
+    return fresh
+
+
+def replace_domain_in_url(url: str, new_domain: str) -> str:
+    """将 URL 中的 host / netloc 替换为新的镜像域名"""
+    parsed = urlparse(url)
+    scheme = parsed.scheme or "https"
+    return urlunparse((scheme, new_domain, parsed.path, parsed.params, parsed.query, parsed.fragment))
+
+
+def render_pdf_page(page, url: str, file_path: str, source: str, min_size_kb: float = 20.0):
+    """使用 Playwright page 访问 url 并渲染 PDF 保存到 file_path。
+    返回: (is_valid: bool, size_kb: float, status_msg: str, page_content: str)
+    """
+    config = CONFIG_MAP.get(source, PDFRenderConfig())
+    try:
+        try:
+            page.unroute("**/*")
+        except Exception:
+            pass
+
+        if config.ad_url_patterns:
+            patterns = [re.compile(p, re.I) for p in config.ad_url_patterns]
+            def ad_blocker(route):
+                u = route.request.url
+                for pat in patterns:
+                    if pat.search(u):
+                        route.abort()
+                        return
+                route.continue_()
+            try:
+                page.route("**/*", ad_blocker)
+            except Exception:
+                pass
+
+        response = page.goto(url, timeout=35000, wait_until="domcontentloaded")
+        time.sleep(2.5)
+
+        if response and response.status in (404, 403, 500, 502, 503):
+            return False, 0.0, f"HTTP {response.status}", ""
+
+        page_content = ""
+        try:
+            page_content = page.content()
+        except Exception:
+            pass
+
+        if page_content and ("正在检测" in page_content or "available_domain_html" in page_content or "403 Forbidden" in page_content):
+            return False, 0.0, "检测到域名跳转拦截页", page_content
+
+        try:
+            js_code = "() => {\n"
+            if config.ad_selectors:
+                js_code += f"    const selectors = {config.ad_selectors};\n"
+                js_code += "    selectors.forEach(sel => { document.querySelectorAll(sel).forEach(el => el.remove()); });\n"
+            if config.ad_block_js:
+                js_code += f"    try {{ ({config.ad_block_js})(); }} catch(e) {{ console.error(e); }}\n"
+            js_code += "}"
+            page.evaluate(js_code)
+        except Exception:
+            pass
+
+        if config.emulate_media:
+            try:
+                page.emulate_media(media=config.emulate_media)
+            except Exception:
+                pass
+
+        margin = getattr(config, "margin", {"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"})
+        scale = getattr(config, "scale", 0.75)
+
+        page.pdf(
+            path=file_path,
+            format="A4",
+            scale=scale,
+            print_background=True,
+            margin=margin
+        )
+
+        if os.path.exists(file_path):
+            new_size_kb = os.path.getsize(file_path) / 1024.0
+            if new_size_kb >= min_size_kb:
+                return True, new_size_kb, "成功", page_content
+            else:
+                return False, new_size_kb, f"体积依然过小 ({new_size_kb:.2f} KB < {min_size_kb} KB)", page_content
+        else:
+            return False, 0.0, "PDF 文件未在本地生成", page_content
+    except Exception as e:
+        return False, 0.0, f"渲染异常: {e}", ""
 
 
 # ===================================================================
@@ -396,7 +948,6 @@ def run_fix_names_and_paths(args):
 
     # ===================================================================
     # Phase 2: 全量扫描所有年份文件夹，修复文件名日期与数据库不一致
-    # (从 fix_date_mismatches.py 合并而来)
     # ===================================================================
     print("\n" + "=" * 60)
     print("  Phase 2: 全量检查 - 修复文件名日期与数据库不匹配")
@@ -405,7 +956,6 @@ def run_fix_names_and_paths(args):
     print("[*] 正在全量扫描 PDF 目录 (递归所有年份文件夹)...")
     all_pdf_files = []
     for root, dirs, files in os.walk(pdf_base):
-        # 跳过 Unknown_Year (已在 Phase 1 处理)
         norm_root = os.path.normpath(root)
         if "Unknown_Year" in norm_root:
             continue
@@ -546,7 +1096,7 @@ def run_redownload_small_pdfs(args):
     pdf_base = os.path.abspath(PDF_BASE_DIR)
 
     print("=" * 60)
-    print(f"[*] 运行模式: {'【正式修复模式 (重下/覆盖)】' if args.run else '【预览模式 (Dry Run)】'}")
+    print(f"[*] 运行模式: {'【正式修复模式 (重下/覆盖/域名自愈)】' if args.run else '【预览模式 (Dry Run)】'}")
     print(f"[*] 数据库路径: {db_path}")
     print(f"[*] PDF 根目录: {pdf_base}")
     print("=" * 60)
@@ -581,7 +1131,7 @@ def run_redownload_small_pdfs(args):
     print("[*] 正在加载数据库中的 PDF 路径进行比对匹配...")
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, url, pdf_path, publish_time FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
+    cursor.execute("SELECT id, title, url, pdf_path, publish_time, source FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
     db_rows = cursor.fetchall()
 
     db_map = {}
@@ -610,8 +1160,18 @@ def run_redownload_small_pdfs(args):
                     matched_row = row
                     break
         if matched_row:
-            r_id, title, url, pdf_path_db, publish_time = matched_row
-            to_download.append((file_path, size_kb, r_id, title, url, publish_time))
+            r_id, title, url, pdf_path_db, publish_time, source = matched_row
+            src = infer_source(source, url, file_path, title)
+            to_download.append({
+                "file_path": file_path,
+                "size_kb": size_kb,
+                "id": r_id,
+                "title": title,
+                "url": url,
+                "pdf_path": pdf_path_db,
+                "publish_time": publish_time,
+                "source": src
+            })
         else:
             not_found_in_db.append((file_path, size_kb))
 
@@ -633,16 +1193,16 @@ def run_redownload_small_pdfs(args):
         print("                  需要重新下载的 PDF 预览")
         print("=" * 60)
         preview_limit = 20
-        for idx, (fp, sz, r_id, title, url, pub_time) in enumerate(to_download[:preview_limit], 1):
-            print(f"[{idx}] 路径: {fp}")
-            print(f"    大小: {sz:.2f} KB | ID: {r_id} | 标题: {title} | 日期: {pub_time}")
-            print(f"    URL:  {url}")
+        for idx, task in enumerate(to_download[:preview_limit], 1):
+            print(f"[{idx}] 路径: {task['file_path']}")
+            print(f"    大小: {task['size_kb']:.2f} KB | ID: {task['id']} | 标题: {task['title']} | 来源: {task['source']} | 日期: {task['publish_time']}")
+            print(f"    URL:  {task['url']}")
             print("-" * 60)
         if len(to_download) > preview_limit:
             print(f"... 还有 {len(to_download) - preview_limit} 个文件未列出")
         print(f"\n[*] 预览结束。")
         try:
-            confirm = input("[*] 检测完毕，是否直接开始重新下载并覆盖修复？[y/N]: ").strip().lower()
+            confirm = input("[*] 检测完毕，是否直接开始重新下载、域名自愈并覆盖修复？[y/N]: ").strip().lower()
             if confirm in ('y', 'yes'):
                 do_run = True
         except (KeyboardInterrupt, EOFError):
@@ -658,62 +1218,76 @@ def run_redownload_small_pdfs(args):
     print(f"\n[*] 准备拉起 Playwright 重新下载 {len(to_download)} 个 PDF 文件...")
     success_count = 0
     fail_count = 0
+    total_db_domain_updates = 0
 
     try:
         _, browser, context = browser_factory.create_browser_context(
             headless=True,
             viewport={'width': 1280, 'height': 900}
         )
-        for idx, (file_path, size_kb, r_id, title, url, publish_time) in enumerate(to_download, 1):
-            print(f"\n[*] [{idx}/{len(to_download)}] 正在请求: {url} (当前大小: {size_kb:.2f} KB)")
+        for idx, task in enumerate(to_download, 1):
+            file_path = task["file_path"]
+            size_kb = task["size_kb"]
+            r_id = task["id"]
+            title = task["title"]
+            curr_url = task["url"]
+            source = task["source"]
+            old_domain = urlparse(curr_url).netloc.split(':')[0] if curr_url else ""
+
+            print(f"\n[*] [{idx}/{len(to_download)}] 正在请求: {curr_url} (来源: {source}, 当前大小: {size_kb:.2f} KB)")
             page = context.new_page()
             try:
-                response = page.goto(url, timeout=45000, wait_until="domcontentloaded")
-                time.sleep(3.0)
-                if response and response.status == 404:
-                    print(f"  [-] 页面返回 404，不重新下载。")
-                    fail_count += 1
-                    continue
-                try:
-                    page.evaluate("""() => {
-                        const breadcrumbs = document.querySelector('.breadcrumbs');
-                        if (breadcrumbs) {
-                            let prev = breadcrumbs.previousElementSibling;
-                            while (prev) {
-                                if (prev.classList.contains('gs-isgood') &&
-                                    !prev.textContent.includes('永久地址') &&
-                                    !prev.textContent.includes('永久')) {
-                                    prev.remove();
-                                }
-                                prev = prev.previousElementSibling;
-                            }
-                        }
-                        const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
-                        adDivs.forEach(div => div.remove());
-                        const bottomFloat = document.getElementById('bottom_float');
-                        if (bottomFloat) bottomFloat.remove();
-                    }""")
-                except Exception:
-                    pass
-                page.pdf(path=file_path, format="A4", print_background=True,
-                         margin={"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"})
-                if os.path.exists(file_path):
-                    new_size_kb = os.path.getsize(file_path) / 1024.0
-                    if new_size_kb >= 20.0:
-                        success_count += 1
-                        print(f"  [+] 成功重新保存并覆盖! 新文件大小: {new_size_kb:.2f} KB")
-                    else:
-                        fail_count += 1
-                        print(f"  [-] 警告: 重新保存后体积依然小于 20KB ({new_size_kb:.2f} KB)")
+                is_valid, new_size_kb, status_msg, page_html = render_pdf_page(page, curr_url, file_path, source)
+                if is_valid:
+                    success_count += 1
+                    print(f"  [+] 成功重新保存并覆盖! 新文件大小: {new_size_kb:.2f} KB")
                 else:
-                    fail_count += 1
-                    print("  [-] 错误: PDF 生成文件未在本地检测到")
+                    print(f"  [-] 首次请求/渲染异常: {status_msg}")
+                    # 检查网址是否失效，尝试从页面或永久域名拉取最新镜像域名
+                    print(f"  [*] 正在检查网址是否失效，并根据永久域名获取最新镜像域名...")
+                    if page_html:
+                        extracted = extract_domains_from_text(page_html)
+                        if extracted:
+                            save_cached_domains(source, extracted)
+
+                    candidate_domains = get_latest_mirror_domains(source, exclude_domain=old_domain)
+                    recovered = False
+                    if candidate_domains:
+                        for cand in candidate_domains:
+                            new_url = replace_domain_in_url(curr_url, cand)
+                            print(f"  [*] 尝试使用最新镜像域名: {cand} -> {new_url}")
+                            is_valid_retry, retry_size_kb, retry_msg, _ = render_pdf_page(page, new_url, file_path, source)
+                            if is_valid_retry:
+                                print(f"  [+] 使用最新镜像域名 {cand} 重新生成成功! 新文件大小: {retry_size_kb:.2f} KB")
+                                if old_domain and cand != old_domain:
+                                    cursor.execute(
+                                        "UPDATE resources SET url = REPLACE(url, ?, ?) WHERE url LIKE ?",
+                                        (old_domain, cand, f"%{old_domain}%")
+                                    )
+                                    affected_rows = cursor.rowcount
+                                    conn.commit()
+                                    total_db_domain_updates += affected_rows
+                                    print(f"  [+] 数据库已批量更新失效域名: 将所有包含 '{old_domain}' 的记录 ({affected_rows} 条) 替换为 '{cand}'")
+
+                                    # 同步更新内存队列中后续记录的 URL
+                                    for rem in to_download[idx:]:
+                                        if rem.get("url") and old_domain in rem["url"]:
+                                            rem["url"] = replace_domain_in_url(rem["url"], cand)
+
+                                recovered = True
+                                success_count += 1
+                                break
+                            else:
+                                print(f"  [-] 尝试域名 {cand} 失败: {retry_msg}")
+                    if not recovered:
+                        fail_count += 1
+                        print(f"  [-] 最终未能成功修复该 PDF: {file_path}")
             except Exception as download_err:
-                print(f"  [-] 下载失败: {download_err}")
+                print(f"  [-] 下载处理异常: {download_err}")
                 fail_count += 1
             finally:
                 page.close()
-            time.sleep(random.uniform(2.0, 4.0))
+            time.sleep(random.uniform(1.5, 3.0))
     except Exception as run_e:
         print(f"[-] Playwright 运行异常: {run_e}")
     finally:
@@ -726,22 +1300,206 @@ def run_redownload_small_pdfs(args):
     print(f" 计划重新下载数:             {len(to_download)}")
     print(f" 成功重新下载/覆盖数:         {success_count}")
     print(f" 失败或依然不合格数:         {fail_count}")
+    print(f" 数据库失效域名替换影响记录:   {total_db_domain_updates} 条")
     print("=" * 60)
 
 
+
 # ===================================================================
-# 功能 4: rebuild - 重建缺失的 PDF 文件并路径相对化
+# 功能 4: rebuild - 重建缺失的 PDF 文件并路径相对化 (多线程并发)
 # ===================================================================
+class MissingPDFDownloader:
+    """缺失 PDF 并发下载与渲染器"""
+    def __init__(self, db_path: str, max_workers: int = 4):
+        self.db_path = db_path
+        self.max_workers = max_workers
+        self.generator = PDFGenerator(r2_uploader=None)
+        
+        self.lock = threading.Lock()
+        self.total = 0
+        self.processed = 0
+        self.success = 0
+        self.not_found = 0
+        self.failed = 0
+        self.start_time = 0
+        
+        # 线程安全数据库写入锁
+        self.db_lock = threading.Lock()
+
+    def update_progress_file(self, current_item_info: str = ""):
+        """更新 JSON 进度文件供前台/监控读取"""
+        now = time.time()
+        elapsed = max(0.1, now - self.start_time)
+        speed = self.processed / elapsed
+        remaining = self.total - self.processed
+        eta = remaining / speed if speed > 0 else 0
+
+        data = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "RUNNING" if self.processed < self.total else "COMPLETED",
+            "total": self.total,
+            "processed": self.processed,
+            "remaining": remaining,
+            "success": self.success,
+            "not_found_404": self.not_found,
+            "failed": self.failed,
+            "percent": round((self.processed / self.total * 100) if self.total > 0 else 0, 2),
+            "speed_per_sec": round(speed, 2),
+            "elapsed_seconds": round(elapsed, 1),
+            "eta_seconds": round(eta, 1),
+            "last_item": current_item_info
+        }
+
+        try:
+            os.makedirs(os.path.dirname(PROGRESS_FILE), exist_ok=True)
+            temp_file = PROGRESS_FILE + ".tmp"
+            with open(temp_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            if os.path.exists(PROGRESS_FILE):
+                os.remove(PROGRESS_FILE)
+            os.rename(temp_file, PROGRESS_FILE)
+        except Exception:
+            pass
+
+    def _db_update(self, sql: str, params: tuple):
+        """线程安全的 SQLite 更新操作"""
+        with self.db_lock:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            try:
+                cursor.execute(sql, params)
+                conn.commit()
+            except Exception as e:
+                print(f"[-] 数据库更新异常: {e}", flush=True)
+            finally:
+                conn.close()
+
+    def process_single_record(self, record: dict):
+        """单个记录的下载与渲染工作单元"""
+        r_id = record["id"]
+        title = record["title"]
+        url = record["url"]
+        publish_time = record["publish_time"]
+        source = record["source"]
+
+        config = CONFIG_MAP.get(source, PDFRenderConfig())
+        
+        item_status = ""
+        generated_path = None
+        t0 = time.time()
+
+        try:
+            _, browser, context = browser_factory.create_browser_context(headless=True, source=source)
+            
+            # 1. 预检查 404
+            is_404 = False
+            temp_page = context.new_page()
+            try:
+                resp = temp_page.goto(url, timeout=25000, wait_until="domcontentloaded")
+                if resp and resp.status == 404:
+                    is_404 = True
+            except Exception:
+                pass
+            finally:
+                try:
+                    temp_page.close()
+                except Exception:
+                    pass
+
+            if is_404:
+                self._db_update("UPDATE resources SET pdf_path = '' WHERE id = ?", (r_id,))
+                with self.lock:
+                    self.processed += 1
+                    self.not_found += 1
+                item_status = f"[-] 页面 404 (已清理 pdf_path) ID={r_id} 来源={source}"
+            else:
+                # 2. 正常渲染生成 PDF
+                rel_pdf_path = self.generator.generate_pdf(
+                    page_or_context=context,
+                    target_url_or_page=url,
+                    publish_date=publish_time,
+                    title=title,
+                    source_name=source,
+                    config=config
+                )
+
+                if rel_pdf_path:
+                    self._db_update("UPDATE resources SET pdf_path = ? WHERE id = ?", (rel_pdf_path, r_id))
+                    with self.lock:
+                        self.processed += 1
+                        self.success += 1
+                    generated_path = rel_pdf_path
+                    item_status = f"[+] 渲染成功 ID={r_id} 来源={source} -> {rel_pdf_path}"
+                else:
+                    with self.lock:
+                        self.processed += 1
+                        self.failed += 1
+                    item_status = f"[-] 渲染失败 (保留原样) ID={r_id} 来源={source}"
+
+        except Exception as e:
+            with self.lock:
+                self.processed += 1
+                self.failed += 1
+            item_status = f"[-] 异常 ID={r_id} 来源={source} | 错误: {e}"
+
+        elapsed_item = time.time() - t0
+        
+        # 打印实时进度
+        with self.lock:
+            pct = (self.processed / self.total * 100) if self.total > 0 else 0
+            now = time.time()
+            total_elapsed = max(0.1, now - self.start_time)
+            speed = self.processed / total_elapsed
+            rem_sec = (self.total - self.processed) / speed if speed > 0 else 0
+            rem_min = rem_sec / 60.0
+            
+            print(f"[{self.processed:>3}/{self.total}] ({pct:>5.1f}%) "
+                  f"成功:{self.success:<3} 404:{self.not_found:<2} 失败:{self.failed:<2} "
+                  f"(单篇 {elapsed_item:.1f}s | 预估剩余 {rem_min:.1f}分) | {item_status}", flush=True)
+
+        self.update_progress_file(item_status)
+        return generated_path
+
+    def run(self, missing_records: list):
+        self.total = len(missing_records)
+        if self.total == 0:
+            print("[+] 经检查，当前没有缺失物理文件的断链记录，全部正常！", flush=True)
+            self.update_progress_file("无需修复")
+            return
+
+        print(f"[+] 发现 {self.total} 条物理文件缺失记录，准备并发下载 (线程数={self.max_workers})...", flush=True)
+        self.start_time = time.time()
+        self.update_progress_file("准备就绪")
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = [executor.submit(self.process_single_record, rec) for rec in missing_records]
+            for _ in as_completed(futures):
+                pass
+
+        total_time = time.time() - self.start_time
+        print("\n" + "=" * 60, flush=True)
+        print("                      并发下载完成报告", flush=True)
+        print("=" * 60, flush=True)
+        print(f" 计划下载总数:               {self.total}", flush=True)
+        print(f" 成功渲染生成:               {self.success}", flush=True)
+        print(f" 页面不存在 (404已清理) 数:   {self.not_found}", flush=True)
+        print(f" 下载渲染失败数:             {self.failed}", flush=True)
+        print(f" 总耗时:                     {total_time:.1f} 秒 ({total_time / 60.0:.2f} 分钟)", flush=True)
+        print("=" * 60, flush=True)
+
+
 def run_rebuild(args):
-    db_path = get_db_path()
+    db_path = getattr(args, "db", None) or get_db_path()
     base_dir = os.path.abspath(PDF_BASE_DIR)
     project_dir = os.path.dirname(base_dir)
+    workers = getattr(args, "workers", 4) or 4
 
     print("=" * 60)
     print(f"[*] 运行模式: {'【正式修复模式】' if args.run else '【预览模式 (Dry Run)】'}")
     print(f"[*] 数据库路径: {db_path}")
     print(f"[*] 项目根目录: {project_dir}")
     print(f"[*] PDF 根目录: {base_dir}")
+    print(f"[*] 并发工作线程数: {workers}")
     print("=" * 60)
 
     if not os.path.exists(db_path):
@@ -778,7 +1536,14 @@ def run_rebuild(args):
             if pdf_path != rel_path:
                 needs_update_to_relative.append((r_id, rel_path))
         else:
-            missing_records.append((r_id, title, url, publish_time, source))
+            missing_records.append({
+                "id": r_id,
+                "title": title,
+                "pdf_path": pdf_path,
+                "url": url,
+                "publish_time": publish_time or "Unknown_Date",
+                "source": source or "unknown"
+            })
 
     print(f"[*] 需要转换为相对路径（且物理文件已存在）的记录数: {len(needs_update_to_relative)}")
     print(f"[*] 真正物理缺失（本地无文件）的记录数: {len(missing_records)}")
@@ -803,185 +1568,25 @@ def run_rebuild(args):
                 print(f"  - ID: {r_id} -> {rel_path}")
             print("[*] 提示: 预览模式下未修改数据库。")
 
+    conn.close()
+
     # --- 重新下载缺失文件 ---
     if missing_records:
         if args.skip_download:
             print("[*] 参数指定跳过重新下载缺失文件。")
         elif not args.run:
             print(f"\n[PLAN] 发现 {len(missing_records)} 个物理缺失的文件（示例前 5 个）：")
-            for r_id, title, url, publish_time in missing_records[:5]:
-                print(f"  - ID: {r_id} | 标题: {title} | 日期: {publish_time}")
-                print(f"    URL: {url}")
+            for rec in missing_records[:5]:
+                print(f"  - ID: {rec['id']} | 标题: {rec['title']} | 日期: {rec['publish_time']} | 来源: {rec['source']}")
+                print(f"    URL: {rec['url']}")
             print("[*] 提示: 预览模式下未下载任何文件。")
-            print("[*] 若要正式开始修复，请运行: python fixes/pdf_maintenance.py rebuild --run")
+            print("[*] 若要正式开始并发下载，请运行: python fixes/pdf_maintenance.py rebuild --run")
         else:
-            print(f"\n[*] 准备拉起 Playwright 重新下载 {len(missing_records)} 个缺失 of PDF...")
-            success_download = 0
-            fail_download = 0
-            not_found_download = 0
+            downloader = MissingPDFDownloader(db_path=db_path, max_workers=workers)
+            downloader.run(missing_records)
 
-            from utils.pdf_generator import PDFGenerator, PDFRenderConfig
-            
-            CONFIG_MAP = {
-                "seju": PDFRenderConfig(
-                    margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
-                ),
-                "gcbt": PDFRenderConfig(
-                    need_img_proxy=True,
-                    pre_access_url="https://gcbt.net/",
-                    referer="https://gcbt.net/",
-                    need_lazy_scroll=True,
-                    emulate_media="screen",
-                    ad_selectors=[
-                        '.layui-layer', '.layui-layer-shade',
-                        '.modal', '.modal-backdrop',
-                        '.swal-overlay', '.swal-modal', '.swal2-container',
-                        '[id*="layui-layer"]'
-                    ],
-                    ad_block_js="""() => {
-                        if (document.body) document.body.style.overflow = 'auto';
-                        if (document.documentElement) document.documentElement.style.overflow = 'auto';
-                    }"""
-                ),
-                "madou": PDFRenderConfig(
-                    ad_selectors=[
-                        'div[style*="height:60px"]',
-                        'div[style*="height:55px"]',
-                        'div[style*="height:70px"]',
-                        '#bottom_float'
-                    ]
-                ),
-                "datang": PDFRenderConfig(
-                    ad_block_js="""() => {
-                        const breadcrumbs = document.querySelector('.breadcrumbs');
-                        if (breadcrumbs) {
-                            let prev = breadcrumbs.previousElementSibling;
-                            while (prev) {
-                                if (prev.classList.contains('gs-isgood') && 
-                                    !prev.textContent.includes('永久地址') && 
-                                    !prev.textContent.includes('永久')) {
-                                    prev.remove();
-                                }
-                                prev = prev.previousElementSibling;
-                            }
-                        }
-                        const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
-                        adDivs.forEach(div => div.remove());
-                        const bottomFloat = document.getElementById('bottom_float');
-                        if (bottomFloat) {
-                            bottomFloat.remove();
-                        }
-                    }"""
-                ),
-                "jingpin_toupai": PDFRenderConfig(
-                    emulate_media="screen",
-                    ad_selectors=[
-                        'div[style*="height:60px"]', 
-                        'div[style*="height:55px"]', 
-                        'div[style*="height:70px"]',
-                        '#bottom_float',
-                        '.layui-layer',
-                        '.layui-layer-shade',
-                        '[id*="layui-layer"]',
-                        '.modal',
-                        '.modal-backdrop'
-                    ],
-                    ad_block_js="""() => {
-                        document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
-                        if (document.body) document.body.style.overflow = 'auto';
-                        if (document.documentElement) document.documentElement.style.overflow = 'auto';
-                    }"""
-                ),
-                "taose": PDFRenderConfig(
-                    emulate_media="screen",
-                    ad_selectors=[
-                        'div[style*="height:60px"]',
-                        'div[style*="height:55px"]',
-                        'div[style*="height:70px"]',
-                        '#bottom_float',
-                        '.layui-layer',
-                        '.layui-layer-shade',
-                        '[id*="layui-layer"]',
-                        '.modal',
-                        '.modal-backdrop'
-                    ],
-                    ad_block_js="""() => {
-                        document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
-                        if (document.body) document.body.style.overflow = 'auto';
-                        if (document.documentElement) document.documentElement.style.overflow = 'auto';
-                        const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
-                        adDivs.forEach(div => div.remove());
-                        const bottomFloat = document.getElementById('bottom_float');
-                        if (bottomFloat) {
-                            bottomFloat.remove();
-                        }
-                    }"""
-                )
-            }
+    print("[+] rebuild 运行结束。")
 
-            generator = PDFGenerator(r2_uploader=None)
-
-            try:
-                _, browser, context = browser_factory.create_browser_context(headless=True)
-                for idx, (r_id, title, url, publish_time, source) in enumerate(missing_records, 1):
-                    try:
-                        print(f"[*] [{idx}/{len(missing_records)}] 正在请求 URL: {url} (来源: {source})")
-                        
-                        config = CONFIG_MAP.get(source, PDFRenderConfig())
-
-                        # 预检查 404 状态
-                        temp_page = context.new_page()
-                        is_404 = False
-                        try:
-                            response = temp_page.goto(url, timeout=30000, wait_until="domcontentloaded")
-                            if response and response.status == 404:
-                                is_404 = True
-                        except Exception:
-                            pass
-                        finally:
-                            temp_page.close()
-
-                        if is_404:
-                            print(f"  [-] 页面 404 未找到，清除该记录的 pdf_path。")
-                            cursor.execute("UPDATE resources SET pdf_path = '' WHERE id = ?", (r_id,))
-                            not_found_download += 1
-                        else:
-                            rel_pdf_path = generator.generate_pdf(
-                                page_or_context=context,
-                                target_url_or_page=url,
-                                publish_date=publish_time,
-                                title=title,
-                                source_name=source,
-                                config=config
-                            )
-                            if rel_pdf_path:
-                                cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (rel_pdf_path, r_id))
-                                success_download += 1
-                                print(f"  [+] 下载成功并更新数据库为相对路径: {rel_pdf_path}")
-                            else:
-                                print(f"  [-] 下载物理文件失败 ID: {r_id}")
-                                fail_download += 1
-                        conn.commit()
-                    except Exception as e:
-                        print(f"  [-] 下载物理文件失败 ID: {r_id} | 错误: {e}")
-                        fail_download += 1
-                    time.sleep(random.uniform(1.5, 3.5))
-            except Exception as e:
-                print(f"[-] Playwright 运行异常: {e}")
-            finally:
-                browser_factory.destroy_thread_resources()
-
-            print("\n" + "=" * 60)
-            print("                      下载统计报告")
-            print("=" * 60)
-            print(f" 计划重新下载数:             {len(missing_records)}")
-            print(f" 成功下载并更新数:           {success_download}")
-            print(f" 页面不存在 (404已清理) 数:   {not_found_download}")
-            print(f" 下载失败 (保留原样) 数:     {fail_download}")
-            print("=" * 60)
-
-    conn.close()
-    print("[+] 运行结束。")
 
 
 # ===================================================================
@@ -1460,13 +2065,336 @@ def run_clean_missing_records(args):
     conn.close()
 
 
+
 # ===================================================================
-# 主入口 - 支持子命令: check-dates, fix-paths, redownload, rebuild, orphan, clean-missing
+# 功能 6: associate - 扫描未关联/断链 PDF 智能回填数据库
+# ===================================================================
+def normalize_rel_path(path_str: str, project_root: str) -> str:
+    """标准化相对路径"""
+    if not path_str:
+        return ""
+    p = str(path_str).strip().replace("\\", "/")
+    proj_norm = project_root.replace("\\", "/")
+    if p.lower().startswith(proj_norm.lower() + "/"):
+        p = p[len(proj_norm) + 1:]
+    return p.lstrip("/")
+
+
+def parse_pdf_filename(fname: str, known_sources: set):
+    """解析 PDF 文件名中的 日期、标题、来源和计数后缀"""
+    name = fname[:-4] if fname.lower().endswith('.pdf') else fname
+    counter = None
+    m_count = re.search(r'_(\d+)$', name)
+    if m_count:
+        counter = int(m_count.group(1))
+        name = name[:m_count.start()]
+
+    date_prefix = None
+    m_date = re.match(r'^(\d{4}-\d{2}-\d{2}|Unknown_Date)_(.*)$', name)
+    if m_date:
+        date_prefix = m_date.group(1)
+        name = m_date.group(2)
+
+    source = None
+    for s in sorted(known_sources, key=lambda x: len(x), reverse=True):
+        if name.lower().endswith(f"_{s.lower()}"):
+            source = s
+            name = name[:-len(f"_{s}")]
+            break
+
+    title = name
+    return date_prefix, title, source, counter
+
+
+def run_associate(args):
+    """扫描未关联/断链的物理 PDF 文件，智能匹配回填数据库 resources 表"""
+    project_root = PROJECT_ROOT
+    target_db = getattr(args, "db", None) or get_db_path()
+    run_mode = getattr(args, "run", False)
+
+    print("=" * 70)
+    print(f"[*] 启动 PDF 孤儿文件与断链记录智能关联程序")
+    print(f"[*] 运行模式: {'【正式执行模式 (写入数据库)】' if run_mode else '【预览模式 (Dry Run)】'}")
+    print(f"[*] 项目根目录: {project_root}")
+    print(f"[*] 目标数据库: {target_db}")
+    print("=" * 70)
+
+    if not os.path.exists(target_db):
+        print(f"[-] 错误: 数据库文件不存在: {target_db}")
+        return
+
+    # 1. 扫描磁盘上所有 PDF 物理文件
+    print("[*] 正在扫描磁盘 PDF 物理文件...")
+    disk_pdfs = {}  # norm_rel_path_lower -> (rel_p, abs_p, size)
+    for root, dirs, files in os.walk(project_root):
+        if any(ig in root for ig in [".venv", ".git", ".vscode", "__pycache__", ".agents"]):
+            continue
+        for f in files:
+            if f.lower().endswith(".pdf"):
+                abs_p = os.path.join(root, f)
+                rel_p = os.path.relpath(abs_p, project_root).replace("\\", "/")
+                sz = os.path.getsize(abs_p)
+                disk_pdfs[rel_p.lower()] = (rel_p, abs_p, sz)
+
+    print(f"[+] 磁盘共发现 {len(disk_pdfs)} 个 PDF 物理文件。")
+
+    # 2. 读取数据库记录
+    print("[*] 正在加载数据库资源记录...")
+    conn = sqlite3.connect(target_db)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, title, publish_time, url, pdf_path, source FROM resources")
+    rows = cursor.fetchall()
+    print(f"[+] 成功加载 {len(rows)} 条数据库记录。")
+
+    known_sources = set(r["source"].lower() for r in rows if r["source"])
+
+    # 建立数据库引用与标题索引
+    db_path_map = defaultdict(list)
+    db_by_sanitized_title_and_source = defaultdict(list)
+    db_by_sanitized_title = defaultdict(list)
+
+    for r in rows:
+        p = normalize_rel_path(r["pdf_path"], project_root)
+        if p:
+            db_path_map[p.lower()].append(r)
+
+        t = r["title"] or ""
+        t_clean = t.strip().lower()
+        t_sanitized = sanitize_filename(t).strip().lower()
+        s = (r["source"] or "").strip().lower()
+
+        db_by_sanitized_title[t_clean].append(r)
+        if t_sanitized != t_clean:
+            db_by_sanitized_title[t_sanitized].append(r)
+
+        if s:
+            db_by_sanitized_title_and_source[(t_clean, s)].append(r)
+            if t_sanitized != t_clean:
+                db_by_sanitized_title_and_source[(t_sanitized, s)].append(r)
+
+    # 3. 找出未被 DB pdf_path 引用的磁盘文件
+    unreferenced_disk = [v for k, v in disk_pdfs.items() if k not in db_path_map]
+    print(f"[*] 磁盘上未被数据库 pdf_path 引用的文件数: {len(unreferenced_disk)}")
+
+    # 4. 执行匹配与生成计划
+    fill_empty_plan = []    # (record_id, title, old_path, new_rel_path, source)
+    repair_broken_plan = [] # (record_id, title, old_path, new_rel_path, source)
+    duplicate_kept_count = 0
+    pure_orphan_count = 0
+
+    assigned_record_ids = set()
+
+    for rel_p, abs_p, sz in unreferenced_disk:
+        fname = os.path.basename(rel_p)
+        dt, t, s, cnt = parse_pdf_filename(fname, known_sources)
+        t_key = t.strip().lower()
+
+        matched_recs = []
+        if s and (t_key, s.lower()) in db_by_sanitized_title_and_source:
+            matched_recs = db_by_sanitized_title_and_source[(t_key, s.lower())]
+        elif t_key in db_by_sanitized_title:
+            matched_recs = db_by_sanitized_title[t_key]
+
+        if not matched_recs:
+            pure_orphan_count += 1
+            continue
+
+        # 优先寻找未分配过的空路径记录
+        empty_recs = [
+            r for r in matched_recs
+            if not normalize_rel_path(r["pdf_path"], project_root) and r["id"] not in assigned_record_ids
+        ]
+        # 其次寻找未分配过的断链记录 (路径文件已不存在)
+        broken_recs = [
+            r for r in matched_recs
+            if normalize_rel_path(r["pdf_path"], project_root)
+            and normalize_rel_path(r["pdf_path"], project_root).lower() not in disk_pdfs
+            and r["id"] not in assigned_record_ids
+        ]
+        # 检查是否已有其他有效记录
+        valid_recs = [
+            r for r in matched_recs
+            if normalize_rel_path(r["pdf_path"], project_root)
+            and normalize_rel_path(r["pdf_path"], project_root).lower() in disk_pdfs
+        ]
+
+        if empty_recs:
+            target_r = empty_recs[0]
+            assigned_record_ids.add(target_r["id"])
+            fill_empty_plan.append((target_r["id"], target_r["title"], "", rel_p, target_r["source"]))
+        elif broken_recs:
+            target_r = broken_recs[0]
+            assigned_record_ids.add(target_r["id"])
+            repair_broken_plan.append((target_r["id"], target_r["title"], target_r["pdf_path"], rel_p, target_r["source"]))
+        elif valid_recs:
+            duplicate_kept_count += 1
+        else:
+            pure_orphan_count += 1
+
+    total_updates = len(fill_empty_plan) + len(repair_broken_plan)
+
+    print("\n" + "=" * 70)
+    print("                      匹配统计概览")
+    print("=" * 70)
+    print(f" 1. 待更新记录 (空 pdf_path 填充):           {len(fill_empty_plan):>6} 条")
+    print(f" 2. 待更新记录 (失效/断链 pdf_path 修复):    {len(repair_broken_plan):>6} 条")
+    print(f" 3. 待更新记录总数:                         {total_updates:>6} 条")
+    print(f" 4. 已有有效关联的重复/多版本副本 (保持保护): {duplicate_kept_count:>6} 个")
+    print(f" 5. 纯孤立文件 (无对应标题记录):             {pure_orphan_count:>6} 个")
+    print("=" * 70)
+
+    if total_updates == 0:
+        print("[+] 无需更新任何数据库记录。")
+        conn.close()
+        return
+
+    # 打印前 10 个示例
+    print("\n[示例] 拟更新记录预览 (前 10 条):")
+    sample_list = (fill_empty_plan + repair_broken_plan)[:10]
+    for idx, (rec_id, title, old_p, new_p, src) in enumerate(sample_list, 1):
+        action = "【填充空路径】" if not old_p else "【修复断链】"
+        print(f"  {idx:>2}. ID: {rec_id} | 来源: {src} | 动作: {action}")
+        print(f"      标题: {title[:40]}")
+        print(f"      旧路径: {old_p or '(空)'}")
+        print(f"      新路径: {new_p}")
+
+    if not run_mode:
+        print("\n" + "-" * 70)
+        print("[!] 当前为【预览模式 (Dry Run)】，数据库未作任何变更。")
+        print("[!] 若确认执行更正，请添加 --run 参数运行:")
+        print("    python fixes/pdf_maintenance.py associate --run")
+        print("-" * 70)
+        conn.close()
+        return
+
+    # 5. 正式执行模式
+    print("\n[*] 准备执行更新，正在备份数据库...")
+    backup_file = backup_db(target_db, "fix_associations")
+    print(f"[+] 数据库备份完毕: {backup_file}")
+
+    print(f"[*] 正在批量更新 {total_updates} 条记录...")
+    updated_count = 0
+    try:
+        cursor.execute("BEGIN TRANSACTION")
+        
+        # 执行空路径填充
+        for rec_id, title, old_p, new_p, src in fill_empty_plan:
+            cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (new_p, rec_id))
+            updated_count += 1
+
+        # 执行断链修复
+        for rec_id, title, old_p, new_p, src in repair_broken_plan:
+            cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (new_p, rec_id))
+            updated_count += 1
+
+        conn.commit()
+        print(f"[+] 数据库更新成功！共完成 {updated_count} 条记录的 pdf_path 更正。")
+    except Exception as e:
+        conn.rollback()
+        print(f"[-] 更新过程中发生异常，事务已回滚: {e}")
+    finally:
+        conn.close()
+
+
+# ===================================================================
+# 功能 7: clean-missing - 清理缺失记录
+# ===================================================================
+def run_clean_missing_records(args):
+    """清理数据库中对应物理 PDF 文件已不存在的残留记录（原 clean_deleted_records.py）"""
+    db_path = getattr(args, "db", None) or get_db_path()
+    pdf_base = os.path.abspath(PDF_BASE_DIR)
+    scope = getattr(args, "scope", "unknown")
+
+    print("=" * 60)
+    print("           清理物理缺失 PDF 对应的数据库脏记录")
+    print("=" * 60)
+    print(f"[*] 运行模式: {'【正式删除模式】' if args.run else '【预览模式 (Dry Run)】'}")
+    print(f"[*] 数据库路径: {db_path}")
+    print(f"[*] 扫描范围: {'Unknown_Year 目录' if scope == 'unknown' else '全量 PDF 记录'}")
+    print("=" * 60)
+
+    if not os.path.exists(db_path):
+        print(f"[-] 错误: 数据库文件不存在: {db_path}")
+        return
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    if scope == "unknown":
+        cursor.execute("SELECT id, title, pdf_path FROM resources WHERE pdf_path LIKE '%Unknown_Year%'")
+    else:
+        cursor.execute("SELECT id, title, pdf_path FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
+
+    rows = cursor.fetchall()
+    print(f"[*] 数据库中待检查记录数: {len(rows)}")
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    to_delete = []
+
+    for r_id, title, pdf_path in rows:
+        if not pdf_path:
+            continue
+        abs_p = pdf_path if os.path.isabs(pdf_path) else os.path.join(project_root, pdf_path)
+        if not os.path.exists(abs_p):
+            to_delete.append((r_id, title, pdf_path))
+
+    print(f"[*] 发现物理文件已不存在但数据库中残留的记录数: {len(to_delete)}")
+    print("=" * 60)
+
+    if not to_delete:
+        print("[+] 没有需要清理的记录。")
+        conn.close()
+        return
+
+    for idx, (r_id, title, pdf_path) in enumerate(to_delete[:50], 1):
+        print(f"[{idx}] ID: {r_id} | 标题: {title[:50]} | 路径: {pdf_path}")
+    if len(to_delete) > 50:
+        print(f"  ... 以及其他 {len(to_delete) - 50} 条记录")
+
+    print("=" * 60)
+
+    if args.run:
+        print(f"[*] 开始从数据库删除这 {len(to_delete)} 条记录...")
+        delete_ids = [item[0] for item in to_delete]
+        batch_size = 500
+        for i in range(0, len(delete_ids), batch_size):
+            batch = delete_ids[i:i + batch_size]
+            placeholders = ",".join("?" for _ in batch)
+            cursor.execute(f"DELETE FROM resources WHERE id IN ({placeholders})", batch)
+        conn.commit()
+        print(f"[+] 成功删除了 {len(delete_ids)} 条残留记录！")
+        vacuum_db(conn)
+    else:
+        print("[*] 当前为预览模式，未执行任何删除操作。")
+        print("[*] 确认删除请运行: python fixes/pdf_maintenance.py clean-missing --run")
+
+    conn.close()
+
+
+# ===================================================================
+# 功能 8: dedup - PDF 物理文件多维查重、去重与数据库引用纠偏
+# ===================================================================
+def run_dedup(args):
+    from fixes.pdf_dedup import run_pdf_dedup
+    run_pdf_dedup(
+        mode=getattr(args, "mode", "all"),
+        keep=getattr(args, "keep", "primary"),
+        run=getattr(args, "run", False),
+        export_csv=getattr(args, "export_csv", False),
+        trash=getattr(args, "trash", False),
+        db_path=getattr(args, "db", None),
+        max_workers=getattr(args, "workers", 16),
+    )
+
+
+# ===================================================================
+# 主入口 - 支持子命令: check-dates, fix-paths, redownload, rebuild, orphan, associate, clean-missing, dedup
 # ===================================================================
 def main():
     setup_console_utf8()
     parser = argparse.ArgumentParser(
-        description="PDF 维护工具合集 - 检查日期、修正路径、重新下载小文件、重建缺失文件、管理多余PDF、清理缺失记录")
+        description="PDF 维护工具合集 - 检查日期、修正路径、重新下载小文件、并发重建缺失文件、孤儿管理、智能关联、清理缺失记录、多维查重去重")
     subparsers = parser.add_subparsers(dest="command", help="可用的子命令")
 
     # check-dates
@@ -1490,16 +2418,28 @@ def main():
     p_redl.set_defaults(func=run_redownload_small_pdfs)
 
     # rebuild
-    p_rebuild = subparsers.add_parser("rebuild", help="重建缺失的 PDF 文件并路径相对化")
+    p_rebuild = subparsers.add_parser("rebuild", help="重建缺失的 PDF 文件并路径相对化 (支持多线程并发)")
     p_rebuild.add_argument("--run", action="store_true", default=False,
                            help="正式执行修复和更新，不加此参数时仅进行预览 (Dry Run)")
+    p_rebuild.add_argument("--workers", "-w", type=int, default=4,
+                           help="并发下载线程数 (默认 4)")
     p_rebuild.add_argument("--skip-download", action="store_true", default=False,
                            help="仅执行路径相对化和纠偏，不重新下载物理缺失的文件")
+    p_rebuild.add_argument("--db", default=None,
+                           help="指定自定义 SQLite 数据库路径")
     p_rebuild.set_defaults(func=run_rebuild)
 
     # orphan
     p_orphan = subparsers.add_parser("orphan", help="检查多余PDF或将多余PDF移回原处")
     p_orphan.set_defaults(func=run_orphan)
+
+    # associate
+    p_assoc = subparsers.add_parser("associate", help="扫描磁盘未关联/断链 PDF，通过标题与站点智能关联回填数据库")
+    p_assoc.add_argument("--run", action="store_true", default=False,
+                         help="正式执行数据库回填更新，不加此参数时仅进行预览 (Dry Run)")
+    p_assoc.add_argument("--db", default=None,
+                         help="指定自定义 SQLite 数据库路径")
+    p_assoc.set_defaults(func=run_associate)
 
     # clean-missing
     p_clean_missing = subparsers.add_parser("clean-missing", help="清理数据库中对应物理 PDF 已不存在的脏记录")
@@ -1507,15 +2447,46 @@ def main():
                                  help="正式执行删除，不加此参数时仅进行预览 (Dry Run)")
     p_clean_missing.add_argument("--scope", choices=["unknown", "all"], default="unknown",
                                  help="扫描范围: unknown (仅 Unknown_Year) 或 all (全部 PDF 记录)")
+    p_clean_missing.add_argument("--db", default=None,
+                                 help="指定自定义 SQLite 数据库路径")
     p_clean_missing.set_defaults(func=run_clean_missing_records)
+
+    # dedup
+    p_dedup = subparsers.add_parser("dedup", help="PDF 文件多维查重、去重与数据库引用纠偏")
+    p_dedup.add_argument("--mode", "-m", choices=["all", "hash", "name", "title", "db"], default="all",
+                         help="查重模式: hash (内容MD5), name/title (文件名与标题变体), db (数据库关联), all (全量综合，默认)")
+    p_dedup.add_argument("--keep", "-k", choices=["primary", "larger", "newest", "oldest"], default="primary",
+                         help="保留策略: primary (规范文件名优先，默认), larger (最大体积), newest (最新生成), oldest (最早生成)")
+    p_dedup.add_argument("--run", action="store_true", default=False,
+                         help="正式执行物理文件清理与数据库重定向，不加此参数时仅进行安全预览 (Dry Run)")
+    p_dedup.add_argument("--export-csv", action="store_true", default=False,
+                         help="导出查重明细至 CSV 审计表")
+    p_dedup.add_argument("--trash", action="store_true", default=False,
+                         help="将多余重复文件移动至 cache/pdf_trash 隔离区而非直接物理删除")
+    p_dedup.add_argument("--db", default=None,
+                         help="指定自定义 SQLite 数据库路径")
+    p_dedup.add_argument("--workers", "-w", type=int, default=16,
+                         help="多线程哈希计算线程数 (默认 16)")
+    p_dedup.set_defaults(func=run_dedup)
 
     args = parser.parse_args()
 
     if args.command is None:
         # 无子命令时，补充所有子命令参数的默认值
-        for attr in ('run', 'verbose', 'skip_download', 'scope'):
+        for attr in ('run', 'verbose', 'skip_download', 'scope', 'mode', 'keep', 'export_csv', 'trash', 'db', 'workers'):
             if not hasattr(args, attr):
-                setattr(args, attr, False if attr != 'scope' else 'unknown')
+                if attr == 'scope':
+                    setattr(args, attr, 'unknown')
+                elif attr == 'mode':
+                    setattr(args, attr, 'all')
+                elif attr == 'keep':
+                    setattr(args, attr, 'primary')
+                elif attr == 'workers':
+                    setattr(args, attr, 4)
+                elif attr == 'db':
+                    setattr(args, attr, None)
+                else:
+                    setattr(args, attr, False)
 
         # 显示交互菜单
         print("=" * 60)
@@ -1526,15 +2497,17 @@ def main():
         print("    1. check-dates   - 检查 PDF 文件与数据库日期的匹配情况并生成报告")
         print("    2. fix-paths     - 将 Unknown_Year 中的 PDF 移到正确年份文件夹 + 全量修复文件名日期不匹配")
         print("    3. redownload    - 重新下载体积小于 20KB 的 PDF 文件")
-        print("    4. rebuild       - 重建缺失的 PDF 文件并路径相对化")
+        print("    4. rebuild       - 重建缺失的 PDF 文件并路径相对化 (多线程并发)")
         print("    5. orphan        - 检查多余PDF或将多余PDF移回原处")
-        print("    6. clean-missing - 清理物理文件已删除但数据库仍残留的脏记录")
+        print("    6. associate     - 扫描未关联/断链 PDF 智能回填数据库")
+        print("    7. clean-missing - 清理物理文件已删除但数据库仍残留的脏记录")
+        print("    8. dedup         - PDF 物理文件多维查重、去重与数据库引用纠偏")
         print()
         print("    0. 退出")
         print("=" * 60)
 
         try:
-            choice = input("请输入序号 [0-6] (直接回车默认 1): ").strip()
+            choice = input("请输入序号 [0-8] (直接回车默认 1): ").strip()
             if not choice:
                 choice = "1"
         except (KeyboardInterrupt, EOFError):
@@ -1552,7 +2525,11 @@ def main():
         elif choice == "5":
             run_orphan(args)
         elif choice == "6":
+            run_associate(args)
+        elif choice == "7":
             run_clean_missing_records(args)
+        elif choice == "8":
+            run_dedup(args)
         elif choice == "0":
             print("[*] 已退出。")
             sys.exit(0)
@@ -1565,4 +2542,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 

@@ -12,7 +12,7 @@
    - 配额对照: 提供 Supabase Free Tier (500 MB 数据库存储) 阈值参考。
 
 2. Cloudflare R2 (S3 兼容对象存储):
-   - 对象总数与大小: 递归扫描 pdfs/ 目录下的全部 PDF，计算总文件数与总字节容量（以 B/KB/MB/GB/TB 人类可读格式呈现）。
+   - 对象总数与大小: 递归扫描 pdf/ 目录下的全部 PDF，计算总文件数与总字节容量（以 B/KB/MB/GB/TB 人类可读格式呈现）。
    - 年份分布统计: 细分并统计各年份文件夹（如 2024、2025、Unknown_Year 等）的文件数量与占用体积占比。
    - 局部过滤: 支持通过 --year 参数定向统计某一年份。
    - 配额对照: 提供 Cloudflare R2 Free Tier (10 GB 存储 + 每月 100 万次 Class A 操作) 阈值参考。
@@ -221,10 +221,9 @@ def query_r2(year=None):
 
     # 构建前缀列表
     if year:
-        prefixes = [f"pdfs/{year}/"]
+        prefixes = [f"pdf/{year}/"]
     else:
-        # 扫描所有年份前缀
-        prefixes = ["pdfs/"]
+        prefixes = ["pdf/"]
 
     total_count = 0
     total_size = 0

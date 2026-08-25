@@ -9,7 +9,7 @@
 
 用法:
     python analysis/analyze_r2_dates.py                  # 完整分析并打印控制台报表
-    python analysis/analyze_r2_dates.py --prefix pdfs/2026/  # 指定前缀扫描
+    python analysis/analyze_r2_dates.py --prefix pdf/2026/   # 指定前缀扫描
     python analysis/analyze_r2_dates.py --export-csv     # 导出结果到 CSV 文件
     python analysis/analyze_r2_dates.py --export-json    # 导出结果到 JSON 文件
 """
@@ -45,7 +45,7 @@ def fmt_size(sz):
     return f"{sz} B"
 
 
-def analyze_r2_pdf_dates(prefix="pdfs/", tz_offset_hours=8):
+def analyze_r2_pdf_dates(prefix="pdf/", tz_offset_hours=8):
     """
     扫描并分析 R2 存储桶中的 PDF 文件日期分布
     """
@@ -234,7 +234,7 @@ def export_to_json(results, output_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Cloudflare R2 云端 PDF 数量与体积日期分布分析")
-    parser.add_argument("--prefix", type=str, default="pdfs/", help="指定 R2 扫描前缀 (默认: pdfs/)")
+    parser.add_argument("--prefix", type=str, default="pdf/", help="指定 R2 扫描前缀 (默认: pdf/)")
     parser.add_argument("--export-csv", action="store_true", help="是否导出 CSV 统计表格")
     parser.add_argument("--export-json", action="store_true", help="是否导出 JSON 原始统计数据")
     parser.add_argument("--output-dir", type=str, default=os.path.join(PROJECT_ROOT, "analysis"), help="导出文件存放目录")

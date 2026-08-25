@@ -132,8 +132,11 @@ class BrowserFactory:
                     logger.info("[+] 线程 %s 成功启动内置 Chromium 持久化上下文", threading.get_ident())
             else:
                 # 创建临时上下文 — 代理仅在 launch() 层设置，new_context() 不再重复传递
-                # 避免 Playwright 双层代理可能导致连接冲突或认证失败
-                browser = p.chromium.launch(headless=headless, args=launch_args, proxy=playwright_proxy)
+                # 避免 Playwright 双层代理可能导致连接冲突或认证失败，优先使用本地已安装的 Chrome
+                try:
+                    browser = p.chromium.launch(headless=headless, channel="chrome", args=launch_args, proxy=playwright_proxy)
+                except Exception:
+                    browser = p.chromium.launch(headless=headless, args=launch_args, proxy=playwright_proxy)
                 context = browser.new_context(
                     viewport=viewport,
                     locale=locale,

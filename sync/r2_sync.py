@@ -5,7 +5,7 @@
 包含以下核心功能特性：
 
 1. 多线程并发下载与智能断点续传:
-   - 目录并行扫描: 自动按年份前缀 (pdfs/2024/、pdfs/2025/ 等) 开启多线程并行检索清单，极大加速海量对象列举过程。
+   - 目录并行扫描: 自动按年份前缀 (pdf/2024/、pdf/2025/ 等) 开启多线程并行检索清单，极大加速海量对象列举过程。
    - 智能断点续传: 默认开启 --resume，下载前比对本地文件与云端文件大小，自动跳过已完整下载的文件，节省带宽与时间。
    - 实时进度监控: 独立后台监控线程实时输出已下载/跳过/失败数、传输速率 (文件数/秒 与 MB/s) 及动态预估剩余时间 (ETA)。
    - 自定义并发与路径: 支持通过 --workers 调节下载并发数（默认 30 并发），支持通过 --output 指定本地存储目标路径。
@@ -28,7 +28,7 @@
   python sync/r2_sync.py --no-resume                  # 强制重新下载所有文件（禁用断点续传）
   python sync/r2_sync.py --delete                     # 下载完成后提示是否清理 R2 上的文件
   python sync/r2_sync.py --delete-only                # 仅执行云端文件清理删除操作（不下载）
-  python sync/r2_sync.py --delete-only --delete-prefix pdfs/2024/ # 仅删除指定年份前缀的文件
+  python sync/r2_sync.py --delete-only --delete-prefix pdf/2024/ # 仅删除指定年份前缀的文件
   python sync/r2_sync.py --delete-only --dry-run      # 模拟删除预览（不执行物理删除）
   python sync/r2_sync.py --delete-only --delete-force # 跳过确认直接批量删除
 """
@@ -107,10 +107,14 @@ def _list_single_prefix(client, prefix, max_keys=None):
             })
             if max_keys and len(pdfs) >= max_keys:
                 return pdfs[:max_keys]
-    return pdfs
+def _strip_pdf_prefix(key: str) -> str:
+    """去除 key 前缀中的 pdf/"""
+    if key.startswith("pdf/"):
+        return key[len("pdf/"):]
+    return key
 
 
-def list_all_pdfs(client, prefix="pdfs/", max_keys=None):
+def list_all_pdfs(client, prefix="pdf/", max_keys=None):
     """列出 R2 中的所有 PDF 文件（支持按年份/子目录并行并发检索）"""
     try:
         resp = client.list_objects_v2(Bucket=R2_BUCKET_NAME, Prefix=prefix, Delimiter="/")
@@ -185,7 +189,7 @@ _counter = {"success": 0, "skipped": 0, "failed": 0, "total_bytes": 0, "done": 0
 def _download_one(pdf, output_dir, resume):
     """下载单个文件"""
     key = pdf["key"]
-    relative_path = key[len("pdfs/"):] if key.startswith("pdfs/") else key
+    relative_path = _strip_pdf_prefix(key)
     local_path = os.path.join(output_dir, relative_path)
     local_dir = os.path.dirname(local_path)
 
@@ -433,7 +437,7 @@ def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, sho
 
     for obj in delete_candidates:
         key = obj["key"]
-        relative_path = key[len("pdfs/"):] if key.startswith("pdfs/") else key
+        relative_path = _strip_pdf_prefix(key)
         found_local = False
         for sd in search_dirs:
             local_path = os.path.join(sd, relative_path)
@@ -463,7 +467,7 @@ def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, sho
         print(f"以下 {len(local_missing)} 个文件在本地没有副本（总计 {format_size(missing_size)}）：")
         if show_details:
             for obj in local_missing:
-                local_part = obj["key"][len("pdfs/"):] if obj["key"].startswith("pdfs/") else obj["key"]
+                local_part = _strip_pdf_prefix(obj["key"])
                 print(f"  📄 {local_part}  ({format_size(obj['size'])})")
         else:
             print(f"  (文件列表已隐藏)")
@@ -535,7 +539,7 @@ def main():
     parser.add_argument("--dry-run", "-n", action="store_true",
                         help="只列出要删除的文件，不实际删除")
     parser.add_argument("--delete-prefix", default=None,
-                        help="删除时仅删除指定前缀的文件（如 pdfs/2025/）")
+                        help="删除时仅删除指定前缀的文件（如 pdf/2025/）")
     parser.add_argument("--delete-only", action="store_true",
                         help="仅执行删除操作，不下载")
     args = parser.parse_args()
@@ -560,9 +564,9 @@ def main():
     print(f"[*] 初始化 R2 客户端...")
     client = get_r2_client()
 
-    prefix = "pdfs/"
+    prefix = "pdf/"
     if args.year:
-        prefix = f"pdfs/{args.year}/"
+        prefix = f"pdf/{args.year}/"
         print(f"[*] 仅操作 {args.year} 年的文件")
 
     if args.delete_only:

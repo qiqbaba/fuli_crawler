@@ -56,7 +56,7 @@ class PDFGenerator:
         """获取 PDF 本地临时/持久化保存路径"""
         if self.r2_uploader:
             import tempfile
-            base = os.path.join(tempfile.gettempdir(), f"{source_name}_pdfs")
+            base = os.path.join(tempfile.gettempdir(), f"{source_name}_pdf")
         else:
             base = PDF_BASE_DIR
 
@@ -82,7 +82,7 @@ class PDFGenerator:
             return None
         if self.r2_uploader:
             year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
-            remote_key = f"pdfs/{year}/{os.path.basename(local_path)}"
+            remote_key = f"pdf/{year}/{os.path.basename(local_path)}"
             result = self.r2_uploader.upload_pdf(local_path, remote_key)
             if os.path.exists(local_path):
                 try:
