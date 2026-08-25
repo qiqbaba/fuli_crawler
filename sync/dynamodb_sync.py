@@ -1,14 +1,30 @@
-"""AWS DynamoDB 数据同步中心 (sync/dynamodb_sync.py)
+"""AWS DynamoDB 云端去重与数据同步中心 (sync/dynamodb_sync.py)
 
-整合 DynamoDB 相关操作：
-  1. upload    - 对比本地 SQLite 与云端 DynamoDB，增量上传缺失的 URL 与磁力链接 (原 upload_to_dynamodb.py)
-  2. sync-keys - 批量生成规范化相对路径去重键并同步到 DynamoDB 及本地 Bloom Filter (原 sync_relative_dedup_keys.py)
+本脚本负责本地爬虫数据与 AWS DynamoDB (fuli_resources 表) 之间的增量同步、相对路径去重键维护与本地 Bloom Filter 构建。
 
-用法:
-  python sync/dynamodb_sync.py                     # 交互式菜单
-  python sync/dynamodb_sync.py upload              # 增量比对并上传
-  python sync/dynamodb_sync.py sync-keys           # 批量同步相对路径去重键
-  python sync/dynamodb_sync.py sync-keys --qps 24  # 免费 Provisioned 模式限速同步
+包含以下 2 大核心子功能与命令：
+
+1. upload: 本地 SQLite 与云端 DynamoDB 增量比对上传
+   - 功能用途:
+     * 自动检测目标 DynamoDB 数据表是否存在，若不存在则以 25 RCU / 25 WCU 的预置读写容量 (Provisioned) 自动创建。
+     * 全量分页扫描 DynamoDB 云端已有 URL 主键集合，与本地 SQLite 进行差集比对，精准定位云端缺失的增量数据。
+     * 采用 DynamoDB batch_write_item (25 条/批次) 执行高效批量写入，内建指数退避重试机制处理 UnprocessedItems，增量同步 URL 及对应磁力链接。
+
+2. sync-keys: 提取规范化相对路径去重键批量同步至 DynamoDB 与 Bloom Filter
+   - 功能用途:
+     * 跨域名去重支持: 当采集站点更换域名/镜像时，原绝对 URL 会导致去重失效。本功能通过 get_url_dedup_key 将绝对 URL 转换为站点无关的规范化相对路径键 (如 /article/12345.html)。
+     * 双端同步更新: 一方面批量写入云端 DynamoDB，另一方面同步构建并持久化本地 Bloom Filter 二进制缓存 (cache/url_bloom.bin)，使爬虫端可在本地享受极速布隆过滤，降低网络开销。
+     * 速率与配额保护: 支持 --qps 参数（如 --qps 24），使写入速率平滑限制在 AWS Free Tier (25 WCU) 免费额度内，彻底防止超频触发限流异常；同时亦支持无限制的多线程并发模式 (--workers)。
+     * 灵活过滤: 支持 --sources 过滤特定站点来源，支持 --limit 限制同步条数。
+
+用法与命令示例:
+  python sync/dynamodb_sync.py                                    # 交互式主菜单
+  python sync/dynamodb_sync.py upload                             # 增量比对并上传全部缺失记录
+  python sync/dynamodb_sync.py upload --db /path/to/custom.db     # 指定本地数据库进行增量上传
+  python sync/dynamodb_sync.py sync-keys                          # 极速并发同步规范化相对路径去重键
+  python sync/dynamodb_sync.py sync-keys --qps 24                 # 限制写入速率为 24 QPS (适配免费层 25 WCU)
+  python sync/dynamodb_sync.py sync-keys --sources datang jingpin # 仅同步指定来源的去重键
+  python sync/dynamodb_sync.py sync-keys --limit 1000             # 限制处理前 1000 条记录（测试用）
 """
 
 import argparse

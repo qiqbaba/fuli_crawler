@@ -1,16 +1,31 @@
-"""Supabase 到本地 SQLite 数据同步与归档工具 (sync/supabase_sync.py)
+"""Supabase (PostgreSQL) 云端到本地 SQLite 数据同步、去重合并与归档工具 (sync/supabase_sync.py)
 
-主要功能与执行流程：
-1. 自动备份本地数据库：在同步前将本地 SQLite 备份为带时间戳的文件。
-2. 初始化本地结构：确保本地 SQLite 数据库中的 resources 表结构及唯一键索引正常就绪。
-3. 分页拉取与去重合并：通过 ID 游标分页从 Supabase 云端批量拉取 resources 记录，采用 INSERT OR IGNORE 方式无损合并到本地 SQLite。
-4. 数据统计汇报：输出云端读取总数、本地新增条数、重复忽略条数及当前本地总记录数。
-5. 可选清理云端数据：同步完成后支持确认清理云端已同步的历史数据，以释放 Supabase 免费配额与存储空间。
+本脚本负责将部署在 Supabase 云端数据库 (PostgreSQL) 中的爬虫数据安全、无损地拉取并合并至本地 SQLite 数据库，并可选择在本地备份完毕后分批清理云端已同步的数据以释放 Supabase 500MB 免费配额。
 
-用法:
-  python sync/supabase_sync.py                      # 交互式同步
-  python sync/supabase_sync.py --no-backup          # 同步但不备份本地库
-  python sync/supabase_sync.py --delete-cloud       # 自动清理云端已同步记录
+核心执行流程与功能特性：
+
+1. 本地数据库安全前置备份:
+   - 同步开始前，自动创建带时间戳的本地 SQLite 备份副本 (格式: db.bak_supabase_YYYYMMDD_HHMMSS)，防止本地数据被意外污染或中断损坏。支持 --no-backup 参数跳过。
+
+2. 本地表结构自检与唯一索引保障:
+   - 自动调用 DBManager.ensure_tables 初始化本地 resources 表结构与 12 项标准字段，并构建 url 唯一索引 idx_resource_url，为去重插入做好准备。
+
+3. 基于 ID 游标的高性能流式拉取与幂等合并:
+   - 采用 ID 游标分页 (.gt("id", last_id).order("id").limit(1000))，避免深度分页性能衰减与数据遗漏。
+   - 采用 SQLite 事务批量 INSERT OR IGNORE 方式写入，对于已存在相同 URL 的记录自动去重忽略，确保云端到本地合并的完全幂等性与数据无损性。
+
+4. 结构化同步结果汇报:
+   - 清晰统计并输出：云端读取总数、本地新增条数、重复忽略条数及同步后本地总记录数。
+
+5. 云端已同步数据分批安全清理:
+   - 在确认本地数据已成功合并后，支持交互式确认（输入 'DELETE'）或通过参数 --delete-cloud 自动触发云端清理。
+   - 采用大步长区间切片 (每次 10,000 条 ID 范围) 批量执行云端 DELETE，安全平滑释放 Supabase 的数据库存储空间。
+
+用法与命令示例:
+  python sync/supabase_sync.py                                    # 交互式同步（同步后询问是否清理云端）
+  python sync/supabase_sync.py --db /path/to/custom.db            # 指定自定义本地 SQLite 数据库路径
+  python sync/supabase_sync.py --no-backup                        # 跳过同步前的本地数据库备份步骤
+  python sync/supabase_sync.py --delete-cloud                     # 同步合并完成后自动分批删除云端已同步记录
 """
 
 import os

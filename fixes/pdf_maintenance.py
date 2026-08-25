@@ -1,3 +1,46 @@
+"""PDF 文件全生命周期维护与数据库同步工具合集 (fixes/pdf_maintenance.py)
+
+本脚本整合了 PDF 物理文件与 SQLite 数据库之间的一致性检查、路径规范、异常修复、缺失重建、孤儿隔离及脏数据清理等全生命周期维护功能。
+
+包含以下 6 大核心子命令与维护流程：
+
+1. check-dates: PDF 文件与数据库发布日期比对审计
+   - 功能用途: 递归扫描本地 pdf/ 目录下的全部物理 PDF 文件，提取文件名中的日期与标题，并与数据库中对应的 publish_time 及记录信息进行比对。
+   - 产出物: 自动生成 Markdown 审计报告 (pdf_date_check_report.md)，列出日期不符、数据库中未找到 (孤立文件)、多重匹配冲突等明细列表。
+
+2. fix-paths: PDF 文件名日期修正与年份目录纠偏
+   - Phase 1 (Unknown_Year 修复): 扫描 pdf/Unknown_Year 目录下以 Unknown_Date 开头的 PDF，根据数据库记录的有效 publish_time 将其重命名并迁移至对应年份文件夹（如 pdf/2025/）。
+   - Phase 2 (全量一致性纠偏): 递归扫描所有年份目录，比对物理文件名日期与数据库日期，自动修正文件名日期前缀、移动至正确年份目录并同步更新数据库中的 pdf_path 路径。
+
+3. redownload: 重新抓取渲染体积过小 (<20KB) 的损坏 PDF
+   - 功能用途: 扫描物理目录中体积小于 20KB 的异常 PDF 文件（通常因反爬拦截、页面 404 或未加载完全导致）。
+   - 修复方式: 拉起 Playwright 无头浏览器重新访问源 URL，注入针对性的广告屏蔽脚本，重新渲染生成标准 A4 边距 PDF 并覆盖旧文件。
+
+4. rebuild: 重建缺失 PDF 文件与路径相对化
+   - 路径相对化: 扫描数据库中所有包含 pdf_path 的有效记录，将绝对路径统一转为相对路径 (如 pdf/2025/xxx.pdf)。
+   - 缺失重建: 找出物理文件不存在的有效记录，根据 source 适配各站点的渲染配置 (CONFIG_MAP，包括 seju, gcbt, madou, datang, jingpin_toupai, taose 等针对性的反爬、滚动加载及去广告规则)，重新拉起 Playwright 抓取并生成 PDF。
+   - 选项: 支持 --skip-download 仅执行路径相对化与数据库纠偏。
+
+5. orphan: 多余/孤立 PDF 文件管理与还原
+   - 模式 1 (检查多余): 扫描各年份目录下的 PDF，比对数据库中是否有匹配记录；将数据库中无记录的多余/废弃 PDF 隔离移至 /pdf 根目录。
+   - 模式 2 (恢复归位): 扫描 /pdf 根目录下的隔离 PDF，通过文件名日期或数据库标题索引智能分析归属，自动移回对应年份子目录并补齐日期前缀。
+
+6. clean-missing: 清理数据库中对应物理 PDF 已丢失的残留脏记录
+   - 功能用途: 反向扫描数据库，检测 pdf_path 指向的物理文件是否真实存在（支持 --scope unknown 仅检查 Unknown_Year 或 --scope all 检查全量）。
+   - 清理机制: 批量删除物理文件已不存在的数据库记录，并在删除后自动执行 VACUUM 回收数据库物理空间。
+
+用法与命令示例:
+  python fixes/pdf_maintenance.py                             # 交互式主菜单 (包含 1-6 选项)
+  python fixes/pdf_maintenance.py check-dates                 # 运行日期检查并生成报告
+  python fixes/pdf_maintenance.py fix-paths                   # 预览路径与文件名修复计划 (Dry Run)
+  python fixes/pdf_maintenance.py fix-paths --run             # 正式执行路径与文件名纠偏
+  python fixes/pdf_maintenance.py redownload --run            # 重新下载覆盖 <20KB 的 PDF 文件
+  python fixes/pdf_maintenance.py rebuild --run               # 路径相对化并重新生成缺失 PDF
+  python fixes/pdf_maintenance.py rebuild --run --skip-download # 仅执行路径相对化更新
+  python fixes/pdf_maintenance.py orphan                      # 孤儿文件隔离/还原交互菜单
+  python fixes/pdf_maintenance.py clean-missing --run         # 清理物理文件已丢失的数据库记录
+"""
+
 import os
 import re
 import sys
@@ -16,18 +59,7 @@ from utils import setup_console_utf8
 from utils.browser_factory import browser_factory
 from utils.metadata_parser import sanitize_filename
 from utils.pdf_utils import parse_filename, clean_title_suffix, to_relative_path, generate_unique_path
-
-
-# =============================================================================
-# PDF 维护工具合集
-# 合并自: check_pdf_dates.py, fix_pdf_files.py, rebuild_missing_pdfs.py
-#
-# 功能:
-#   1. check-dates  - 检查 PDF 文件与数据库日期的匹配情况并生成报告
-#   2. fix-paths    - 将 Unknown_Year 中的 PDF 按数据库日期移到正确年份文件夹
-#   3. redownload   - 重新下载体积小于 20KB 的 PDF
-#   4. rebuild      - 重建缺失的 PDF 文件并路径相对化
-# =============================================================================
+from fixes.db_utils import vacuum_db
 
 date_regex = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -1420,9 +1452,7 @@ def run_clean_missing_records(args):
             cursor.execute(f"DELETE FROM resources WHERE id IN ({placeholders})", batch)
         conn.commit()
         print(f"[+] 成功删除了 {len(delete_ids)} 条残留记录！")
-        print("[*] 正在执行 VACUUM 回收磁盘空间...")
-        cursor.execute("VACUUM")
-        print("[+] 数据库压缩完成。")
+        vacuum_db(conn)
     else:
         print("[*] 当前为预览模式，未执行任何删除操作。")
         print("[*] 确认删除请运行: python fixes/pdf_maintenance.py clean-missing --run")

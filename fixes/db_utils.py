@@ -1,6 +1,23 @@
-"""fixes/ 目录下的数据库与维护操作公共工具函数
+"""fixes/ 目录数据库与文件维护操作公共工具库 (fixes/db_utils.py)
 
-提供 fixes/ 中各脚本通用的 sys.path 引导、控制台配置、SQLite 连接、列检测、备份及路径解析等功能。
+主要用途与功能概览：
+1. 模块环境引导 (setup_fixes_module):
+   - 自动定位项目根目录并安全插入 sys.path，保证 fixes/ 内脚本可直接作为入口独立执行。
+   - 初始化 Windows 控制台 UTF-8 编码输出，防止中文乱码。
+
+2. 数据库连接与元数据探测:
+   - get_db_path: 统一解析并返回有效的 SQLite 数据库路径（优先使用参数指定路径，缺省回退到 config.get_db_path()）。
+   - get_connection: 获取标准 SQLite 数据库连接。
+   - get_columns: 使用 PRAGMA table_info 探测指定数据表（默认 resources）的全部现有列名字段。
+   - get_total_count: 快速统计指定数据表中的记录总行数。
+
+3. 路径安全解析 (resolve_pdf_path):
+   - 兼容处理数据库中存储的历史相对路径与绝对路径，统一转换为项目根目录下的有效绝对路径。
+
+4. 数据安全性与磁盘优化:
+   - backup_db: 在执行任何破坏性写入、批量清洗或表结构迁移前，自动对 SQLite 数据库创建带时间戳的 .bak 副本。
+   - format_size: 将字节大小格式化为易读的 B / KB / MB / GB 字符串表示。
+   - vacuum_db: 批量删除脏记录或去重后执行 VACUUM 释放物理磁盘碎片空间。
 """
 
 import os
@@ -116,6 +133,19 @@ def format_size(num_bytes: float) -> str:
 def vacuum_db(conn: sqlite3.Connection) -> None:
     """执行 VACUUM 释放已删除记录占用的数据库磁盘空间"""
     print("[*] 正在执行 VACUUM 压缩数据库以回收磁盘空间...")
-    cursor = conn.cursor()
-    cursor.execute("VACUUM")
-    print("[+] 数据库压缩完成！")
+    try:
+        conn.commit()
+    except Exception:
+        pass
+    old_iso = conn.isolation_level
+    try:
+        conn.isolation_level = None
+        conn.execute("VACUUM")
+        print("[+] 数据库压缩完成！")
+    except Exception as e:
+        print(f"[-] VACUUM 执行失败: {e}")
+    finally:
+        try:
+            conn.isolation_level = old_iso
+        except Exception:
+            pass

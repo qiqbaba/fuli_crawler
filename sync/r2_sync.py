@@ -1,17 +1,36 @@
-"""Cloudflare R2 对象存储数据同步与管理中心 (sync/r2_sync.py)
+"""Cloudflare R2 对象存储 PDF 同步、断点续传与生命周期管理中心 (sync/r2_sync.py)
 
-功能：
-  1. 下载：从 Cloudflare R2 下载 PDF 到本地文件夹，保持年份目录结构（支持多线程并发、断点续传）。
-  2. 删除：从 R2 批量删除已同步或指定前缀/年份的文件（支持本地副本比对、安全提示与 dry-run）。
-  3. 客户端：提供 get_r2_client 供全项目复用。
+本脚本负责 Cloudflare R2 对象存储与本地磁盘之间 PDF 文件的双向流转、并发下载、断点续传、本地副本安全比对及云端空间清理。
 
-用法:
-  python sync/r2_sync.py                              # 交互式菜单（默认下载）
-  python sync/r2_sync.py --year 2025                  # 仅下载 2025 年文件
-  python sync/r2_sync.py --workers 30                 # 30 并发下载
-  python sync/r2_sync.py --delete                     # 下载后询问是否清理 R2
-  python sync/r2_sync.py --delete-only                # 仅执行删除
-  python sync/r2_sync.py --delete-only --dry-run      # 模拟删除预览
+包含以下核心功能特性：
+
+1. 多线程并发下载与智能断点续传:
+   - 目录并行扫描: 自动按年份前缀 (pdfs/2024/、pdfs/2025/ 等) 开启多线程并行检索清单，极大加速海量对象列举过程。
+   - 智能断点续传: 默认开启 --resume，下载前比对本地文件与云端文件大小，自动跳过已完整下载的文件，节省带宽与时间。
+   - 实时进度监控: 独立后台监控线程实时输出已下载/跳过/失败数、传输速率 (文件数/秒 与 MB/s) 及动态预估剩余时间 (ETA)。
+   - 自定义并发与路径: 支持通过 --workers 调节下载并发数（默认 30 并发），支持通过 --output 指定本地存储目标路径。
+
+2. 本地副本比对与安全批量删除:
+   - 高效批量删除: 采用 S3 delete_objects API（单批次最多 1000 个对象）结合多线程并发批量删除，处理数万文件仅需数秒。
+   - 副本安全保护:
+     * 自动删除安全文件: 扫描候选删除列表，检测到本地已存在有效副本的文件自动批量删除，安全释放 R2 10GB 免费存储额度。
+     * 孤本确认提示: 检测到本地尚无副本的文件时，主动列出清单并请求人工二次确认，防止误删唯一数据。
+   - 灵活删除策略: 支持下载完成后联动删除 (--delete)、纯删除模式 (--delete-only)、按指定年份/前缀删除 (--delete-prefix)、模拟运行预览 (--dry-run) 及免确认强制模式 (--delete-force)。
+
+3. 全局共享客户端与连接池:
+   - 导出 get_r2_client 工厂函数供全项目复用，支持线程局部长连接缓存，减少频繁 SSL 握手开销。
+
+用法与命令示例:
+  python sync/r2_sync.py                              # 交互式菜单（支持下载与删除引导）
+  python sync/r2_sync.py --year 2025                  # 仅同步/下载 2025 年份的 PDF 文件
+  python sync/r2_sync.py --workers 50                 # 启用 50 个工作线程极速并发下载
+  python sync/r2_sync.py --output D:\\pdf_backup       # 指定自定义本地输出存储路径
+  python sync/r2_sync.py --no-resume                  # 强制重新下载所有文件（禁用断点续传）
+  python sync/r2_sync.py --delete                     # 下载完成后提示是否清理 R2 上的文件
+  python sync/r2_sync.py --delete-only                # 仅执行云端文件清理删除操作（不下载）
+  python sync/r2_sync.py --delete-only --delete-prefix pdfs/2024/ # 仅删除指定年份前缀的文件
+  python sync/r2_sync.py --delete-only --dry-run      # 模拟删除预览（不执行物理删除）
+  python sync/r2_sync.py --delete-only --delete-force # 跳过确认直接批量删除
 """
 
 import os

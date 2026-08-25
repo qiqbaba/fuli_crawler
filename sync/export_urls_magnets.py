@@ -1,5 +1,23 @@
-"""
-将本地数据库中的 url 和 resource_link（磁力链接）字段导出到单独的 db 文件中，保存在 D 盘根目录
+"""本地数据库 URL 与磁力链接轻量化独立导出工具 (sync/export_urls_magnets.py)
+
+主要用途与核心功能：
+1. 轻量化独立库导出:
+   - 从项目本地主 SQLite 数据库 (resources 表) 中提取全部有效的 url 记录与 resource_link (磁力链接) 记录。
+   - 在 D 盘根目录生成结构精炼、体积小巧的独立 SQLite 数据库文件 (D:\\urls_only.db)。
+
+2. 独立表结构与索引优化:
+   - 表 1 [urls]: 包含 (id INTEGER PRIMARY KEY, url TEXT, exported_at TEXT)，并在 url 字段上建立 idx_url 索引。
+   - 表 2 [magnets]: 包含 (id INTEGER PRIMARY KEY, resource_link TEXT, exported_at TEXT)，并在 resource_link 字段上建立 idx_resource_link 索引。
+
+3. 批量高效写入与完整性校验:
+   - 采用 500 条/批次事务批量插入，附加当前导出时间戳。
+   - 导出结束后自动查询并汇报 urls 表与 magnets 表的实际写入总数。
+
+4. 适用场景:
+   - 用于向外部工具、第三方下载器或团队成员分发轻量级纯链接库，无需携带完整的 PDF 元数据与大体积主数据库。
+
+用法:
+  python sync/export_urls_magnets.py
 """
 import sqlite3
 import os

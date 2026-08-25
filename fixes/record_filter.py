@@ -1,15 +1,37 @@
-"""记录过滤与去重清理工具合集 (fixes/record_filter.py)
+"""记录过滤、多维查重与番号分离工具合集 (fixes/record_filter.py)
 
-整合原以下独立脚本：
-  1. duplicates - 数据库重复记录查找、CSV 导出、批量清理及 PDF 级联删除 (原 find_duplicates.py)
-  2. fanhao     - 严格日本 AV 番号识别扫描、统计、独立库导出与批量清理 (原 filter_fanhao.py)
+本脚本集成了数据库重复记录的多维检测、CSV 审计导出、批量去重（支持 PDF 级联清理）以及严格日本番号识别、独立库导出与归档清理功能。
 
-用法:
-  python fixes/record_filter.py                         # 交互式主菜单
-  python fixes/record_filter.py duplicates              # 查重与清理交互模式
-  python fixes/record_filter.py fanhao --interactive    # 番号过滤交互模式
-  python fixes/record_filter.py fanhao --mode export    # 导出番号记录到新库
-  python fixes/record_filter.py fanhao --mode delete    # 删除番号记录 (含 PDF)
+包含以下 2 大核心子模块与命令：
+
+1. duplicates: 数据库多维查重、CSV 导出与批量去重
+   - 多维查重维度:
+     * 单字段维度: URL 地址 (`url`)
+     * 单字段维度: 磁力/资源链接 (`resource_link`)
+     * 复合联合维度: 标题 + 磁力链接 (`title + resource_link`)
+   - 核心功能特性:
+     * 终端摘要与详情分组展示：清晰列出每组重复的 ID、标题、链接及分布。
+     * CSV 审计导出：将全部重复记录导出为带 UTF-8 BOM 编码的 CSV 文件（默认保存至 D:\\ 或 cache/ 目录）。
+     * 灵活去重保留策略：支持按「保留最新一条 (ID 最大)」或「保留最旧一条 (ID 最小)」进行批量去重。
+     * 级联物理文件清理：去重删除数据库记录的同时，可选择级联物理删除关联的多余 PDF 文件，并计算释放的磁盘容量。
+     * 数据库自压缩：去重完成后自动执行 VACUUM 回收磁盘物理碎片。
+
+2. fanhao: 严格日本番号识别、分布统计、独立库导出与批量删除
+   - 核心功能特性:
+     * 严格算法识别：利用 utils.fanhao_filter 模块中的正则引擎与过滤黑名单，严格精准识别标题中的日本成人影片番号（如 ABC-123、FC2-PPV-xxxx、SSIS-xxx 等），避免常规数字序号误判。
+     * 前缀分布统计：统计并输出匹配记录的 Top 20 番号厂商前缀分布柱状统计。
+     * 独立库导出 (--mode export): 将所有匹配到番号的记录无损迁移导出到一个全新的独立 SQLite 数据库中，并生成 fanhao 字段与 URL 唯一索引。
+     * 批量清理与级联删文件 (--mode delete): 从当前数据库中批量删除番号记录，并自动级联删除对应的物理 PDF 文件，释放空间。
+     * 预览与免确认模式：支持 --dry-run 查看预估影响范围，支持 --yes (-y) 在脚本自动化或批处理中免交互执行。
+
+用法与命令示例:
+  python fixes/record_filter.py                              # 进入交互式主菜单
+  python fixes/record_filter.py duplicates                   # 进入查重与去重交互子菜单
+  python fixes/record_filter.py duplicates --db /path/to.db  # 指定数据库查重
+  python fixes/record_filter.py fanhao                       # 扫描并查看当前数据库番号分布
+  python fixes/record_filter.py fanhao --mode export         # 将番号记录导出为独立 SQLite 库
+  python fixes/record_filter.py fanhao --mode delete --dry-run # 预览待删除的番号记录与 PDF
+  python fixes/record_filter.py fanhao --mode delete --yes   # 正式批量删除番号记录并清理对应 PDF
 """
 
 import argparse
@@ -66,38 +88,23 @@ def get_all_duplicates(conn: sqlite3.Connection, column: ColumnSpec, columns: Li
 
     if isinstance(column, tuple):
         col1, col2 = column
-        cursor.execute("DROP TABLE IF EXISTS _dup_pairs")
-        cursor.execute(f"""
-            CREATE TEMP TABLE _dup_pairs (
-                {col1} TEXT NOT NULL,
-                {col2} TEXT NOT NULL
-            )
-        """)
-        cursor.execute(f"""
-            INSERT INTO _dup_pairs ({col1}, {col2})
-            SELECT {col1}, {col2}
-            FROM resources
-            WHERE {col1} IS NOT NULL AND {col1} != ''
-              AND {col2} IS NOT NULL AND {col2} != ''
-            GROUP BY {col1}, {col2}
-            HAVING COUNT(*) > 1
-        """)
-        cursor.execute("SELECT COUNT(*) FROM _dup_pairs")
-        if cursor.fetchone()[0] == 0:
-            cursor.execute("DROP TABLE IF EXISTS _dup_pairs")
-            return []
-
         r_col_list = ", ".join(f"r.{c}" for c in columns)
         cursor.execute(f"""
             SELECT {r_col_list}
             FROM resources r
-            INNER JOIN _dup_pairs d
+            INNER JOIN (
+                SELECT {col1}, {col2}
+                FROM resources
+                WHERE {col1} IS NOT NULL AND {col1} != ''
+                  AND {col2} IS NOT NULL AND {col2} != ''
+                GROUP BY {col1}, {col2}
+                HAVING COUNT(*) > 1
+            ) d
                 ON r.{col1} = d.{col1}
                AND r.{col2} = d.{col2}
             ORDER BY r.{col1}, r.{col2}, r.id
         """)
         rows = cursor.fetchall()
-        cursor.execute("DROP TABLE IF EXISTS _dup_pairs")
 
         result = []
         for row in rows:

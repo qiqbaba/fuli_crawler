@@ -1,15 +1,34 @@
-"""
-统计三个平台的数据量和大小：
-  1. Supabase (PostgreSQL) — 记录数、表大小
-  2. Cloudflare R2 — PDF 文件数、总大小、按年份分布
-  3. AWS DynamoDB — 记录数、表大小
+"""跨平台多云存储与数据库用量统计监控工具 (sync/stats.py)
 
-用法:
-    python stats.py                          # 查询所有平台
-    python stats.py --supabase               # 只查 Supabase
-    python stats.py --r2                     # 只查 R2
-    python stats.py --dynamodb               # 只查 DynamoDB
-    python stats.py --r2 --year 2025         # 只查 R2 指定年份
+本脚本用于实时查询和汇总爬虫系统连接的 3 大云端存储/数据库的资源用量、记录规模与存储占用，协助开发者掌控云端免费额度使用情况。
+
+监控与统计的 3 大云平台指标：
+
+1. Supabase (PostgreSQL 关系型数据库):
+   - 总记录数: 统计 resources 表中的有效记录总数。
+   - 来源分布: 按采集源站点 (source) 统计各渠道抓取数量分布排行榜。
+   - 表物理大小: 优先通过 RPC 函数 (get_table_size) 获取 PostgreSQL 底层 pg_total_relation_size 真实占用；若未创建 RPC 则给出基于平均行大小的预估及 SQL 创建指南。
+   - PDF 记录数: 统计已关联 PDF 路径 (pdf_path) 的记录数量。
+   - 配额对照: 提供 Supabase Free Tier (500 MB 数据库存储) 阈值参考。
+
+2. Cloudflare R2 (S3 兼容对象存储):
+   - 对象总数与大小: 递归扫描 pdfs/ 目录下的全部 PDF，计算总文件数与总字节容量（以 B/KB/MB/GB/TB 人类可读格式呈现）。
+   - 年份分布统计: 细分并统计各年份文件夹（如 2024、2025、Unknown_Year 等）的文件数量与占用体积占比。
+   - 局部过滤: 支持通过 --year 参数定向统计某一年份。
+   - 配额对照: 提供 Cloudflare R2 Free Tier (10 GB 存储 + 每月 100 万次 Class A 操作) 阈值参考。
+
+3. AWS DynamoDB (NoSQL 键值去重数据库):
+   - 表元数据: 查询 fuli_resources 表的状态 (TableStatus) 与创建时间。
+   - 数据规模: 查询云端总条目数 (ItemCount) 与表总大小 (TableSizeBytes)。
+   - 吞吐模式: 查看当前分配的预置读写容量 (Provisioned RCU / WCU) 或按量计费模式。
+   - 配额对照: 提供 AWS DynamoDB Free Tier (25 GB 存储 + 25 RCU / 25 WCU) 阈值参考。
+
+用法与命令示例:
+  python sync/stats.py                          # 一键全量查询并输出所有云平台统计报告
+  python sync/stats.py --supabase               # 仅查询 Supabase (PostgreSQL) 统计
+  python sync/stats.py --r2                     # 仅查询 Cloudflare R2 对象存储统计
+  python sync/stats.py --r2 --year 2025         # 仅查询 Cloudflare R2 指定年份统计
+  python sync/stats.py --dynamodb               # 仅查询 AWS DynamoDB 统计
 """
 import os
 import sys

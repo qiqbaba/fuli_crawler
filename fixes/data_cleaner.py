@@ -1,20 +1,43 @@
 """数据清洗与元数据修复工具合集 (fixes/data_cleaner.py)
 
-整合原以下独立脚本：
-  1. clean-noise       - 清理 resource_link 中的广告推广和标签行 (原 clean_resource_link_noise.py)
-  2. replace-domain    - 批量替换 URL 中的域名/子串 (原 replace_domain.py)
-  3. upgrade-db        - 升级表结构并从标题/链接中解析填入元数据 (原 upgrade_db.py)
-  4. fetch-sizes       - 通过 Darklyn API 批量补全磁力链接文件大小及看门狗 (原 fetch_size_darklyn.py)
-  5. fetch-empty-links - 使用 Playwright 重新访问页面抓取并回填空的 resource_link (原 fix_empty_links.py)
+本脚本集成了数据库记录清洗、URL 域名修正、数据库结构升级、磁力元数据补全及空链接重抓回填等全流程数据维护功能。
 
-用法:
-  python fixes/data_cleaner.py                             # 进入交互式菜单
-  python fixes/data_cleaner.py clean-noise                 # 预览清洗链接噪音
-  python fixes/data_cleaner.py clean-noise --run           # 正式执行清洗
-  python fixes/data_cleaner.py replace-domain --old ... --new ... # 替换域名
-  python fixes/data_cleaner.py upgrade-db                  # 升级数据库结构与元数据
-  python fixes/data_cleaner.py fetch-sizes --limit 50      # 抓取磁力文件大小
-  python fixes/data_cleaner.py fetch-empty-links           # 抓取并回填空资源链接
+包含以下 5 大核心功能与子命令：
+
+1. clean-noise: 清理 resource_link 广告与标签噪声
+   - 功能用途: 扫描 resources 表中所有 resource_link 字段，剔除广告推广行、下载渠道废弃说明、多余标签以及无用空行。
+   - 安全机制: 默认 Dry-Run 预览模式，正式执行 (--run) 前自动创建带时间戳的数据库备份。
+   - 多云同步: 支持通过参数 --sync-supabase 与 --sync-dynamodb 将清洗后的链接同步更新至云端 Supabase 与 AWS DynamoDB。
+
+2. replace-domain: 批量替换 URL 中的域名或镜像子串
+   - 功能用途: 当采集源网站域名变更或发布页镜像更新时，批量替换 resources.url 中的旧域名（如 dyh.393659.xyz 替换为 dtn.628563.xyz）。
+   - 安全机制: 默认预览变更匹配样例，确认后使用 --run 正式写入并备份数据库。
+
+3. upgrade-db: 数据库表结构升级与历史元数据提取
+   - 功能用途:
+     (1) 结构升级: 自动检测 resources 表结构，升级对齐为标准的 12 字段 (id, title, publish_time, category, resource_link, pikpak_link, size, resource_format, link_type, url, pdf_path, source) 并建立 url 唯一索引。
+     (2) 元数据提取: 全量扫描历史记录的 title 与 resource_link，自动正则解析出视频大小 (size)、清晰度/格式 (resource_format) 及 PikPak 分享链接 (pikpak_link) 并批量回填。
+
+4. fetch-sizes: Darklyn API 磁力链接大小批量补全与看门狗守护
+   - 功能用途: 扫描数据库中缺失 size 的磁力链接 (magnet:?xt=urn:btih:...)，并发调用 Darklyn API 批量查询真实文件大小并回填数据库。
+   - 健壮性保障: 自动识别并过滤假种子与蜜罐文件 (如 fake 大小与固定 exe 名称)；结果持久化缓存在 result_darklyn.json 中。
+   - 运行模式:
+     * 常规抓取: 并发抓取指定条数 (--limit) 并可选直接写库 (--apply)。
+     * 看门狗模式 (--watch): 遇 API 故障或不可达时进入守护探测循环，一旦服务恢复自动触发抓取、重试未命中项并写回数据库。
+
+5. fetch-empty-links: Playwright 重新访问页面抓取并回填空资源链接
+   - 功能用途: 针对数据库中 resource_link 为空的记录，根据 url 过滤指定站点 (--site，默认 seju.life)，拉起 Playwright 无头浏览器重新请求页面，重新解析文章段落正文、清洗广告后回填 resource_link。
+
+用法与命令示例:
+  python fixes/data_cleaner.py                                       # 进入交互式主菜单
+  python fixes/data_cleaner.py clean-noise                           # 预览待清洗的链接噪音
+  python fixes/data_cleaner.py clean-noise --run --sync-supabase     # 正式执行清洗并同步到 Supabase
+  python fixes/data_cleaner.py replace-domain --old OLD --new NEW    # 预览域名替换
+  python fixes/data_cleaner.py replace-domain --old OLD --new NEW --run # 正式执行域名替换
+  python fixes/data_cleaner.py upgrade-db                            # 升级表结构并提取历史元数据
+  python fixes/data_cleaner.py fetch-sizes --limit 100 --apply       # 抓取 100 条磁力大小并写回数据库
+  python fixes/data_cleaner.py fetch-sizes --watch --interval 600    # 启动看门狗守护模式
+  python fixes/data_cleaner.py fetch-empty-links --site seju.life    # 重新抓取回填空资源链接
 """
 
 import argparse
