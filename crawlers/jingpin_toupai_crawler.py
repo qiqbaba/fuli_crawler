@@ -227,7 +227,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     processed_data['size'] = size
                     processed_data['resource_format'] = res_format
                     processed_data['source'] = self.source_name
-                    logger.info("[%s] 抓取成功: %s", idx, title[:60])
+                    logger.info("[%s] ✅ 抓取成功: %s", idx, title[:60])
                     return True, processed_data
 
             # 写入 PDF 文件（测试模式跳过）
@@ -250,7 +250,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             processed_data['resource_format'] = res_format
             processed_data['source'] = self.source_name
 
-            logger.info("[%s] 抓取成功: %s", idx, title[:60])
+            logger.info("[%s] ✅ 抓取成功: %s", idx, title[:60])
             return False, processed_data
 
         except Exception as e:

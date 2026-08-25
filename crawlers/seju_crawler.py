@@ -295,7 +295,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
                     sub_page.close()
                 except Exception:
                     pass
-            logger.error("[-] 子页面 %s 抓取失败", sub_url)
+            logger.error("[%s] ❌ 子页面抓取失败: %s", idx, sub_url)
             return False, None
 
         parsed_url = urlparse(current_url)
@@ -313,7 +313,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
 
         try:
             data = self._parse_sub_page(html_text, current_url)
-            logger.info("[%s] 页面抓取成功: %s | 分类: %s", idx, data['title'], data['category'])
+            logger.info("[%s] ✅ 页面抓取成功: %s | 分类: %s", idx, data['title'], data['category'])
 
             # 针对内部网页，使用当前的 Playwright 页面生成 PDF
             if not is_external:
@@ -325,7 +325,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
             return is_existing, data
 
         except Exception as e:
-            logger.error("[-] 抓取子页面 %s 时发生错误: %s", sub_url, e)
+            logger.error("[%s] ❌ 抓取子页面时发生错误: %s %s", idx, sub_url, e)
             import traceback
             traceback.print_exc()
             return False, None

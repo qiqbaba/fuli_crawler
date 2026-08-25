@@ -696,7 +696,7 @@ class BaseCrawler:
                     consecutive_failed_pages += 1
                     self.total_failed_pages += 1
                     fetch_fail_pages += 1
-                    self.log.error("页面 %s 抓取失败或无内容 [网络/请求失败] (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
+                    self.log.error("❌ 页面 %s 抓取失败或无内容 [网络/请求失败] (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
                     if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category, fail_type="network"):
                         early_break = True
                         break
@@ -707,7 +707,7 @@ class BaseCrawler:
                     consecutive_failed_pages += 1
                     self.total_failed_pages += 1
                     empty_parse_pages += 1
-                    self.log.error("页面 %s 未提取到有效项 [解析为空] (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
+                    self.log.error("❌ 页面 %s 未提取到有效项 [解析为空] (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
                     if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category, fail_type="empty_parse"):
                         early_break = True
                         break
@@ -777,7 +777,7 @@ class BaseCrawler:
                 self.total_inserted_count += inserted_count
                 self.total_skipped_count += (skipped_count + db_skipped)
 
-                self.log.info("页面 %s 处理完成：写入 %s 条，跳过 %s 条。", page_num, inserted_count, skipped_count + db_skipped)
+                self.log.info("📄 页面 %s 完成 → ✅ 写入 %s 条 | ⏭️ 跳过 %s 条", page_num, inserted_count, skipped_count + db_skipped)
                 self.db_manager.commit()
 
                 if class_name is not None:
@@ -1232,11 +1232,16 @@ class PlaywrightBaseCrawler(BaseCrawler):
 
         target_url = url_or_page if isinstance(url_or_page, str) else getattr(url_or_page, 'url', '')
         last_error = None
+
+        # 标题只打印一次（截断避免过长），后续重试日志用缩进归属显示
+        title_short = (title[:32] + '…') if len(title) > 33 else title
+        self.log.info("[PDF-SAVE] 📄 开始生成: 《%s》 (最多%s次)", title_short, max_retries)
+
         for attempt in range(1, max_retries + 1):
             try:
                 no_proxy = no_proxy_last and (attempt == max_retries)
                 if no_proxy:
-                    self.log.error("[PDF-SAVE] 标题: %s 前%s次代理均失败，第%s次尝试直连...", title, max_retries - 1, max_retries)
+                    self.log.warning("[PDF-SAVE]   ⚠️ 第%s次: 前%s次代理均失败，切换直连...", attempt, max_retries - 1)
                     try:
                         self._destroy_thread_resources()
                     except Exception:
@@ -1248,7 +1253,10 @@ class PlaywrightBaseCrawler(BaseCrawler):
                 saved_path = self._save_pdf(url_or_page, publish_date, title, no_proxy=no_proxy)
                 if saved_path:
                     retry_count = attempt - 1
-                    self.log.info("[PDF-SAVE] 标题: %s -> 成功生成 (尝试 %s 次, 重试 %s 次) -> %s", title, attempt, retry_count, saved_path)
+                    if retry_count == 0:
+                        self.log.info("[PDF-SAVE]   ✅ 生成成功 (第%s次即成功)", attempt)
+                    else:
+                        self.log.info("[PDF-SAVE]   ✅ 生成成功 (第%s次, 已重试%s次)", attempt, retry_count)
                     record_resource_retry(
                         source_name=getattr(self, 'source_name', 'unknown'),
                         title=title,
@@ -1261,20 +1269,20 @@ class PlaywrightBaseCrawler(BaseCrawler):
                     return saved_path
                 else:
                     last_error = f"第 {attempt}/{max_retries} 次尝试返回空"
-                    self.log.error("[PDF-SAVE] 标题: %s 生成 PDF 失败，进行第 %s/%s 次尝试", title, attempt, max_retries)
+                    self.log.error("[PDF-SAVE]   ❌ 第%s/%s次: 返回空，继续重试...", attempt, max_retries)
             except Exception as e:
                 last_error = f"第 {attempt}/{max_retries} 次尝试异常: {e}"
-                self.log.error("[PDF-SAVE] 标题: %s %s", title, last_error)
+                self.log.error("[PDF-SAVE]   ❌ 第%s/%s次: 异常 → %s", attempt, max_retries, e)
 
             if attempt < max_retries:
                 if destroy_on_retry and not no_proxy:
                     try:
                         self._destroy_thread_resources()
                     except Exception as recreate_err:
-                        self.log.warning("[!] 重构 Playwright 资源失败: %s", recreate_err)
+                        self.log.warning("[PDF-SAVE]   [!] 重构 Playwright 资源失败: %s", recreate_err)
                 time.sleep(random.uniform(1.5, 3.0))
 
-        self.log.error("[PDF-SAVE] 标题: %s 生成 PDF 失败 (已达最大重试次数): %s", title, last_error)
+        self.log.error("[PDF-SAVE]   ❌❌ 彻底失败 (共%s次均失败): %s", max_retries, last_error)
         record_resource_retry(
             source_name=getattr(self, 'source_name', 'unknown'),
             title=title,
@@ -2020,7 +2028,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             self._rotate_domain()
 
         if not detail_html:
-            self.log.error("[-] 详情页 %s 抓取失败（最终尝试 URL: %s）", original_url, url)
+            self.log.error("[%s] ❌ 详情页抓取失败 (最终 URL: %s)", idx, url)
             return False, None
 
         # 提取磁力链接
@@ -2034,7 +2042,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 magnet_link = magnet_match.group(0)
 
         if not magnet_link:
-            self.log.error("[-] 在详情页中未找到磁力链接: %s", original_url)
+            self.log.error("[%s] ❌ 详情页未找到磁力链接: %s", idx, original_url)
             return False, None
 
         date_str, size_val, res_format = self._extract_detail_metadata(detail_html, raw_item)
@@ -2074,5 +2082,5 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 no_proxy_last=True
             )
 
-        self.log.info("[%s] 抓取成功: %s", idx, data.get('title', '')[:60])
+        self.log.info("[%s] ✅ 抓取成功: %s", idx, data.get('title', '')[:60])
         return is_existing, data

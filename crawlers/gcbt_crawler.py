@@ -185,7 +185,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
             resource_link = ""
             logger.warning("[%s] 未找到下载链接，resource_link 置空", idx)
             
-        logger.info("[%s] 抓取成功: %s | 发布时间: %s | 大小: %s | 链接: %s...", idx, title, pub_time, size, resource_link[:60])
+        logger.info("[%s] ✅ 抓取成功: %s | 时间: %s | 大小: %s | 链接: %s...", idx, title[:40], pub_time, size, resource_link[:40])
         
         # 6. 生成并渲染 PDF 文件（直接保存原网页，测试模式跳过）
         pdf_path = ''
