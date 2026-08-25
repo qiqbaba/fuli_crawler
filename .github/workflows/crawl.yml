@@ -140,15 +140,15 @@ jobs:
             done
           fi
 
-  # ========== 爬虫并行 job ==========
-  crawl:
+  # ========== 爬虫并行 job 1：独立站点爬虫（完全并行执行） ==========
+  crawl_independent:
     needs: fetch_proxies
     runs-on: ubuntu-latest
     timeout-minutes: 720
     strategy:
       fail-fast: false
       matrix:
-        crawler: [seju, u3c3, datang, gcbt, madou, jingpin_toupai, taose, dashen, tanhua, jingpin, mianfei_guochan]
+        crawler: [seju, u3c3, gcbt, jingpin_toupai]
 
     env:
       SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
@@ -241,11 +241,138 @@ jobs:
               ARGS="$ARGS --resume"
             fi
           else
-            # 定时触发断点续爬配置（目前不使用）
-            # 如需为某个爬虫开启断点续爬，可在此添加
-            # if [ "${{ matrix.crawler }}" = "datang" ]; then
-            #   ARGS="$ARGS --resume"
-            # fi
+            :
+          fi
+
+          echo "args=$ARGS" >> $GITHUB_OUTPUT
+
+      - name: 执行爬虫 - ${{ matrix.crawler }}
+        if: steps.check-crawler.outputs.skip != 'true'
+        run: python main.py ${{ steps.build-args.outputs.args }}
+
+      - name: 准备重试统计与运行摘要文件
+        if: always()
+        run: |
+          if [ -f logs/resource_retry_stats.csv ]; then
+            cp logs/resource_retry_stats.csv logs/retry_${{ matrix.crawler }}.csv
+          fi
+
+      - name: 上传重试统计 CSV 与运行摘要
+        if: always()
+        uses: actions/upload-artifact@v4.6.0
+        with:
+          name: retry-stats-${{ matrix.crawler }}
+          path: |
+            logs/retry_${{ matrix.crawler }}.csv
+            logs/summary_${{ matrix.crawler }}.json
+          if-no-files-found: ignore
+
+      - name: 清理临时 PDF 目录
+        if: always()
+        run: rm -rf /tmp/pdfs
+
+  # ========== 爬虫并行 job 2：同源集群站点爬虫（限制并发 max-parallel: 2 防止封禁） ==========
+  crawl_cluster:
+    needs: fetch_proxies
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        crawler: [datang, madou, dashen, taose, tanhua, jingpin, mianfei_guochan]
+
+    env:
+      SUPABASE_URL:          ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY:          ${{ secrets.SUPABASE_KEY }}
+      R2_ACCOUNT_ID:         ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID:      ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY:  ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET_NAME:        ${{ secrets.R2_BUCKET_NAME }}
+      R2_ENDPOINT_URL:       ${{ secrets.R2_ENDPOINT_URL }}
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      # 云端临时 PDF 目录（上传 R2 后自动删除）
+      PDF_BASE_DIR:          /tmp/pdfs
+      # 启用内置代理IP管理器（自动获取并轮换免费代理）
+      ENABLE_PROXY_MANAGER:  'true'
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 设置 Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 缓存 Playwright Chromium 浏览器
+        uses: actions/cache@v4.2.3
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+
+      - name: 恢复代理 IP 列表（共享缓存）
+        uses: actions/cache/restore@v4.2.3
+        with:
+          path: temp_profiles/
+          key: proxy-cache-latest
+          restore-keys: |
+            proxy-cache-
+
+      - name: 安装 Python 依赖与 Playwright Chromium 浏览器
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium --with-deps
+
+      - name: 创建临时 PDF 目录
+        run: mkdir -p /tmp/pdfs
+
+      - name: 检查 workflow_dispatch 是否匹配当前爬虫
+        id: check-crawler
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            INPUT_CRAWLER="${{ github.event.inputs.crawler }}"
+            if [ "$INPUT_CRAWLER" != "all" ] && [ "$INPUT_CRAWLER" != "${{ matrix.crawler }}" ]; then
+              echo "skip=true" >> $GITHUB_OUTPUT
+              echo "爬虫 ${{ matrix.crawler }} 不匹配手动输入的 $INPUT_CRAWLER，跳过"
+            else
+              echo "skip=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 构建爬虫参数
+        id: build-args
+        if: steps.check-crawler.outputs.skip != 'true'
+        run: |
+          ARGS="--crawler ${{ matrix.crawler }} --crawl -q"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # workflow_dispatch: 如果选了 all 但 apply_params_to_all=false，不附加参数
+            INPUT_CRAWLER="${{ github.event.inputs.crawler }}"
+            APPLY_ALL="${{ github.event.inputs.apply_params_to_all }}"
+            if [ "$INPUT_CRAWLER" = "all" ] && [ "$APPLY_ALL" != "true" ]; then
+              echo "args=$ARGS" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            # 附加参数
+            if [ -n "${{ github.event.inputs.start }}" ]; then
+              ARGS="$ARGS --start ${{ github.event.inputs.start }}"
+            fi
+            if [ -n "${{ github.event.inputs.end }}" ]; then
+              ARGS="$ARGS --end ${{ github.event.inputs.end }}"
+            fi
+            if [ "${{ github.event.inputs.no_early_stop }}" = "true" ]; then
+              ARGS="$ARGS --no-early-stop"
+            fi
+            if [ "${{ github.event.inputs.resume }}" = "true" ]; then
+              ARGS="$ARGS --resume"
+            fi
+          else
             :
           fi
 
@@ -279,7 +406,7 @@ jobs:
   # ========== 汇总 job：合并所有爬虫的重试统计并提交到仓库 ==========
   merge_stats:
     if: always()
-    needs: crawl
+    needs: [crawl_independent, crawl_cluster]
     runs-on: ubuntu-latest
     timeout-minutes: 10
 

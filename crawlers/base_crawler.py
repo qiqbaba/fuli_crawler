@@ -988,10 +988,10 @@ class BaseCrawler:
                     else:
                         actual_start = start_page
 
-                    # 板块间冷却等待（非首个执行板块）
-                    if idx > 0 and self.completed_categories:
-                        cooldown_secs = random.uniform(5.0, 10.0)
-                        self.log.info("\n[*] 上一板块已结束，执行板块间冷却等待 %.1f 秒...", cooldown_secs)
+                    # 板块间冷却等待（非首个执行板块，平滑重置 CDN 频控窗口）
+                    if idx > 0:
+                        cooldown_secs = random.uniform(10.0, 15.0)
+                        self.log.info("\n[*] 上一板块已结束，执行板块间平滑冷却等待 %.1f 秒...", cooldown_secs)
                         time.sleep(cooldown_secs)
 
                     self.before_category_crawl(category)
@@ -1547,7 +1547,7 @@ class DomainRotationMixin:
             try:
                 _, _, context = self._get_thread_resources()
                 page = context.new_page()
-                page.goto(self.main_domain, timeout=30000, wait_until="domcontentloaded")
+                page.goto(self.main_domain, timeout=15000, wait_until="domcontentloaded")
                 import time
                 time.sleep(3.0)
                 return page.content()
@@ -1794,7 +1794,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             try:
                 _, _, context = self._get_thread_resources()
                 page = context.new_page()
-                page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                page.goto(url, timeout=15000, wait_until="domcontentloaded")
                 time.sleep(random.uniform(2.0, 4.0))
                 html = page.content()
                 page.close()
@@ -1989,7 +1989,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 try:
                     _, _, context = self._get_thread_resources()
                     page = context.new_page()
-                    page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                    page.goto(url, timeout=15000, wait_until="domcontentloaded")
                     time.sleep(random.uniform(2.0, 4.0))
                     html = page.content()
                     page.close()
