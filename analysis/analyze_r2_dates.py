@@ -29,7 +29,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 import config
-from sync.dl_or_del_all_r2 import get_r2_client
+from sync.r2_sync import get_r2_client
 
 
 def fmt_size(sz):

@@ -1356,13 +1356,87 @@ def run_orphan(args):
         print("[-] 无效的序号。")
 
 
+def run_clean_missing_records(args):
+    """清理数据库中对应物理 PDF 文件已不存在的残留记录（原 clean_deleted_records.py）"""
+    db_path = get_db_path()
+    pdf_base = os.path.abspath(PDF_BASE_DIR)
+    scope = getattr(args, "scope", "unknown")
+
+    print("=" * 60)
+    print("           清理物理缺失 PDF 对应的数据库脏记录")
+    print("=" * 60)
+    print(f"[*] 运行模式: {'【正式删除模式】' if args.run else '【预览模式 (Dry Run)】'}")
+    print(f"[*] 数据库路径: {db_path}")
+    print(f"[*] 扫描范围: {'Unknown_Year 目录' if scope == 'unknown' else '全量 PDF 记录'}")
+    print("=" * 60)
+
+    if not os.path.exists(db_path):
+        print(f"[-] 错误: 数据库文件不存在: {db_path}")
+        return
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    if scope == "unknown":
+        cursor.execute("SELECT id, title, pdf_path FROM resources WHERE pdf_path LIKE '%Unknown_Year%'")
+    else:
+        cursor.execute("SELECT id, title, pdf_path FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
+
+    rows = cursor.fetchall()
+    print(f"[*] 数据库中待检查记录数: {len(rows)}")
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    to_delete = []
+
+    for r_id, title, pdf_path in rows:
+        if not pdf_path:
+            continue
+        abs_p = pdf_path if os.path.isabs(pdf_path) else os.path.join(project_root, pdf_path)
+        if not os.path.exists(abs_p):
+            to_delete.append((r_id, title, pdf_path))
+
+    print(f"[*] 发现物理文件已不存在但数据库中残留的记录数: {len(to_delete)}")
+    print("=" * 60)
+
+    if not to_delete:
+        print("[+] 没有需要清理的记录。")
+        conn.close()
+        return
+
+    for idx, (r_id, title, pdf_path) in enumerate(to_delete[:50], 1):
+        print(f"[{idx}] ID: {r_id} | 标题: {title[:50]} | 路径: {pdf_path}")
+    if len(to_delete) > 50:
+        print(f"  ... 以及其他 {len(to_delete) - 50} 条记录")
+
+    print("=" * 60)
+
+    if args.run:
+        print(f"[*] 开始从数据库删除这 {len(to_delete)} 条记录...")
+        delete_ids = [item[0] for item in to_delete]
+        batch_size = 500
+        for i in range(0, len(delete_ids), batch_size):
+            batch = delete_ids[i:i + batch_size]
+            placeholders = ",".join("?" for _ in batch)
+            cursor.execute(f"DELETE FROM resources WHERE id IN ({placeholders})", batch)
+        conn.commit()
+        print(f"[+] 成功删除了 {len(delete_ids)} 条残留记录！")
+        print("[*] 正在执行 VACUUM 回收磁盘空间...")
+        cursor.execute("VACUUM")
+        print("[+] 数据库压缩完成。")
+    else:
+        print("[*] 当前为预览模式，未执行任何删除操作。")
+        print("[*] 确认删除请运行: python fixes/pdf_maintenance.py clean-missing --run")
+
+    conn.close()
+
+
 # ===================================================================
-# 主入口 - 支持子命令: check-dates, fix-paths, redownload, rebuild, orphan
+# 主入口 - 支持子命令: check-dates, fix-paths, redownload, rebuild, orphan, clean-missing
 # ===================================================================
 def main():
     setup_console_utf8()
     parser = argparse.ArgumentParser(
-        description="PDF 维护工具合集 - 检查日期、修正路径、重新下载小文件、重建缺失文件、管理多余PDF")
+        description="PDF 维护工具合集 - 检查日期、修正路径、重新下载小文件、重建缺失文件、管理多余PDF、清理缺失记录")
     subparsers = parser.add_subparsers(dest="command", help="可用的子命令")
 
     # check-dates
@@ -1397,13 +1471,21 @@ def main():
     p_orphan = subparsers.add_parser("orphan", help="检查多余PDF或将多余PDF移回原处")
     p_orphan.set_defaults(func=run_orphan)
 
+    # clean-missing
+    p_clean_missing = subparsers.add_parser("clean-missing", help="清理数据库中对应物理 PDF 已不存在的脏记录")
+    p_clean_missing.add_argument("--run", action="store_true", default=False,
+                                 help="正式执行删除，不加此参数时仅进行预览 (Dry Run)")
+    p_clean_missing.add_argument("--scope", choices=["unknown", "all"], default="unknown",
+                                 help="扫描范围: unknown (仅 Unknown_Year) 或 all (全部 PDF 记录)")
+    p_clean_missing.set_defaults(func=run_clean_missing_records)
+
     args = parser.parse_args()
 
     if args.command is None:
         # 无子命令时，补充所有子命令参数的默认值
-        for attr in ('run', 'verbose', 'skip_download'):
+        for attr in ('run', 'verbose', 'skip_download', 'scope'):
             if not hasattr(args, attr):
-                setattr(args, attr, False)
+                setattr(args, attr, False if attr != 'scope' else 'unknown')
 
         # 显示交互菜单
         print("=" * 60)
@@ -1411,17 +1493,18 @@ def main():
         print("=" * 60)
         print("  请选择要运行的功能：")
         print()
-        print("    1. check-dates  - 检查 PDF 文件与数据库日期的匹配情况并生成报告")
-        print("    2. fix-paths    - 将 Unknown_Year 中的 PDF 移到正确年份文件夹 + 全量修复文件名日期不匹配")
-        print("    3. redownload   - 重新下载体积小于 20KB 的 PDF 文件")
-        print("    4. rebuild      - 重建缺失的 PDF 文件并路径相对化")
-        print("    5. orphan       - 检查多余PDF或将多余PDF移回原处")
+        print("    1. check-dates   - 检查 PDF 文件与数据库日期的匹配情况并生成报告")
+        print("    2. fix-paths     - 将 Unknown_Year 中的 PDF 移到正确年份文件夹 + 全量修复文件名日期不匹配")
+        print("    3. redownload    - 重新下载体积小于 20KB 的 PDF 文件")
+        print("    4. rebuild       - 重建缺失的 PDF 文件并路径相对化")
+        print("    5. orphan        - 检查多余PDF或将多余PDF移回原处")
+        print("    6. clean-missing - 清理物理文件已删除但数据库仍残留的脏记录")
         print()
         print("    0. 退出")
         print("=" * 60)
 
         try:
-            choice = input("请输入序号 [0-5] (直接回车默认 1): ").strip()
+            choice = input("请输入序号 [0-6] (直接回车默认 1): ").strip()
             if not choice:
                 choice = "1"
         except (KeyboardInterrupt, EOFError):
@@ -1438,6 +1521,8 @@ def main():
             run_rebuild(args)
         elif choice == "5":
             run_orphan(args)
+        elif choice == "6":
+            run_clean_missing_records(args)
         elif choice == "0":
             print("[*] 已退出。")
             sys.exit(0)
@@ -1450,3 +1535,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

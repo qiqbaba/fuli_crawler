@@ -1,21 +1,19 @@
-"""
-从 Cloudflare R2 下载所有 PDF 到本地文件夹，保持年份目录结构。
-下载完成后可选择删除 R2 上的文件（支持批量删除、前缀过滤、模拟运行等）。
+"""Cloudflare R2 对象存储数据同步与管理中心 (sync/r2_sync.py)
 
-不指定任何参数时，会交互式询问要下载还是删除。
+功能：
+  1. 下载：从 Cloudflare R2 下载 PDF 到本地文件夹，保持年份目录结构（支持多线程并发、断点续传）。
+  2. 删除：从 R2 批量删除已同步或指定前缀/年份的文件（支持本地副本比对、安全提示与 dry-run）。
+  3. 客户端：提供 get_r2_client 供全项目复用。
 
 用法:
-    python download_all_r2.py                              # 默认下载（自动启用断点续传）
-    python download_all_r2.py --no-resume                   # 强制重新下载所有文件（禁用断点续传）
-    python download_all_r2.py --workers 30                  # 30 个并发（默认 30）
-    python download_all_r2.py --delete                      # 下载完后询问是否从 R2 删除已下载的文件
-    python download_all_r2.py --delete --delete-force       # 跳过确认直接删除
-    python download_all_r2.py --delete --dry-run            # 只列出要删除的文件，不实际删除
-    python download_all_r2.py --delete-prefix pdfs/2025/    # 下载并删除指定前缀的文件
-    python download_all_r2.py --delete-only                 # 仅执行删除，不下载（配合 --year/--delete-prefix）
-    python download_all_r2.py --delete-only --dry-run       # 仅模拟删除预览
-    python download_all_r2.py --delete-only --delete-force  # 仅删除，跳过所有确认
+  python sync/r2_sync.py                              # 交互式菜单（默认下载）
+  python sync/r2_sync.py --year 2025                  # 仅下载 2025 年文件
+  python sync/r2_sync.py --workers 30                 # 30 并发下载
+  python sync/r2_sync.py --delete                     # 下载后询问是否清理 R2
+  python sync/r2_sync.py --delete-only                # 仅执行删除
+  python sync/r2_sync.py --delete-only --dry-run      # 模拟删除预览
 """
+
 import os
 import sys
 import time
@@ -31,10 +29,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from config import R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_ENDPOINT_URL
+from utils import setup_console_utf8
 
 
 def get_r2_client(max_pool=50):
@@ -56,6 +56,16 @@ def get_r2_client(max_pool=50):
             retries={"max_attempts": 3, "mode": "standard"},
         ),
     )
+
+
+_thread_local = threading.local()
+
+
+def _get_thread_client():
+    """每个工作线程独立复用 R2 客户端和长连接池"""
+    if not hasattr(_thread_local, "client"):
+        _thread_local.client = get_r2_client(max_pool=50)
+    return _thread_local.client
 
 
 def _list_single_prefix(client, prefix, max_keys=None):
@@ -83,7 +93,6 @@ def _list_single_prefix(client, prefix, max_keys=None):
 
 def list_all_pdfs(client, prefix="pdfs/", max_keys=None):
     """列出 R2 中的所有 PDF 文件（支持按年份/子目录并行并发检索）"""
-    # 尝试按子目录前缀（如 pdfs/2020/, pdfs/2021/ ...）并行化检索
     try:
         resp = client.list_objects_v2(Bucket=R2_BUCKET_NAME, Prefix=prefix, Delimiter="/")
         common_prefixes = [cp["Prefix"] for cp in resp.get("CommonPrefixes", [])]
@@ -114,14 +123,14 @@ def list_all_pdfs(client, prefix="pdfs/", max_keys=None):
 def format_size(size_bytes):
     """格式化文件大小"""
     if size_bytes > 1024 * 1024:
-        return f"{size_bytes / 1024 / 1024:.1f} MB"
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
     elif size_bytes > 1024:
         return f"{size_bytes / 1024:.0f} KB"
     return f"{size_bytes} B"
 
 
 def format_eta(seconds):
-    """把秒数格式化为易读的时间（如：1小时25分30秒，2分10秒，15秒）"""
+    """格式化剩余时间"""
     if seconds <= 0 or seconds > 86400 * 30:
         return "计算中..."
     seconds = int(seconds)
@@ -136,7 +145,7 @@ def format_eta(seconds):
 
 
 def format_duration(seconds):
-    """把秒数格式化为易读的耗时字符串（如：1小时25分30秒、2分10秒、15.2秒）"""
+    """格式化总耗时"""
     if seconds < 0:
         return "0.0秒"
     if seconds < 60:
@@ -150,28 +159,17 @@ def format_duration(seconds):
         return f"{minutes}分{secs}秒"
 
 
-# ========== 线程安全计数器与线程局部客户端 ==========
 _counter_lock = threading.Lock()
 _counter = {"success": 0, "skipped": 0, "failed": 0, "total_bytes": 0, "done": 0}
 
-_thread_local = threading.local()
-
-
-def _get_thread_client():
-    """每个工作线程独立复用 R2 客户端和长连接池"""
-    if not hasattr(_thread_local, "client"):
-        _thread_local.client = get_r2_client(max_pool=50)
-    return _thread_local.client
-
 
 def _download_one(pdf, output_dir, resume):
-    """下载单个文件，供线程池调用"""
+    """下载单个文件"""
     key = pdf["key"]
-    relative_path = key[len("pdfs/"):]
+    relative_path = key[len("pdfs/"):] if key.startswith("pdfs/") else key
     local_path = os.path.join(output_dir, relative_path)
     local_dir = os.path.dirname(local_path)
 
-    # 断点续传：存在且大小一致则跳过
     if resume and os.path.exists(local_path):
         if os.path.getsize(local_path) == pdf["size"]:
             with _counter_lock:
@@ -180,8 +178,6 @@ def _download_one(pdf, output_dir, resume):
             return "skipped", relative_path, 0
 
     os.makedirs(local_dir, exist_ok=True)
-
-    # 复用线程局部的 client 和连接池
     client = _get_thread_client()
     try:
         client.download_file(R2_BUCKET_NAME, key, local_path)
@@ -198,7 +194,7 @@ def _download_one(pdf, output_dir, resume):
 
 
 def _progress_reporter(total, stop_event, start_time):
-    """后台定时打印下载进度、实时速率与预计剩余时间 (ETA)"""
+    """后台进度报告"""
     while not stop_event.is_set():
         with _counter_lock:
             done = _counter["done"]
@@ -217,7 +213,6 @@ def _progress_reporter(total, stop_event, start_time):
             rate_bytes = tb / elapsed
             remaining_files = total - done
             eta_secs = remaining_files / rate_files if rate_files > 0 else 0
-
             speed_str = f"{rate_files:.1f} 个/秒 ({format_size(rate_bytes)}/s)"
             eta_str = format_eta(eta_secs)
         else:
@@ -225,9 +220,8 @@ def _progress_reporter(total, stop_event, start_time):
             eta_str = "计算中..."
 
         print(f"  [{done}/{total}] ✅ {s} | ⏭ {sk} | ❌ {f} ({pct:.0f}%) | 速度: {speed_str} | 预计剩余: {eta_str}")
-        stop_event.wait(10)  # 每 10 秒报告一次
+        stop_event.wait(10)
 
-    # 最终 100% 报告
     with _counter_lock:
         s = _counter["success"]
         sk = _counter["skipped"]
@@ -245,17 +239,14 @@ def download_all_pdfs(output_dir, pdfs, resume=True, workers=30):
     print(f"\n[*] 共找到 {total} 个 PDF 文件，开始下载到: {output_dir}")
     print(f"[*] 并发数: {workers} | 断点续传: {'启用' if resume else '禁用'}\n")
 
-    # 重置计数器
     global _counter
     _counter = {"success": 0, "skipped": 0, "failed": 0, "total_bytes": 0, "done": 0}
 
-    # 启动后台进度报告线程
     start_time = time.time()
     stop_event = threading.Event()
     reporter = threading.Thread(target=_progress_reporter, args=(total, stop_event, start_time), daemon=True)
     reporter.start()
 
-    # 并发下载
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(_download_one, pdf, output_dir, resume) for pdf in pdfs]
         concurrent.futures.wait(futures)
@@ -263,7 +254,6 @@ def download_all_pdfs(output_dir, pdfs, resume=True, workers=30):
     stop_event.set()
     reporter.join(timeout=1)
 
-    # 汇总
     with _counter_lock:
         s = _counter["success"]
         sk = _counter["skipped"]
@@ -271,7 +261,7 @@ def download_all_pdfs(output_dir, pdfs, resume=True, workers=30):
         tb = _counter["total_bytes"]
 
     elapsed = time.time() - start_time
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"下载完成！")
     print(f"  成功: {s}")
     print(f"  跳过: {sk}")
@@ -279,11 +269,11 @@ def download_all_pdfs(output_dir, pdfs, resume=True, workers=30):
     print(f"  总大小: {format_size(tb)}")
     print(f"  耗时: {format_duration(elapsed)}")
     print(f"  保存路径: {output_dir}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
 
 def list_all_objects(client, prefix=""):
-    """列出 R2 桶中所有对象（不限于 PDF），支持并行列举"""
+    """列出 R2 桶中所有对象"""
     try:
         resp = client.list_objects_v2(Bucket=R2_BUCKET_NAME, Prefix=prefix, Delimiter="/")
         common_prefixes = [cp["Prefix"] for cp in resp.get("CommonPrefixes", [])]
@@ -331,7 +321,7 @@ def list_all_objects(client, prefix=""):
 
 
 def _delete_batch(batch):
-    """单批次删除（最多 1000 个文件），使用线程局部 client"""
+    """单批次删除（最多 1000 个文件）"""
     delete_keys = [{"Key": obj["key"]} for obj in batch]
     client = _get_thread_client()
     try:
@@ -349,7 +339,7 @@ def _delete_batch(batch):
 
 
 def delete_all_objects(client, objects, dry_run=False, max_workers=10):
-    """多线程并发批量删除所有对象（按每 1000 个分包并发提交）"""
+    """多线程并发批量删除所有对象"""
     total = len(objects)
     if total == 0:
         print("[*] 没有找到需要删除的文件")
@@ -401,37 +391,30 @@ def delete_all_objects(client, objects, dry_run=False, max_workers=10):
 
 
 def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, show_details=True, extra_search_dirs=None):
-    """独立执行删除流程：检查本地文件 → 自动删除有副本的 → 询问删除无副本的
-    extra_search_dirs: 额外的本地搜索目录列表（如爬虫保存 PDF 的目录），用于检测本地副本"""
+    """执行删除流程"""
     flow_start_time = time.time()
     total_size = sum(obj["size"] for obj in delete_candidates)
 
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"找到 {len(delete_candidates)} 个文件")
     print(f"总大小: {format_size(total_size)}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
-    # 模拟运行
     if args.dry_run:
         print(f"\n[*] 模拟运行：将删除前缀 '{del_prefix}' 下的文件")
         deleted, failed = delete_all_objects(client, delete_candidates, dry_run=True)
         print(f"\n[*] 模拟运行完成，共 {len(delete_candidates)} 个文件将被删除")
         return
 
-    # ========== 检查本地文件：已有本地副本的自动删除 ==========
-    local_have = []   # 本地已存在 → 直接删除
-    local_missing = []  # 本地不存在 → 汇总后询问
+    local_have = []
+    local_missing = []
     search_dirs = [output_dir]
     if extra_search_dirs:
         search_dirs.extend(extra_search_dirs)
+
     for obj in delete_candidates:
         key = obj["key"]
-        # 构造本地路径：去掉 "pdfs/" 前缀后拼接到各搜索目录
-        if key.startswith("pdfs/"):
-            relative_path = key[len("pdfs/"):]
-        else:
-            relative_path = key
-        # 在任意搜索目录中找到副本即视为本地存在
+        relative_path = key[len("pdfs/"):] if key.startswith("pdfs/") else key
         found_local = False
         for sd in search_dirs:
             local_path = os.path.join(sd, relative_path)
@@ -443,7 +426,6 @@ def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, sho
         else:
             local_missing.append(obj)
 
-    # 自动删除本地已有的文件
     if local_have:
         print(f"\n[*] 检测到 {len(local_have)} 个文件在本地已有副本，自动从 R2 删除...")
         deleted_ok, deleted_fail = delete_all_objects(client, local_have)
@@ -456,22 +438,18 @@ def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, sho
         deleted_ok = 0
         deleted_fail = 0
 
-    # 汇总本地没有的文件，询问用户是否删除
     if local_missing:
         missing_size = sum(obj["size"] for obj in local_missing)
-        print(f"\n{'='*50}")
+        print(f"\n{'=' * 50}")
         print(f"以下 {len(local_missing)} 个文件在本地没有副本（总计 {format_size(missing_size)}）：")
         if show_details:
             for obj in local_missing:
-                local_part = obj["key"]
-                if obj["key"].startswith("pdfs/"):
-                    local_part = obj["key"][len("pdfs/"):]
+                local_part = obj["key"][len("pdfs/"):] if obj["key"].startswith("pdfs/") else obj["key"]
                 print(f"  📄 {local_part}  ({format_size(obj['size'])})")
         else:
-            print(f"  (文件列表已隐藏，可通过回答 Y 查看详情)")
-        print(f"{'='*50}")
+            print(f"  (文件列表已隐藏)")
+        print(f"{'=' * 50}")
 
-        # 确认（--delete-force 可跳过）
         should_delete_missing = False
         if args.delete_force:
             should_delete_missing = True
@@ -493,20 +471,18 @@ def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, sho
     else:
         print(f"[*] 所有文件在本地均有副本，无需额外确认")
 
-    # 最终汇总
     flow_elapsed = time.time() - flow_start_time
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"删除操作完成！")
     print(f"  成功: {deleted_ok}")
     print(f"  失败: {deleted_fail}")
     if deleted_fail > 0:
         print(f"  ⚠️  有 {deleted_fail} 个文件删除失败，请重试")
     print(f"  耗时: {format_duration(flow_elapsed)}")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
 
 def _confirm_listing(prefix, args):
-    """询问用户是否显示详细文件列表（仅控制显示，不影响实际检索）。返回 True 要显示，False 跳过显示。"""
     if args.delete_force:
         return True
     try:
@@ -518,14 +494,15 @@ def _confirm_listing(prefix, args):
 
 
 def main():
+    setup_console_utf8()
     script_start_time = time.time()
-    parser = argparse.ArgumentParser(description="从 Cloudflare R2 下载所有 PDF 到本地")
+    parser = argparse.ArgumentParser(description="Cloudflare R2 对象存储数据同步与管理工具")
     parser.add_argument("--output", "-o", default=None,
                         help="本地输出目录 (默认: 项目根目录下的 pdf/)")
     parser.add_argument("--year", "-y", default=None,
-                        help="只下载指定年份 (如 2025)")
+                        help="只操作指定年份 (如 2025)")
     parser.add_argument("--max", "-m", type=int, default=None,
-                        help="最多下载的文件数")
+                        help="最多处理的文件数")
     parser.add_argument("--resume", "-r", action="store_true", default=True,
                         help="启用断点续传（默认已自动启用）")
     parser.add_argument("--no-resume", action="store_true",
@@ -535,38 +512,28 @@ def main():
     parser.add_argument("--delete", "-d", action="store_true",
                         help="下载完成后询问是否从 R2 删除已下载的文件")
     parser.add_argument("--delete-force", "-df", action="store_true",
-                        help="删除时跳过确认提示，直接删除（需同时使用 --delete）")
+                        help="删除时跳过确认提示直接删除")
     parser.add_argument("--dry-run", "-n", action="store_true",
-                        help="只列出要删除的文件，不实际删除（需同时使用 --delete）")
+                        help="只列出要删除的文件，不实际删除")
     parser.add_argument("--delete-prefix", default=None,
-                        help="删除时仅删除指定前缀的文件（如 pdfs/2025/），默认为本次下载的前缀（需同时使用 --delete）")
+                        help="删除时仅删除指定前缀的文件（如 pdfs/2025/）")
     parser.add_argument("--delete-only", action="store_true",
-                        help="仅执行删除操作，不下载（可配合 --year/--delete-prefix/--dry-run/--delete-force 使用）")
+                        help="仅执行删除操作，不下载")
     args = parser.parse_args()
 
-    # 爬虫/下载保存 PDF 的目录（项目根目录下的 pdf/）
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)  # sync/ 的上一级
-    pdf_dir = os.path.join(project_root, "pdf")
+    pdf_dir = os.path.join(PROJECT_ROOT, "pdf")
+    output_dir = args.output if args.output else pdf_dir
 
-    # 确定输出目录（默认保存到项目根目录下的 pdf/，与本地对比目录一致）
-    if args.output:
-        output_dir = args.output
-    else:
-        output_dir = pdf_dir
-
-    # ========== 交互模式：没有指定任何操作时，询问用户 ==========
     if not args.delete_only and not args.delete:
         try:
-            print(f"\n{'='*50}")
+            print(f"\n{'=' * 50}")
             print("请选择操作：")
             print("  1. 下载 PDF（默认）")
             print("  2. 删除 R2 文件")
-            print(f"{'='*50}")
+            print(f"{'=' * 50}")
             choice = input("请输入选项 (1/2)，回车默认下载: ").strip()
             if choice == "2":
                 args.delete_only = True
-            # 否则保持默认下载
         except (EOFError, KeyboardInterrupt):
             print("\n[*] 已取消")
             return
@@ -574,34 +541,25 @@ def main():
     print(f"[*] 初始化 R2 客户端...")
     client = get_r2_client()
 
-    # 构建前缀
     prefix = "pdfs/"
     if args.year:
         prefix = f"pdfs/{args.year}/"
         print(f"[*] 仅操作 {args.year} 年的文件")
 
-    # ========== 仅删除模式（跳过下载） ==========
     if args.delete_only:
         del_prefix = args.delete_prefix if args.delete_prefix else prefix
         print(f"[*] 仅删除模式，前缀: {del_prefix}")
-
-        # 询问是否详细列出文件名（仅影响显示，不影响实际检索）
         show_details = _confirm_listing(del_prefix, args)
-
-        print(f"[*] 正在列出 R2 中的文件...（无论是否显示，都会检索文件列表）")
+        print(f"[*] 正在列出 R2 中的文件...")
         delete_candidates = list_all_objects(client, prefix=del_prefix)
         print(f"[*] 找到 {len(delete_candidates)} 个文件")
-
         run_delete_flow(client, output_dir, delete_candidates, del_prefix, args,
                         show_details=show_details, extra_search_dirs=[pdf_dir])
         total_elapsed = time.time() - script_start_time
         print(f"\n✨ 脚本运行结束，总计耗时: {format_duration(total_elapsed)}\n")
         return
 
-    # ========== 下载模式 ==========
     show_details = _confirm_listing(prefix, args)
-    if not show_details:
-        print("[*] 跳过文件详细列表显示，但仍在检索文件清单...")
     print(f"[*] 正在列出 R2 中的 PDF 文件 (前缀: {prefix})...")
     pdfs = list_all_pdfs(client, prefix=prefix, max_keys=args.max)
     print(f"[*] 找到 {len(pdfs)} 个 PDF 文件")
@@ -609,12 +567,8 @@ def main():
     resume = not args.no_resume
     download_all_pdfs(output_dir, pdfs, resume=resume, workers=args.workers)
 
-    # ========== 下载完成后删除 R2 文件 ==========
     if args.delete and len(pdfs) > 0:
-        # 确定要删除的前缀：优先使用 --delete-prefix，否则使用下载时的前缀
         del_prefix = args.delete_prefix if args.delete_prefix else prefix
-
-        # 如果指定了 --delete-prefix，需要重新列出该前缀下的所有文件（不限于 PDF）
         if args.delete_prefix:
             print(f"[*] 正在列出前缀 '{del_prefix}' 下的所有文件...")
             delete_candidates = list_all_objects(client, prefix=del_prefix)
