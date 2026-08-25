@@ -42,7 +42,7 @@ class U3c3Crawler(BaseCrawler):
                 manager.verify_proxies(
                     force=False, 
                     max_workers=get_proxy_verify_workers(), 
-                    target_count=300,
+                    target_count=1000,
                     start_threshold=100,
                     test_url="https://u3c3.com/",
                     source=self.source_name

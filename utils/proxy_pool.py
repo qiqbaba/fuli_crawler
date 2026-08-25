@@ -347,7 +347,7 @@ class ProxyPool:
                 return  # 未达到间隔，仅标记 pending
         self._do_save_cache()
 
-    def fetch_proxies(self, force: bool = False, min_count: int = 300) -> int:
+    def fetch_proxies(self, force: bool = False, min_count: int = 1000) -> int:
         """
         从所有配置的源获取代理IP并保存
         
@@ -421,7 +421,7 @@ class ProxyPool:
         self,
         force: bool = False,
         max_workers: Optional[int] = None,
-        target_count: int = 300,
+        target_count: int = 1000,
         start_threshold: Optional[int] = None,
         test_url: Optional[str] = None,
         expected_content: Optional[str] = None,
@@ -556,7 +556,7 @@ class ProxyPool:
                 with self._lock:
                     self._is_verifying = False
 
-    def check_and_replenish(self, threshold: int = 200, target_count: int = 300, source: Optional[str] = None):
+    def check_and_replenish(self, threshold: int = 200, target_count: int = 1000, source: Optional[str] = None):
         """
         若当前可用代理数少于 threshold，或者针对特定爬虫源的可用代理较少，同步补给代理
         """
@@ -706,7 +706,7 @@ class ProxyPool:
         
         # 锁外执行补给，避免阻塞其他获取代理的线程
         if need_replenish:
-            self.check_and_replenish(threshold=200, target_count=300, source=source)
+            self.check_and_replenish(threshold=200, target_count=1000, source=source)
 
     def get_random_pool_proxy(self, source: Optional[str] = None) -> Optional[str]:
         """
@@ -733,7 +733,7 @@ class ProxyPool:
         
         # 锁外执行补给，避免阻塞其他获取代理的线程
         if need_replenish:
-            self.check_and_replenish(threshold=200, target_count=300, source=source)
+            self.check_and_replenish(threshold=200, target_count=1000, source=source)
         
         return proxy_url
 

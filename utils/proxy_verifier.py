@@ -49,7 +49,7 @@ class ProxyVerifier:
         proxies: List[Dict[str, str]],
         force: bool = False,
         max_workers: Optional[int] = None,
-        target_count: int = 300,
+        target_count: int = 1000,
         test_url: Optional[str] = None,
         expected_content: Optional[str] = None,
         on_proxy_valid: Optional[Callable] = None,
