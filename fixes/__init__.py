@@ -43,6 +43,20 @@ from fixes.db_utils import (
     backup_db,
     format_size,
     vacuum_db,
+    get_export_dir,
+    get_timestamp,
+    export_records_to_db,
+    export_to_csv,
+    export_to_json,
+    delete_records_cascade_pdf,
+    print_banner,
+    print_section,
+    print_step,
+    print_success,
+    print_warning,
+    print_error,
+    confirm_action,
+    pause_for_user,
 )
 from fixes.pdf_dedup import (
     run_pdf_dedup,
@@ -50,14 +64,33 @@ from fixes.pdf_dedup import (
     find_hash_duplicates,
     find_name_variant_duplicates,
     find_db_pdf_duplicates,
+    export_dedup_db,
+    export_dedup_csv,
 )
 from fixes.pdf_maintenance import (
     MissingPDFDownloader,
     run_associate,
     run_rebuild,
+    run_check_dates,
+    run_fix_names_and_paths,
+    run_clean_missing_records,
+)
+from fixes.data_cleaner import (
+    run_clean_noise,
+    run_replace_domain,
+    run_upgrade_db,
+    run_fetch_sizes,
+    run_fetch_empty_links,
+)
+from fixes.record_filter import (
+    run_duplicates_cli,
+    run_fanhao_cli,
+    get_all_duplicates,
+    scan_fanhao_records,
 )
 
 __all__ = [
+    # db_utils
     "setup_fixes_module",
     "get_connection",
     "get_columns",
@@ -67,14 +100,48 @@ __all__ = [
     "backup_db",
     "format_size",
     "vacuum_db",
+    "get_export_dir",
+    "get_timestamp",
+    "export_records_to_db",
+    "export_to_csv",
+    "export_to_json",
+    "delete_records_cascade_pdf",
+    "print_banner",
+    "print_section",
+    "print_step",
+    "print_success",
+    "print_warning",
+    "print_error",
+    "confirm_action",
+    "pause_for_user",
+    # pdf_dedup
     "run_pdf_dedup",
     "scan_all_physical_pdfs",
     "find_hash_duplicates",
     "find_name_variant_duplicates",
     "find_db_pdf_duplicates",
+    "export_dedup_db",
+    "export_dedup_csv",
+    # pdf_maintenance
     "MissingPDFDownloader",
     "run_associate",
     "run_rebuild",
+    "run_check_dates",
+    "run_fix_names_and_paths",
+    "run_clean_missing_records",
+    # data_cleaner
+    "run_clean_noise",
+    "run_replace_domain",
+    "run_upgrade_db",
+    "run_fetch_sizes",
+    "run_fetch_empty_links",
+    # record_filter
+    "run_duplicates_cli",
+    "run_fanhao_cli",
+    "get_all_duplicates",
+    "scan_fanhao_records",
 ]
+
+
 
 

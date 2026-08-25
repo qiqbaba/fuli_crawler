@@ -58,6 +58,18 @@ from fixes.db_utils import (  # noqa: E402
     format_size,
     backup_db,
     vacuum_db,
+    get_export_dir,
+    get_timestamp,
+    export_records_to_db,
+    export_to_csv,
+    print_banner,
+    print_section,
+    print_step,
+    print_success,
+    print_warning,
+    print_error,
+    confirm_action,
+    pause_for_user,
 )
 
 setup_fixes_module()
@@ -559,69 +571,103 @@ def execute_dedup_plans(
 
 
 # ===================================================================
-# 6. CSV 导出与 Markdown 审计报告生成
+# 6. DB 导出、CSV 导出与 Markdown 审计报告生成 (统一优先 D 盘 / temp_profiles)
 # ===================================================================
+
+def export_dedup_db(plans: List[DedupActionPlan], output_dir: Optional[str] = None) -> str:
+    """将查重审计明细导出为独立 SQLite .db 数据库文件 (默认导出格式)"""
+    if not plans:
+        return ""
+    records: List[Dict[str, Any]] = []
+    for plan in plans:
+        p = plan.primary
+        records.append({
+            "group_id": plan.group_id,
+            "group_type": plan.group_type,
+            "status": "KEEP",
+            "rel_path": p.rel_path,
+            "basename": p.basename,
+            "size": p.size,
+            "size_str": format_size(p.size),
+            "mtime": datetime.fromtimestamp(p.mtime).strftime("%Y-%m-%d %H:%M:%S"),
+            "md5": p.md5 or "",
+            "path": p.path,
+        })
+        for dup in plan.duplicates:
+            records.append({
+                "group_id": plan.group_id,
+                "group_type": plan.group_type,
+                "status": "DUPLICATE",
+                "rel_path": dup.rel_path,
+                "basename": dup.basename,
+                "size": dup.size,
+                "size_str": format_size(dup.size),
+                "mtime": datetime.fromtimestamp(dup.mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "md5": dup.md5 or "",
+                "path": dup.path,
+            })
+
+    ts = get_timestamp()
+    filename = f"pdf_dedup_audit_{ts}.db"
+    return export_records_to_db(records, filename, table_name="dedup_audit", output_dir=output_dir, unique_col=None)
+
 
 def export_dedup_csv(plans: List[DedupActionPlan], output_dir: Optional[str] = None) -> str:
     """导出全部查重明细至带 UTF-8 BOM 编码的 CSV 文件"""
-    out_dir = output_dir or CSV_OUTPUT_DIR
-    os.makedirs(out_dir, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_path = os.path.join(out_dir, f"pdf_dedup_audit_{ts}.csv")
+    if not plans:
+        return ""
+    records: List[Dict[str, Any]] = []
+    for plan in plans:
+        p = plan.primary
+        records.append({
+            "group_id": plan.group_id,
+            "group_type": plan.group_type,
+            "status": "KEEP",
+            "rel_path": p.rel_path,
+            "basename": p.basename,
+            "size": p.size,
+            "size_str": format_size(p.size),
+            "mtime": datetime.fromtimestamp(p.mtime).strftime("%Y-%m-%d %H:%M:%S"),
+            "md5": p.md5 or "",
+            "path": p.path,
+        })
+        for dup in plan.duplicates:
+            records.append({
+                "group_id": plan.group_id,
+                "group_type": plan.group_type,
+                "status": "DUPLICATE",
+                "rel_path": dup.rel_path,
+                "basename": dup.basename,
+                "size": dup.size,
+                "size_str": format_size(dup.size),
+                "mtime": datetime.fromtimestamp(dup.mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "md5": dup.md5 or "",
+                "path": dup.path,
+            })
 
-    with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            "分组标识 (GroupID)",
-            "查重类型 (Type)",
-            "状态 (Status)",
-            "文件相对路径 (RelativePath)",
-            "文件名 (Filename)",
-            "大小 (Bytes)",
-            "易读大小 (SizeStr)",
-            "修改时间 (MTime)",
-            "MD5哈希 (MD5)",
-            "物理绝对路径 (AbsolutePath)"
-        ])
-
-        for plan in plans:
-            # 写入保留的主文件
-            p = plan.primary
-            writer.writerow([
-                plan.group_id,
-                plan.group_type,
-                "KEEP (保留)",
-                p.rel_path,
-                p.basename,
-                p.size,
-                format_size(p.size),
-                datetime.fromtimestamp(p.mtime).strftime("%Y-%m-%d %H:%M:%S"),
-                p.md5 or "",
-                p.path
-            ])
-            # 写入待删除的副本
-            for dup in plan.duplicates:
-                writer.writerow([
-                    plan.group_id,
-                    plan.group_type,
-                    "DUPLICATE (清理)",
-                    dup.rel_path,
-                    dup.basename,
-                    dup.size,
-                    format_size(dup.size),
-                    datetime.fromtimestamp(dup.mtime).strftime("%Y-%m-%d %H:%M:%S"),
-                    dup.md5 or "",
-                    dup.path
-                ])
-
-    print(f"[+] 查重审计明细已导出至 CSV: {csv_path}")
-    return csv_path
+    header_map = {
+        "group_id": "分组标识 (GroupID)",
+        "group_type": "查重类型 (Type)",
+        "status": "状态 (Status)",
+        "rel_path": "文件相对路径 (RelativePath)",
+        "basename": "文件名 (Filename)",
+        "size": "大小 (Bytes)",
+        "size_str": "易读大小 (SizeStr)",
+        "mtime": "修改时间 (MTime)",
+        "md5": "MD5哈希 (MD5)",
+        "path": "物理绝对路径 (AbsolutePath)",
+    }
+    ts = get_timestamp()
+    filename = f"pdf_dedup_audit_{ts}.csv"
+    return export_to_csv(records, filename, header_map=header_map, output_dir=output_dir)
 
 
 def generate_dedup_markdown_report(plans: List[DedupActionPlan], stats: Dict[str, Any], output_path: Optional[str] = None) -> str:
-    """生成 Markdown 格式的 PDF 查重与去重审计报告"""
-    rep_path = output_path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdf_dedup_report.md")
-    
+    """生成 Markdown 格式的 PDF 查重与去重审计报告 (统一保存至导出目录)"""
+    ts = get_timestamp()
+    out_dir = get_export_dir()
+    rep_path = output_path or os.path.join(out_dir, f"pdf_dedup_report_{ts}.md")
+
     total_groups = len(plans)
     total_dups = sum(len(p.duplicates) for p in plans)
     total_reclaim = sum(p.reclaim_bytes for p in plans)
@@ -647,7 +693,7 @@ def generate_dedup_markdown_report(plans: List[DedupActionPlan], stats: Dict[str
         )
 
     if len(plans) > 50:
-        lines.append(f"\n*(仅展示前 50 组样例，完整明细请查看 CSV 导出文件)*\n")
+        lines.append(f"\n*(仅展示前 50 组样例，完整明细请查看导出的 DB / CSV 文件)*\n")
 
     with open(rep_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -664,42 +710,45 @@ def run_pdf_dedup(
     mode: str = "all",
     keep: str = "primary",
     run: bool = False,
+    export_db: bool = True,
     export_csv: bool = False,
     trash: bool = False,
     db_path: Optional[str] = None,
     base_dir: Optional[str] = None,
+    output_dir: Optional[str] = None,
     max_workers: int = 16,
 ) -> Dict[str, Any]:
     """PDF 查重与去重核心调度接口
-    
+
     Args:
         mode: 查重模式 ('hash', 'name', 'db', 'all')
         keep: 保留策略 ('primary', 'larger', 'newest', 'oldest')
         run: 是否正式执行去重 (False=预览模式, True=正式执行)
+        export_db: 是否导出独立 SQLite .db 审计库 (默认 True)
         export_csv: 是否导出 CSV 明细表
         trash: 是否将多余文件移动到 trash 隔离区而非直接删除
         db_path: SQLite 数据库路径
         base_dir: PDF 物理文件根目录
+        output_dir: 导出文件输出目录
         max_workers: 并发工作线程数
     """
     effective_db = get_db_path(db_path)
     effective_pdf_dir = base_dir or PDF_BASE_DIR
     trash_dir = os.path.join(PROJECT_ROOT, "cache", "pdf_trash") if trash else None
 
-    print("=" * 60)
-    print("                PDF 查重与去重管理系统")
-    print("=" * 60)
-    print(f"[*] 运行模式: {'【正式执行】' if run else '【预览模式 (Dry Run)】'}")
+    print_banner("PDF 查重与去重管理系统")
+    print(f"[*] 运行模式: {'【正式执行 (RUN)】' if run else '【预览模式 (Dry Run)】'}")
     print(f"[*] 查重维度: {mode}")
     print(f"[*] 保留策略: {keep}")
     print(f"[*] 数据库路径: {effective_db}")
     print(f"[*] PDF 根目录: {effective_pdf_dir}")
+    print(f"[*] 导出目标路径: {get_export_dir(output_dir)}")
     print("=" * 60)
 
     # 1. 扫描物理文件
     pdf_files = scan_all_physical_pdfs(effective_pdf_dir)
     if not pdf_files:
-        print("[-] 未找到任何物理 PDF 文件。")
+        print_warning("未找到任何物理 PDF 文件。")
         return {}
 
     all_plans: List[DedupActionPlan] = []
@@ -721,14 +770,13 @@ def run_pdf_dedup(
             find_db_pdf_duplicates(conn, pdf_files=pdf_files)
             conn.close()
         else:
-            print(f"[-] 数据库文件不存在: {effective_db}")
+            print_warning(f"数据库文件不存在: {effective_db}")
 
     # 合并与去重 Plan（防止跨模式重复处理同一文件）
     unique_plans: List[DedupActionPlan] = []
     seen_duplicate_paths: Set[str] = set()
 
     for p in all_plans:
-        # 过滤掉已经被标记为删除的重复文件
         filtered_dups = [d for d in p.duplicates if d.path not in seen_duplicate_paths]
         if filtered_dups:
             for d in filtered_dups:
@@ -737,11 +785,15 @@ def run_pdf_dedup(
             p.reclaim_bytes = sum(d.size for d in filtered_dups)
             unique_plans.append(p)
 
-    # 3. 导出 CSV 审计表
-    if export_csv or not run:
-        export_dedup_csv(unique_plans)
+    # 3. 默认导出独立 .db 数据库审计文件
+    if export_db and unique_plans:
+        export_dedup_db(unique_plans, output_dir=output_dir)
 
-    # 4. 执行去重与重定向纠偏
+    # 4. 可选导出 CSV 审计表
+    if export_csv and unique_plans:
+        export_dedup_csv(unique_plans, output_dir=output_dir)
+
+    # 5. 执行去重与重定向纠偏
     stats = execute_dedup_plans(
         unique_plans,
         db_path=effective_db,
@@ -750,15 +802,65 @@ def run_pdf_dedup(
         sync_db=True,
     )
 
-    # 5. 生成 Markdown 报告
-    generate_dedup_markdown_report(unique_plans, stats)
+    # 6. 生成 Markdown 报告
+    if unique_plans:
+        generate_dedup_markdown_report(unique_plans, stats)
 
     return stats
 
 
 # ===================================================================
-# 8. 命令行 CLI 与交互式菜单主入口
+# 8. 命令行 CLI 与交互式菜单主入口 (常驻循环)
 # ===================================================================
+
+def interactive_menu():
+    """PDF 查重与去重管理系统主菜单 (常驻循环)"""
+    while True:
+        print_banner("PDF 查重与去重管理系统 (交互模式)")
+        print("  请选择要执行的操作：")
+        print()
+        print("    1. [预览] 全量综合查重 (MD5哈希 + 文件名变体 + 数据库引用，默认导出 .db)")
+        print("    2. [预览] 仅基于内容 MD5 哈希查重")
+        print("    3. [预览] 仅基于文件名/标题变体 (_1.pdf) 查重")
+        print("    4. [预览] 仅检查数据库 pdf_path 共享与一致性")
+        print("    5. [执行] 全量安全去重 (备份DB + 删除多余副本 + 自动重定向DB引用)")
+        print("    6. [执行] 全量隔离去重 (移入 cache/pdf_trash 隔离区 + 重定向DB)")
+        print()
+        print("    0. 退出程序")
+        print("=" * 60)
+
+        try:
+            choice = input("  请输入序号 [0-6] (直接回车默认 1): ").strip()
+            if not choice:
+                choice = "1"
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] 运行已取消")
+            break
+
+        if choice in ("0", "q", "quit", "exit"):
+            print_step("已退出程序。")
+            break
+
+        if choice == "1":
+            run_pdf_dedup(mode="all", run=False, export_db=True, export_csv=True)
+        elif choice == "2":
+            run_pdf_dedup(mode="hash", run=False, export_db=True, export_csv=True)
+        elif choice == "3":
+            run_pdf_dedup(mode="name", run=False, export_db=True, export_csv=True)
+        elif choice == "4":
+            run_pdf_dedup(mode="db", run=False, export_db=False, export_csv=False)
+        elif choice == "5":
+            if confirm_action("\n[!] 警告: 将正式删除多余的重复 PDF 文件并同步纠偏数据库！确认继续?", default=False):
+                run_pdf_dedup(mode="all", run=True, export_db=True, export_csv=True)
+            else:
+                print_step("操作已取消。")
+        elif choice == "6":
+            run_pdf_dedup(mode="all", run=True, trash=True, export_db=True, export_csv=True)
+        else:
+            print_warning("无效的序号。")
+
+        pause_for_user()
+
 
 def main():
     setup_fixes_module()
@@ -782,8 +884,20 @@ def main():
         help="正式执行物理文件清理与数据库重定向，不加此参数时仅进行安全预览 (Dry Run)"
     )
     parser.add_argument(
+        "--dry-run", action="store_true", default=False,
+        help="显式声明预览模式"
+    )
+    parser.add_argument(
+        "--export-db", action="store_true", default=True,
+        help="导出查重明细至独立 SQLite .db 数据库 (默认开启)"
+    )
+    parser.add_argument(
         "--export-csv", action="store_true", default=False,
         help="导出查重明细至 CSV 审计表"
+    )
+    parser.add_argument(
+        "--output-dir", type=str, default=None,
+        help="指定导出文件目录 (默认优先 D:\\ 否则 temp_profiles/)"
     )
     parser.add_argument(
         "--trash", action="store_true", default=False,
@@ -797,67 +911,30 @@ def main():
         "--workers", "-w", type=int, default=16,
         help="多线程哈希计算线程数 (默认 16)"
     )
+    parser.add_argument(
+        "--yes", "-y", action="store_true", default=False,
+        help="跳过确认提示直接执行"
+    )
 
     args = parser.parse_args()
 
-    # 若未指定子模式或直接交互式运行
     if len(sys.argv) == 1:
-        print("=" * 60)
-        print("              PDF 查重与去重管理系统 (交互模式)")
-        print("=" * 60)
-        print("  请选择要执行的操作：")
-        print()
-        print("    1. [预览] 全量综合查重 (MD5哈希 + 文件名变体 + 数据库引用)")
-        print("    2. [预览] 仅基于内容 MD5 哈希查重")
-        print("    3. [预览] 仅基于文件名/标题后缀变体 (_1.pdf) 查重")
-        print("    4. [预览] 仅检查数据库 pdf_path 共享与一致性")
-        print("    5. [执行] 全量安全去重 (备份DB + 删除多余副本 + 自动重定向DB引用)")
-        print("    6. [执行] 全量隔离去重 (移入 cache/pdf_trash 隔离区 + 重定向DB)")
-        print()
-        print("    0. 退出")
-        print("=" * 60)
-
-        try:
-            choice = input("请输入序号 [0-6] (直接回车默认 1): ").strip()
-            if not choice:
-                choice = "1"
-        except (KeyboardInterrupt, EOFError):
-            print("\n[-] 运行已取消")
-            sys.exit(0)
-
-        if choice == "1":
-            run_pdf_dedup(mode="all", run=False, export_csv=True)
-        elif choice == "2":
-            run_pdf_dedup(mode="hash", run=False, export_csv=True)
-        elif choice == "3":
-            run_pdf_dedup(mode="name", run=False, export_csv=True)
-        elif choice == "4":
-            run_pdf_dedup(mode="db", run=False, export_csv=False)
-        elif choice == "5":
-            confirm = input("\n[!] 警告: 将正式删除多余的重复 PDF 文件并同步纠偏数据库！确认继续? (y/N): ").strip()
-            if confirm.lower() == "y":
-                run_pdf_dedup(mode="all", run=True, export_csv=True)
-            else:
-                print("[-] 操作已取消。")
-        elif choice == "6":
-            run_pdf_dedup(mode="all", run=True, trash=True, export_csv=True)
-        elif choice == "0":
-            print("[*] 已退出。")
-            sys.exit(0)
-        else:
-            print("[-] 无效的序号。")
-            sys.exit(1)
+        interactive_menu()
     else:
+        is_run = args.run or args.yes
         run_pdf_dedup(
             mode=args.mode,
             keep=args.keep,
-            run=args.run,
+            run=is_run,
+            export_db=args.export_db,
             export_csv=args.export_csv,
             trash=args.trash,
             db_path=args.db,
+            output_dir=args.output_dir,
             max_workers=args.workers,
         )
 
 
 if __name__ == "__main__":
     main()
+

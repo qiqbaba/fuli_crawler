@@ -69,15 +69,40 @@ from datetime import datetime
 from urllib.parse import urlparse, urlunparse
 
 # 将项目根目录加入 sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-from config import get_db_path, PDF_BASE_DIR
+from config import PDF_BASE_DIR
 from utils import setup_console_utf8
 from utils.browser_factory import browser_factory
 from utils.metadata_parser import sanitize_filename
 from utils.pdf_utils import parse_filename, clean_title_suffix, to_relative_path, generate_unique_path
 from utils.pdf_generator import PDFGenerator, PDFRenderConfig
-from fixes.db_utils import vacuum_db, backup_db, format_size
+from fixes.db_utils import (
+    setup_fixes_module,
+    get_connection,
+    get_db_path,
+    resolve_pdf_path,
+    format_size,
+    backup_db,
+    vacuum_db,
+    get_export_dir,
+    get_timestamp,
+    export_records_to_db,
+    export_to_csv,
+    delete_records_cascade_pdf,
+    print_banner,
+    print_section,
+    print_step,
+    print_success,
+    print_warning,
+    print_error,
+    confirm_action,
+    pause_for_user,
+)
+
+setup_fixes_module()
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROGRESS_FILE = os.path.join(PROJECT_ROOT, "logs", "pdf_redownload_progress.json")
@@ -770,7 +795,8 @@ def run_check_dates(args):
                 f"{dates} | {ids} | pdf/{rel_path} |")
         report_lines.append("\n")
 
-    report_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdf_date_check_report.md")
+    ts = get_timestamp()
+    report_path = os.path.join(get_export_dir(), f"pdf_date_check_report_{ts}.md")
     with open(report_path, "w", encoding="utf-8") as rf:
         rf.write("\n".join(report_lines))
 
@@ -2301,24 +2327,22 @@ def run_associate(args):
 # 功能 7: clean-missing - 清理缺失记录
 # ===================================================================
 def run_clean_missing_records(args):
-    """清理数据库中对应物理 PDF 文件已不存在的残留记录（原 clean_deleted_records.py）"""
-    db_path = getattr(args, "db", None) or get_db_path()
-    pdf_base = os.path.abspath(PDF_BASE_DIR)
+    """清理数据库中对应物理 PDF 文件已不存在的残留记录（强制级联清理关联 PDF）"""
+    db_path = get_db_path(getattr(args, "db", None))
     scope = getattr(args, "scope", "unknown")
+    is_run = getattr(args, "run", False) or getattr(args, "yes", False)
 
-    print("=" * 60)
-    print("           清理物理缺失 PDF 对应的数据库脏记录")
-    print("=" * 60)
-    print(f"[*] 运行模式: {'【正式删除模式】' if args.run else '【预览模式 (Dry Run)】'}")
+    print_banner("清理物理缺失 PDF 对应的数据库脏记录")
+    print(f"[*] 运行模式: {'【正式删除模式 (RUN)】' if is_run else '【预览模式 (DRY RUN)】'}")
     print(f"[*] 数据库路径: {db_path}")
     print(f"[*] 扫描范围: {'Unknown_Year 目录' if scope == 'unknown' else '全量 PDF 记录'}")
     print("=" * 60)
 
     if not os.path.exists(db_path):
-        print(f"[-] 错误: 数据库文件不存在: {db_path}")
+        print_error(f"数据库文件不存在: {db_path}")
         return
 
-    conn = sqlite3.connect(db_path)
+    conn = get_connection(db_path)
     cursor = conn.cursor()
 
     if scope == "unknown":
@@ -2327,7 +2351,7 @@ def run_clean_missing_records(args):
         cursor.execute("SELECT id, title, pdf_path FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
 
     rows = cursor.fetchall()
-    print(f"[*] 数据库中待检查记录数: {len(rows)}")
+    print_step(f"数据库中待检查记录数: {len(rows)}")
 
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     to_delete = []
@@ -2339,36 +2363,33 @@ def run_clean_missing_records(args):
         if not os.path.exists(abs_p):
             to_delete.append((r_id, title, pdf_path))
 
-    print(f"[*] 发现物理文件已不存在但数据库中残留的记录数: {len(to_delete)}")
+    print_step(f"发现物理文件已不存在但数据库中残留的记录数: {len(to_delete)}")
     print("=" * 60)
 
     if not to_delete:
-        print("[+] 没有需要清理的记录。")
+        print_success("没有需要清理的记录。")
         conn.close()
         return
 
-    for idx, (r_id, title, pdf_path) in enumerate(to_delete[:50], 1):
-        print(f"[{idx}] ID: {r_id} | 标题: {title[:50]} | 路径: {pdf_path}")
-    if len(to_delete) > 50:
-        print(f"  ... 以及其他 {len(to_delete) - 50} 条记录")
+    print_section("残留记录样例预览 (Top 20)")
+    for idx, (r_id, title, pdf_path) in enumerate(to_delete[:20], 1):
+        print(f"[{idx:2d}] ID: {r_id:<6d} | 路径: {pdf_path:<40s} | 标题: {(title or '')[:40]}")
+    if len(to_delete) > 20:
+        print(f"  ... 以及其他 {len(to_delete) - 20} 条记录")
+    print("─" * 60)
 
-    print("=" * 60)
+    delete_ids = [item[0] for item in to_delete]
 
-    if args.run:
-        print(f"[*] 开始从数据库删除这 {len(to_delete)} 条记录...")
-        delete_ids = [item[0] for item in to_delete]
-        batch_size = 500
-        for i in range(0, len(delete_ids), batch_size):
-            batch = delete_ids[i:i + batch_size]
-            placeholders = ",".join("?" for _ in batch)
-            cursor.execute(f"DELETE FROM resources WHERE id IN ({placeholders})", batch)
-        conn.commit()
-        print(f"[+] 成功删除了 {len(delete_ids)} 条残留记录！")
-        vacuum_db(conn)
-    else:
-        print("[*] 当前为预览模式，未执行任何删除操作。")
-        print("[*] 确认删除请运行: python fixes/pdf_maintenance.py clean-missing --run")
+    # 导出审计表 (默认 .db)
+    if getattr(args, "export_db", True):
+        exp_records = [{"id": r[0], "title": r[1], "missing_pdf_path": r[2]} for r in to_delete]
+        export_records_to_db(exp_records, f"missing_pdf_records_{get_timestamp()}.db", table_name="missing_records")
 
+    if getattr(args, "export_csv", False):
+        exp_records = [{"id": r[0], "title": r[1], "missing_pdf_path": r[2]} for r in to_delete]
+        export_to_csv(exp_records, f"missing_pdf_records_{get_timestamp()}.csv")
+
+    delete_records_cascade_pdf(conn, delete_ids, is_run=is_run)
     conn.close()
 
 
@@ -2377,10 +2398,12 @@ def run_clean_missing_records(args):
 # ===================================================================
 def run_dedup(args):
     from fixes.pdf_dedup import run_pdf_dedup
+    is_run = getattr(args, "run", False) or getattr(args, "yes", False)
     run_pdf_dedup(
         mode=getattr(args, "mode", "all"),
         keep=getattr(args, "keep", "primary"),
-        run=getattr(args, "run", False),
+        run=is_run,
+        export_db=getattr(args, "export_db", True),
         export_csv=getattr(args, "export_csv", False),
         trash=getattr(args, "trash", False),
         db_path=getattr(args, "db", None),
@@ -2391,6 +2414,80 @@ def run_dedup(args):
 # ===================================================================
 # 主入口 - 支持子命令: check-dates, fix-paths, redownload, rebuild, orphan, associate, clean-missing, dedup
 # ===================================================================
+def interactive_menu():
+    """PDF 维护工具合集全局主菜单 (常驻循环)"""
+    args = argparse.Namespace()
+    for attr in ('run', 'verbose', 'skip_download', 'scope', 'mode', 'keep', 'export_db', 'export_csv', 'trash', 'db', 'workers', 'yes'):
+        if attr == 'scope':
+            setattr(args, attr, 'unknown')
+        elif attr == 'mode':
+            setattr(args, attr, 'all')
+        elif attr == 'keep':
+            setattr(args, attr, 'primary')
+        elif attr == 'workers':
+            setattr(args, attr, 4)
+        elif attr == 'db':
+            setattr(args, attr, None)
+        elif attr == 'export_db':
+            setattr(args, attr, True)
+        else:
+            setattr(args, attr, False)
+
+    while True:
+        print_banner("PDF 全生命周期维护工具合集")
+        print("  请选择要运行的功能：")
+        print()
+        print("    1. check-dates   - 检查 PDF 文件与数据库日期的匹配情况并生成报告")
+        print("    2. fix-paths     - 将 Unknown_Year 中的 PDF 移到正确年份文件夹 + 全量修复文件名日期不匹配")
+        print("    3. redownload    - 重新下载体积小于 20KB 的 PDF 文件")
+        print("    4. rebuild       - 重建缺失的 PDF 文件并路径相对化 (多线程并发)")
+        print("    5. orphan        - 检查多余PDF或将多余PDF移回原处")
+        print("    6. associate     - 扫描未关联/断链 PDF 智能回填数据库")
+        print("    7. clean-missing - 清理物理文件已删除但数据库仍残留的脏记录 (级联清理 PDF)")
+        print("    8. dedup         - PDF 物理文件多维查重、去重与数据库引用纠偏")
+        print()
+        print("    0. 退出程序")
+        print("=" * 60)
+
+        try:
+            choice = input("  请输入序号 [0-8] (直接回车默认 1): ").strip()
+            if not choice:
+                choice = "1"
+        except (KeyboardInterrupt, EOFError):
+            print("\n[-] 运行已取消")
+            break
+
+        if choice in ("0", "q", "quit", "exit"):
+            print_step("已退出程序。")
+            break
+
+        if choice == "1":
+            run_check_dates(args)
+        elif choice == "2":
+            setattr(args, "run", confirm_action("是否正式执行路径与文件名重命名修复？", default=False))
+            run_fix_names_and_paths(args)
+        elif choice == "3":
+            setattr(args, "run", confirm_action("是否正式启动 Playwright 重新抓取损坏的 PDF？", default=False))
+            run_redownload_small_pdfs(args)
+        elif choice == "4":
+            setattr(args, "run", confirm_action("是否正式启动重建缺失 PDF 任务？", default=False))
+            run_rebuild(args)
+        elif choice == "5":
+            run_orphan(args)
+        elif choice == "6":
+            setattr(args, "run", confirm_action("是否正式将未关联物理文件写入数据库？", default=False))
+            run_associate(args)
+        elif choice == "7":
+            setattr(args, "run", confirm_action("是否正式清理缺失记录（【强制级联清理关联 PDF】）？", default=False))
+            run_clean_missing_records(args)
+        elif choice == "8":
+            run_dedup(args)
+        else:
+            print_warning("无效的序号。")
+
+        pause_for_user()
+
+
 def main():
     setup_console_utf8()
     parser = argparse.ArgumentParser(
@@ -2405,6 +2502,8 @@ def main():
     p_fix = subparsers.add_parser("fix-paths", help="将 Unknown_Year 中的 PDF 按数据库日期移到正确年份文件夹 + 全量检查修复文件名日期不匹配")
     p_fix.add_argument("--run", action="store_true", default=False,
                        help="正式运行修复，不加此参数时仅进行预览 (Dry Run)")
+    p_fix.add_argument("--dry-run", action="store_true", default=False, help="显式指定预览模式")
+    p_fix.add_argument("--yes", "-y", action="store_true", default=False, help="跳过确认提示直接执行")
     p_fix.add_argument("--verbose", "-v", action="store_true", default=False,
                        help="详细输出每个文件的分析计划")
     p_fix.set_defaults(func=run_fix_names_and_paths)
@@ -2413,6 +2512,8 @@ def main():
     p_redl = subparsers.add_parser("redownload", help="重新下载体积小于 20KB 的 PDF 文件")
     p_redl.add_argument("--run", action="store_true", default=False,
                         help="正式运行修复，不加此参数时仅进行预览 (Dry Run)")
+    p_redl.add_argument("--dry-run", action="store_true", default=False, help="显式指定预览模式")
+    p_redl.add_argument("--yes", "-y", action="store_true", default=False, help="跳过确认提示直接执行")
     p_redl.add_argument("--verbose", "-v", action="store_true", default=False,
                         help="详细输出")
     p_redl.set_defaults(func=run_redownload_small_pdfs)
@@ -2421,6 +2522,8 @@ def main():
     p_rebuild = subparsers.add_parser("rebuild", help="重建缺失的 PDF 文件并路径相对化 (支持多线程并发)")
     p_rebuild.add_argument("--run", action="store_true", default=False,
                            help="正式执行修复和更新，不加此参数时仅进行预览 (Dry Run)")
+    p_rebuild.add_argument("--dry-run", action="store_true", default=False, help="显式指定预览模式")
+    p_rebuild.add_argument("--yes", "-y", action="store_true", default=False, help="跳过确认提示直接执行")
     p_rebuild.add_argument("--workers", "-w", type=int, default=4,
                            help="并发下载线程数 (默认 4)")
     p_rebuild.add_argument("--skip-download", action="store_true", default=False,
@@ -2437,6 +2540,8 @@ def main():
     p_assoc = subparsers.add_parser("associate", help="扫描磁盘未关联/断链 PDF，通过标题与站点智能关联回填数据库")
     p_assoc.add_argument("--run", action="store_true", default=False,
                          help="正式执行数据库回填更新，不加此参数时仅进行预览 (Dry Run)")
+    p_assoc.add_argument("--dry-run", action="store_true", default=False, help="显式指定预览模式")
+    p_assoc.add_argument("--yes", "-y", action="store_true", default=False, help="跳过确认提示直接执行")
     p_assoc.add_argument("--db", default=None,
                          help="指定自定义 SQLite 数据库路径")
     p_assoc.set_defaults(func=run_associate)
@@ -2445,6 +2550,10 @@ def main():
     p_clean_missing = subparsers.add_parser("clean-missing", help="清理数据库中对应物理 PDF 已不存在的脏记录")
     p_clean_missing.add_argument("--run", action="store_true", default=False,
                                  help="正式执行删除，不加此参数时仅进行预览 (Dry Run)")
+    p_clean_missing.add_argument("--dry-run", action="store_true", default=False, help="显式指定预览模式")
+    p_clean_missing.add_argument("--yes", "-y", action="store_true", default=False, help="跳过确认提示直接执行")
+    p_clean_missing.add_argument("--export-db", action="store_true", default=True, help="导出被删除记录至独立 .db 库 (默认开启)")
+    p_clean_missing.add_argument("--export-csv", action="store_true", default=False, help="导出被删除记录至 CSV 审计表")
     p_clean_missing.add_argument("--scope", choices=["unknown", "all"], default="unknown",
                                  help="扫描范围: unknown (仅 Unknown_Year) 或 all (全部 PDF 记录)")
     p_clean_missing.add_argument("--db", default=None,
@@ -2459,6 +2568,9 @@ def main():
                          help="保留策略: primary (规范文件名优先，默认), larger (最大体积), newest (最新生成), oldest (最早生成)")
     p_dedup.add_argument("--run", action="store_true", default=False,
                          help="正式执行物理文件清理与数据库重定向，不加此参数时仅进行安全预览 (Dry Run)")
+    p_dedup.add_argument("--dry-run", action="store_true", default=False, help="显式指定预览模式")
+    p_dedup.add_argument("--yes", "-y", action="store_true", default=False, help="跳过确认提示直接执行")
+    p_dedup.add_argument("--export-db", action="store_true", default=True, help="导出查重审计明细至独立 .db 数据库 (默认开启)")
     p_dedup.add_argument("--export-csv", action="store_true", default=False,
                          help="导出查重明细至 CSV 审计表")
     p_dedup.add_argument("--trash", action="store_true", default=False,
@@ -2472,76 +2584,14 @@ def main():
     args = parser.parse_args()
 
     if args.command is None:
-        # 无子命令时，补充所有子命令参数的默认值
-        for attr in ('run', 'verbose', 'skip_download', 'scope', 'mode', 'keep', 'export_csv', 'trash', 'db', 'workers'):
-            if not hasattr(args, attr):
-                if attr == 'scope':
-                    setattr(args, attr, 'unknown')
-                elif attr == 'mode':
-                    setattr(args, attr, 'all')
-                elif attr == 'keep':
-                    setattr(args, attr, 'primary')
-                elif attr == 'workers':
-                    setattr(args, attr, 4)
-                elif attr == 'db':
-                    setattr(args, attr, None)
-                else:
-                    setattr(args, attr, False)
-
-        # 显示交互菜单
-        print("=" * 60)
-        print("                  PDF 维护工具合集")
-        print("=" * 60)
-        print("  请选择要运行的功能：")
-        print()
-        print("    1. check-dates   - 检查 PDF 文件与数据库日期的匹配情况并生成报告")
-        print("    2. fix-paths     - 将 Unknown_Year 中的 PDF 移到正确年份文件夹 + 全量修复文件名日期不匹配")
-        print("    3. redownload    - 重新下载体积小于 20KB 的 PDF 文件")
-        print("    4. rebuild       - 重建缺失的 PDF 文件并路径相对化 (多线程并发)")
-        print("    5. orphan        - 检查多余PDF或将多余PDF移回原处")
-        print("    6. associate     - 扫描未关联/断链 PDF 智能回填数据库")
-        print("    7. clean-missing - 清理物理文件已删除但数据库仍残留的脏记录")
-        print("    8. dedup         - PDF 物理文件多维查重、去重与数据库引用纠偏")
-        print()
-        print("    0. 退出")
-        print("=" * 60)
-
-        try:
-            choice = input("请输入序号 [0-8] (直接回车默认 1): ").strip()
-            if not choice:
-                choice = "1"
-        except (KeyboardInterrupt, EOFError):
-            print("\n[-] 运行已取消")
-            sys.exit(0)
-
-        if choice == "1":
-            run_check_dates(args)
-        elif choice == "2":
-            run_fix_names_and_paths(args)
-        elif choice == "3":
-            run_redownload_small_pdfs(args)
-        elif choice == "4":
-            run_rebuild(args)
-        elif choice == "5":
-            run_orphan(args)
-        elif choice == "6":
-            run_associate(args)
-        elif choice == "7":
-            run_clean_missing_records(args)
-        elif choice == "8":
-            run_dedup(args)
-        elif choice == "0":
-            print("[*] 已退出。")
-            sys.exit(0)
-        else:
-            print("[-] 无效的序号。")
-            sys.exit(1)
+        interactive_menu()
     else:
         args.func(args)
 
 
 if __name__ == "__main__":
     main()
+
 
 
 
