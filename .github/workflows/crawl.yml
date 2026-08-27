@@ -84,7 +84,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: 恢复代理 IP 缓存（尝试复用上次已验证的代理）
-        uses: actions/cache/restore@v4.2.3
+        uses: actions/cache/restore@v6.1.0
         with:
           path: temp_profiles/
           key: proxy-cache-latest
@@ -115,7 +115,7 @@ jobs:
 
       - name: 保存代理 IP 缓存（唯一键，绝不与旧缓存冲突）
         continue-on-error: true   # 缓存保存失败不阻塞爬虫运行（爬虫会回退到独立获取）
-        uses: actions/cache/save@v4.2.3
+        uses: actions/cache/save@v6.1.0
         with:
           path: temp_profiles/
           key: proxy-cache-${{ github.run_id }}-${{ github.run_attempt }}
@@ -176,14 +176,14 @@ jobs:
           cache: 'pip'
 
       - name: 缓存 Playwright Chromium 浏览器
-        uses: actions/cache@v4.2.3
+        uses: actions/cache@v6.1.0
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
 
       - name: 恢复代理 IP 列表（共享缓存）
-        uses: actions/cache/restore@v4.2.3
+        uses: actions/cache/restore@v6.1.0
         with:
           path: temp_profiles/
           key: proxy-cache-latest
@@ -259,7 +259,7 @@ jobs:
 
       - name: 上传重试统计 CSV 与运行摘要
         if: always()
-        uses: actions/upload-artifact@v4.6.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: retry-stats-${{ matrix.crawler }}
           path: |
@@ -308,14 +308,14 @@ jobs:
           cache: 'pip'
 
       - name: 缓存 Playwright Chromium 浏览器
-        uses: actions/cache@v4.2.3
+        uses: actions/cache@v6.1.0
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
 
       - name: 恢复代理 IP 列表（共享缓存）
-        uses: actions/cache/restore@v4.2.3
+        uses: actions/cache/restore@v6.1.0
         with:
           path: temp_profiles/
           key: proxy-cache-latest
@@ -391,7 +391,7 @@ jobs:
 
       - name: 上传重试统计 CSV 与运行摘要
         if: always()
-        uses: actions/upload-artifact@v4.6.0
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: retry-stats-${{ matrix.crawler }}
           path: |
@@ -415,7 +415,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: 下载所有爬虫的重试统计 artifact
-        uses: actions/download-artifact@v4.1.8
+        uses: actions/download-artifact@v8.0.1
         with:
           pattern: retry-stats-*
           path: downloaded-stats/
