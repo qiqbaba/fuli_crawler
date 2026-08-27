@@ -24,6 +24,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         self.use_persistent_context = True
         self.proxy_test_url = "https://gcbt.net/download/8067.html"
         self.proxy_expected_content = "90231538e5368bb8422500604f01cb25edfeedb4"
+        self.check_resource_link = True  # 启用磁力链接二次去重
         # 默认早停阈值为连续 20 条已存在记录
         self.max_consecutive_existing = 20
         self.max_consecutive_duplicate_pages = 3
@@ -60,7 +61,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
     def fetch_list_page(self, page_num):
         """抓取列表页内容"""
         list_url = self.get_list_url(page_num)
-        logger.info("正在访问列表页: %s", list_url)
+        self.log.info("正在访问列表页: %s", list_url)
         _, html_text = self._http_get(list_url, timeout=25)
         return html_text
 
@@ -94,7 +95,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         _, html_text = self._http_get(sub_url, timeout=25)
         
         if not html_text:
-            logger.error("[-] 子页面 %s 抓取失败", sub_url)
+            self.log.error("[-] 子页面 %s 抓取失败", sub_url)
             return False, None
             
         soup = BeautifulSoup(html_text, 'html.parser')
@@ -183,14 +184,32 @@ class GcbtCrawler(PlaywrightBaseCrawler):
                 resource_link = download_links[0]
         else:
             resource_link = ""
-            logger.warning("[%s] 未找到下载链接，resource_link 置空", idx)
+            self.log.warning("[%s] 未找到下载链接，resource_link 置空", idx)
             
-        logger.info("[%s] ✅ 抓取成功: %s | 时间: %s | 大小: %s | 链接: %s...", idx, title[:40], pub_time, size, resource_link[:40])
-        
+        self.log.info("[%s] ✅ 抓取成功: %s | 时间: %s | 大小: %s | 链接: %s...", idx, title[:40], pub_time, size, resource_link[:40])
+
+        # === 提前去重：在 PDF 生成前检查磁力链接是否已存在 ===
+        if self.check_resource_link and resource_link:
+            existing_links = self.db_manager.filter_existing_resource_links([resource_link])
+            if resource_link in existing_links:
+                self.log.info("[%s] 磁力链接已存在，跳过 PDF 生成: %s...", idx, resource_link[:60])
+                data = self.clean_common_metadata(
+                    title=title,
+                    date_str=pub_time,
+                    resource_link=resource_link,
+                    category=category,
+                    url=sub_url,
+                    pdf_path=''
+                )
+                data['size'] = size
+                data['resource_format'] = fmt
+                data['source'] = self.source_name
+                return True, data
+
         # 6. 生成并渲染 PDF 文件（直接保存原网页，测试模式跳过）
         pdf_path = ''
         if not self.is_test and article:
-            pdf_path = self.retry_generate_pdf(sub_url, pub_time, title)
+            pdf_path = self.retry_generate_pdf(sub_url, pub_time, title, no_proxy_last=True)
             
         # 7. 调用通用清洗逻辑
         data = self.clean_common_metadata(

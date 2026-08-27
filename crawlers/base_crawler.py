@@ -264,9 +264,31 @@ class BaseCrawler:
         """生命周期钩子：爬网结束后（子类可选覆盖）"""
         self._write_crawler_summary()
 
-    def release_thread_resources(self):
-        """生命周期钩子：释放线程局部资源（子类可选覆盖）"""
-        pass
+    def _format_list_url(self, category, page_num):
+        """安全格式化列表页 URL，兼容命名占位符 {cat}/{page}、位置占位符 {} 以及 {base}"""
+        url = getattr(self, "base_list_url", "")
+        if not url:
+            return ""
+        try:
+            return url.format(base=getattr(self, "base_domain", ""), cat=category, page=page_num)
+        except (KeyError, ValueError, IndexError):
+            pass
+        try:
+            return url.format(category, page_num)
+        except Exception:
+            pass
+        res = url
+        if "{base}" in res:
+            res = res.replace("{base}", getattr(self, "base_domain", ""))
+        if "{cat}" in res:
+            res = res.replace("{cat}", str(category))
+        elif "{}" in res:
+            res = res.replace("{}", str(category), 1)
+        if "{page}" in res:
+            res = res.replace("{page}", str(page_num))
+        elif "{}" in res:
+            res = res.replace("{}", str(page_num), 1)
+        return res
 
     def fetch_list_page(self, page_num):
         """抓取列表页内容，返回原始页面内容或对象"""
@@ -522,9 +544,11 @@ class BaseCrawler:
                             self.log.warning("工作线程自助清理资源失败: %s", e)
 
                 # 按预分配顺序遍历（Python 3.7+ 保持插入顺序），无需排序
-                for idx in collected_results:
-                    res = collected_results[idx]
+                failed_items = []
+                for idx, raw_item in items_to_process:
+                    res = collected_results.get(idx)
                     if res is None:
+                        failed_items.append(raw_item)
                         continue
                     is_existing, data = res
                     consecutive_subpage_count, should_stop = self._check_consecutive_subpage_stop(
@@ -534,6 +558,8 @@ class BaseCrawler:
                         early_stop_triggered = True
                     if data:
                         results_dict[idx] = data
+                    elif not is_existing:
+                        failed_items.append(raw_item)
 
                 self.log.info("正在关闭线程池...")
         finally:
@@ -543,7 +569,7 @@ class BaseCrawler:
         if early_stop_triggered:
             self.log.warning("子页面级去重触发早停标记，已完成的结果将继续入库。")
 
-        return results_dict, consecutive_subpage_count, early_stop_triggered
+        return results_dict, consecutive_subpage_count, early_stop_triggered, failed_items
 
     def _write_results_to_db(self, results, consecutive_count):
         """写入结果到数据库并更新计数 — 分离自 _crawl_pages 的写入逻辑
@@ -662,6 +688,115 @@ class BaseCrawler:
             return False
         return max(consecutive_count, consecutive_subpage_count) >= self.max_consecutive_existing
 
+    def _retry_category_failed_items(self, failed_list_pages, failed_subpage_items, max_workers, class_name=None):
+        """板块结束时的末尾补救重试：对跳过的列表页与抓取失败的资源子页面再重试一次"""
+        cat_label = f"[{class_name}]" if class_name else f"[{self.source_name}]"
+        
+        # 1. 过滤已存在的资源项（避免重复抓取）
+        if failed_subpage_items:
+            urls_to_check = [item if isinstance(item, str) else item.get('url') for item in failed_subpage_items]
+            existing_urls = self.db_manager.filter_existing_urls(urls_to_check, source=self.source_name)
+            failed_subpage_items = [item for item in failed_subpage_items if (item if isinstance(item, str) else item.get('url')) not in existing_urls]
+
+        if not failed_list_pages and not failed_subpage_items:
+            return
+
+        from config import is_local_mode
+        is_gha = not is_local_mode()
+
+        if is_gha:
+            print(f"::group::{cat_label} 板块结束：开始末尾失败补救重试 (跳过列表页: {len(failed_list_pages)}, 失败资源: {len(failed_subpage_items)})", flush=True)
+        else:
+            self.log.info("\n%s ================= 板块结束：开始末尾失败补救重试 =================", cat_label)
+
+        if failed_list_pages:
+            self.log.info("%s 待重试的跳过列表页: %s (共 %s 页)", cat_label, failed_list_pages, len(failed_list_pages))
+        if failed_subpage_items:
+            self.log.info("%s 待重试的失败资源页面: %s 条", cat_label, len(failed_subpage_items))
+
+        # A. 列表页补救重试
+        retried_list_pages = list(failed_list_pages)
+        for page_num in retried_list_pages:
+            self.log.info("%s 正在补救重试列表页: 第 %s 页...", cat_label, page_num)
+            try:
+                list_content = self.fetch_list_page(page_num)
+                if not list_content:
+                    self.log.warning("%s 补救重试列表页第 %s 页依然失败 (获取为空)", cat_label, page_num)
+                    continue
+                raw_items = self.parse_list_page(list_content, page_num)
+                if not raw_items:
+                    self.log.warning("%s 补救重试列表页第 %s 页依然解析为空", cat_label, page_num)
+                    continue
+                
+                urls_to_check = [r if isinstance(r, str) else r.get('url') for r in raw_items]
+                existing_urls = self.db_manager.filter_existing_urls(urls_to_check, source=self.source_name)
+                items_to_proc, sk_cnt, _, _ = self._filter_new_items(raw_items, existing_urls, consecutive_count=0)
+                if not items_to_proc:
+                    self.log.info("%s 补救重试列表页第 %s 页所有项已存在，跳过", cat_label, page_num)
+                    if page_num in failed_list_pages:
+                        failed_list_pages.remove(page_num)
+                    continue
+                
+                r_dict, _, _, retry_failed = self._process_items_concurrently(items_to_proc, max_workers, consecutive_subpage_count=0)
+                if retry_failed:
+                    failed_subpage_items.extend(retry_failed)
+                
+                results = [r_dict[idx] for idx in sorted(r_dict.keys()) if r_dict.get(idx)]
+                if results:
+                    ins_cnt, db_sk, _, _ = self._write_results_to_db(results, consecutive_count=0)
+                    self.total_inserted_count += ins_cnt
+                    self.total_skipped_count += (sk_cnt + db_sk)
+                    self.log.info("%s ✅ 补救重试列表页第 %s 页成功入库 %s 条新记录", cat_label, page_num, ins_cnt)
+                self.db_manager.commit()
+                if page_num in failed_list_pages:
+                    failed_list_pages.remove(page_num)
+            except Exception as e:
+                self.log.error("%s 补救重试列表页第 %s 页异常: %s", cat_label, page_num, e)
+                try:
+                    self.db_manager.rollback()
+                except Exception:
+                    pass
+
+        # B. 资源子页面补救重试
+        if failed_subpage_items:
+            seen_urls = set()
+            unique_items = []
+            for item in failed_subpage_items:
+                u = item if isinstance(item, str) else item.get('url', '')
+                if u and u not in seen_urls:
+                    seen_urls.add(u)
+                    unique_items.append(item)
+            
+            urls_to_check = [it if isinstance(it, str) else it.get('url') for it in unique_items]
+            existing_urls = self.db_manager.filter_existing_urls(urls_to_check, source=self.source_name)
+            items_to_retry = [it for it in unique_items if (it if isinstance(it, str) else it.get('url')) not in existing_urls]
+            
+            if items_to_retry:
+                self.log.info("%s 正在对 %s 条失败的资源页面进行并发补救重试...", cat_label, len(items_to_retry))
+                indexed_items = [(idx + 1, item) for idx, item in enumerate(items_to_retry)]
+                try:
+                    r_dict, _, _, still_failed = self._process_items_concurrently(indexed_items, max_workers, consecutive_subpage_count=0)
+                    results = [r_dict[idx] for idx in sorted(r_dict.keys()) if r_dict.get(idx)]
+                    if results:
+                        ins_cnt, db_sk, _, _ = self._write_results_to_db(results, consecutive_count=0)
+                        self.total_inserted_count += ins_cnt
+                        self.total_skipped_count += db_sk
+                        self.log.info("%s ✅ 资源页面补救重试完成 → 成功补录 %s 条新记录", cat_label, ins_cnt)
+                    if still_failed:
+                        self.log.warning("%s ⚠️ 补救重试后仍有 %s 条资源页面抓取失败", cat_label, len(still_failed))
+                    self.db_manager.commit()
+                except Exception as e:
+                    self.log.error("%s 资源页面补救重试异常: %s", cat_label, e)
+                    try:
+                        self.db_manager.rollback()
+                    except Exception:
+                        pass
+        
+        if is_gha:
+            print("::endgroup::", flush=True)
+        else:
+            self.log.info("%s ================= 板块末尾补救重试结束 =================\n", cat_label)
+
     def _crawl_pages(self, start_page, end_page, max_workers, class_name=None):
         """
         爬虫页面循环核心逻辑（不含 on_start/on_finish），
@@ -675,6 +810,8 @@ class BaseCrawler:
         consecutive_failed_pages = 0
         fetch_fail_pages = 0  # 本次循环中"网络请求失败"页数累计
         empty_parse_pages = 0  # 本次循环中"解析为空"页数累计
+        failed_list_pages = []  # 记录抓取/解析失败跳过的列表页
+        failed_subpage_items = []  # 记录抓取失败的资源子页面项
         from config import is_local_mode
         is_gha = not is_local_mode()
         early_break = False
@@ -696,6 +833,8 @@ class BaseCrawler:
                     consecutive_failed_pages += 1
                     self.total_failed_pages += 1
                     fetch_fail_pages += 1
+                    if page_num not in failed_list_pages:
+                        failed_list_pages.append(page_num)
                     self.log.error("❌ 页面 %s 抓取失败或无内容 [网络/请求失败] (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
                     if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category, fail_type="network"):
                         early_break = True
@@ -707,6 +846,8 @@ class BaseCrawler:
                     consecutive_failed_pages += 1
                     self.total_failed_pages += 1
                     empty_parse_pages += 1
+                    if page_num not in failed_list_pages:
+                        failed_list_pages.append(page_num)
                     self.log.error("❌ 页面 %s 未提取到有效项 [解析为空] (连续失败 %s/%s)。", page_num, consecutive_failed_pages, self.max_consecutive_failed_pages)
                     if self._check_circuit_breaker(consecutive_failed_pages, page_num, class_name, is_multi_category=is_multi_category, fail_type="empty_parse"):
                         early_break = True
@@ -758,9 +899,11 @@ class BaseCrawler:
 
                 # === 步骤 4: 并发处理子页面 ===
                 self.log.info("[*] 开始并发处理 %s 条新纪录 (并发线程数: %s)...", len(items_to_process), max_workers)
-                results_dict, consecutive_subpage_count, subpage_early_stop = self._process_items_concurrently(
+                results_dict, consecutive_subpage_count, subpage_early_stop, page_failed_items = self._process_items_concurrently(
                     items_to_process, max_workers, consecutive_subpage_count
                 )
+                if page_failed_items:
+                    failed_subpage_items.extend(page_failed_items)
                 if subpage_early_stop:
                     early_stop_triggered = True
 
@@ -791,6 +934,8 @@ class BaseCrawler:
                 self._sleep_between_pages(self.no_pdf)
             except Exception as e:
                 self.log.error("页面 %s 处理异常，已回滚未提交事务: %s", page_num, e)
+                if page_num not in failed_list_pages:
+                    failed_list_pages.append(page_num)
                 try:
                     self.db_manager.rollback()
                 except Exception as rb_e:
@@ -799,6 +944,9 @@ class BaseCrawler:
                 if is_gha:
                     print("::endgroup::", flush=True)
         
+        # 板块末尾补救重试：对跳过的列表页与抓取失败的资源页面进行再次重试
+        self._retry_category_failed_items(failed_list_pages, failed_subpage_items, max_workers, class_name=class_name)
+
         if class_name is not None and not early_break:
             self._save_page_state(class_name, end_page + 1)
 
@@ -822,7 +970,7 @@ class BaseCrawler:
         # 检测 GitHub Actions CI 环境，自动降级并发数防止 OOM
         import os as _os
         if _os.environ.get("GITHUB_ACTIONS") == "true":
-            if self.source_name in ("seju", "datang", "madou", "gcbt", "jingpin_toupai", "taose", "dashen"):
+            if self.source_name in ("seju", "datang", "madou", "gcbt", "jingpin", "jingpin_toupai", "taose", "dashen", "tanhua", "mianfei_guochan"):
                 return 4  # CI 环境 Playwright 爬虫降级到 4 workers，避免 7GB RAM OOM
             # CI 中 u3c3 等纯 HTTP 爬虫可保持较高并发
             return 30
@@ -830,8 +978,8 @@ class BaseCrawler:
         if self.no_pdf:
             # 无 PDF 模式无需浏览器进程，可大幅提升并发
             return 30
-        elif self.source_name in ("seju", "datang", "madou", "gcbt"):
-            return 3
+        elif self.source_name in ("seju", "datang", "madou", "gcbt", "jingpin", "jingpin_toupai", "taose", "dashen", "tanhua", "mianfei_guochan"):
+            return 8
         else:
             return 50
 
@@ -1367,8 +1515,8 @@ class DomainRotationMixin:
         self.current_domain_idx = domain_idx % len(self.domains)
         self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
         
-        template = getattr(self, "list_url_template", "{base}/list.php?class={cat}&page={page}")
-        if "{base}" in template:
+        template = getattr(self, "list_url_template", None)
+        if template and "{base}" in template:
             self.base_list_url = template.format(base=self.base_domain, cat="{cat}", page="{page}")
         elif getattr(self, "base_list_url", None):
             import re
@@ -1376,9 +1524,9 @@ class DomainRotationMixin:
             if re.search(pattern, self.base_list_url):
                 self.base_list_url = re.sub(pattern, self.domains[self.current_domain_idx], self.base_list_url)
             else:
-                self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+                self.base_list_url = f"{self.base_domain}/list.php?class={{cat}}&page={{page}}"
         else:
-            self.base_list_url = f"{self.base_domain}/list.php?class={{}}&page={{}}"
+            self.base_list_url = f"{self.base_domain}/list.php?class={{cat}}&page={{page}}"
 
     def _load_domains_from_cache(self):
         """从本地缓存加载之前发现的最新域名，如果有则替换 self.domains"""
@@ -1861,9 +2009,12 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
 
     def get_default_max_workers(self):
         """根据爬虫类型获取默认并发数，覆盖父类"""
+        import os as _os
+        if _os.environ.get("GITHUB_ACTIONS") == "true":
+            return 4  # CI 环境降级到 4 workers，避免 OOM
         if self.no_pdf:
             return 30
-        return 10
+        return 8
 
     # ------------------------------------------------------------------ #
     #  以下为子类可覆盖的钩子方法，用于 process_sub_page_if_needed() 中的差异化逻辑

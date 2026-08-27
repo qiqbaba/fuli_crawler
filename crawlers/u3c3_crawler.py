@@ -34,7 +34,7 @@ class U3c3Crawler(BaseCrawler):
     def on_start(self):
         """初始化代理管理器"""
         if is_proxy_manager_enabled():
-            logger.info("[*] 代理管理器已启用，正在获取和验证代理IP...")
+            self.log.info("[*] 代理管理器已启用，正在获取和验证代理IP...")
             from config import get_proxy_verify_workers
             manager = get_proxy_manager()
             if manager:
@@ -48,7 +48,7 @@ class U3c3Crawler(BaseCrawler):
                     source=self.source_name
                 )
                 stats = manager.get_stats()
-                logger.info("[*] 代理管理器就绪: 总计 %s 个，可用 %s 个", stats['total'], stats['working'])
+                self.log.info("[*] 代理管理器就绪: 总计 %s 个，可用 %s 个", stats['total'], stats['working'])
 
     def fetch_list_page(self, page_num):
         """抓取页面 HTML 内容，包含重试逻辑"""
@@ -70,13 +70,13 @@ class U3c3Crawler(BaseCrawler):
                 response = requests.get(url, headers=headers, timeout=20, proxies=proxies, impersonate="chrome120")
                 if response.status_code == 200:
                     return response.text
-                logger.info("[*] 页面 %s 抓取失败 (HTTP %s)，尝试重试 (%s/%s)...", page_num, response.status_code, attempt + 1, max_retries)
+                self.log.info("[*] 页面 %s 抓取失败 (HTTP %s)，尝试重试 (%s/%s)...", page_num, response.status_code, attempt + 1, max_retries)
                 if response.status_code in (403, 407, 502, 503, 504) and proxies and is_proxy_manager_enabled():
                     manager = get_proxy_manager()
                     if manager and "http" in proxies:
                         manager.report_failure(proxies["http"])
             except Exception as e:
-                logger.info("[*] 页面 %s 抓取异常 (%s)，尝试重试 (%s/%s)...", page_num, e, attempt + 1, max_retries)
+                self.log.info("[*] 页面 %s 抓取异常 (%s)，尝试重试 (%s/%s)...", page_num, e, attempt + 1, max_retries)
                 if proxies and is_proxy_manager_enabled():
                     manager = get_proxy_manager()
                     if manager and "http" in proxies:

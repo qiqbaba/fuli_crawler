@@ -27,7 +27,8 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         ]
         self.current_domain_idx = 0
         self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
-        self.base_list_url = f"{self.base_domain}/list/{{}}-{{}}.html"
+        self.list_url_template = "{base}/list/{cat}-{page}.html"
+        self.base_list_url = f"{self.base_domain}/list/{{cat}}-{{page}}.html"
         self.current_class = "2935277"
         self.max_consecutive_existing = 15  # 连续抓到历史数据时早停
         self.category_map = {
@@ -85,7 +86,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
     def fetch_list_page(self, page_num):
         """拉取列表页 HTML 并解码（解密全页倒序 Base64）"""
         for _ in range(len(self.domains)):
-            url = self.base_list_url.format(self.current_class, page_num)
+            url = self._format_list_url(self.current_class, page_num)
             headers = self._build_headers()
 
             max_retries = self.max_retries
@@ -97,19 +98,19 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     proxies = get_effective_proxy()
 
                 try:
-                    logger.info("[*] 正在拉取列表页 (尝试 %s/%s): %s", attempt + 1, max_retries, url)
-                    r = requests.get(url, headers=headers, impersonate="chrome110", timeout=20, proxies=proxies)
+                    self.log.info("[*] 正在拉取列表页 (尝试 %s/%s): %s", attempt + 1, max_retries, url)
+                    r = requests.get(url, headers=headers, impersonate="chrome120", timeout=20, proxies=proxies)
                     r.encoding = 'utf-8'
                     if r.status_code == 200:
                         decrypted = self.decrypt_html(r.text)
                         if decrypted:
                             return decrypted
                         else:
-                            logger.error("[-] 列表页解密失败")
+                            self.log.error("[-] 列表页解密失败")
                     else:
-                        logger.error("[-] 列表页请求失败，状态码: %s", r.status_code)
+                        self.log.error("[-] 列表页请求失败，状态码: %s", r.status_code)
                 except Exception as e:
-                    logger.error("[-] 拉取列表页异常: %s", e)
+                    self.log.error("[-] 拉取列表页异常: %s", e)
                 if attempt < max_retries - 1:
                     time.sleep(random.uniform(1.0, 3.0))
 
@@ -127,13 +128,13 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         start_marker = "var j_b64 = '"
         start_idx = list_page_html.find(start_marker)
         if start_idx == -1:
-            logger.error("[-] 未在解密的列表页中匹配到 'j_b64' 变量")
+            self.log.error("[-] 未在解密的列表页中匹配到 'j_b64' 变量")
             return []
 
         val_start = start_idx + len(start_marker)
         end_idx = list_page_html.find("'", val_start)
         if end_idx == -1:
-            logger.error("[-] 未在解密的列表页中匹配到 'j_b64' 变量结束符")
+            self.log.error("[-] 未在解密的列表页中匹配到 'j_b64' 变量结束符")
             return []
 
         j_b64_str = list_page_html[val_start:end_idx]
@@ -150,7 +151,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     sub_urls.append(urljoin(self.base_domain, href))
             return sub_urls
         except Exception as e:
-            logger.error("[-] 解析列表页 JSON 数据失败: %s", e)
+            self.log.error("[-] 解析列表页 JSON 数据失败: %s", e)
             return []
 
     def process_sub_page_if_needed(self, sub_url, idx):
@@ -167,7 +168,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                 proxies = get_effective_proxy()
 
             try:
-                r = requests.get(sub_url, headers=headers, impersonate="chrome110", timeout=20, proxies=proxies)
+                r = requests.get(sub_url, headers=headers, impersonate="chrome120", timeout=20, proxies=proxies)
                 r.encoding = 'utf-8'
                 if r.status_code == 200:
                     html_text = self.decrypt_html(r.text)
@@ -179,20 +180,20 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                 time.sleep(random.uniform(0.5, 1.5))
 
         if not html_text:
-            logger.error("[-] 抓取详情页并解密失败: %s", sub_url)
+            self.log.error("[-] 抓取详情页并解密失败: %s", sub_url)
             return False, None
 
         # 匹配其中的 JSON 密文
         start_marker = "var j_b64 = '"
         start_idx = html_text.find(start_marker)
         if start_idx == -1:
-            logger.error("[-] 详情页中找不到 'j_b64' 变量: %s", sub_url)
+            self.log.error("[-] 详情页中找不到 'j_b64' 变量: %s", sub_url)
             return False, None
 
         val_start = start_idx + len(start_marker)
         end_idx = html_text.find("'", val_start)
         if end_idx == -1:
-            logger.error("[-] 详情页中找不到 'j_b64' 变量结束符: %s", sub_url)
+            self.log.error("[-] 详情页中找不到 'j_b64' 变量结束符: %s", sub_url)
             return False, None
 
         j_b64_str = html_text[val_start:end_idx]
@@ -210,7 +211,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             res_format = data.get('tr', '').strip()
             category = self.category_map.get(self.current_class, '自拍')
 
-            logger.info("[%s] 解析详情页成功: %s | 大小: %s | 链接: %s...", idx, title, size, resource_link[:50])
+            self.log.info("[%s] 解析详情页成功: %s | 大小: %s | 链接: %s...", idx, title, size, resource_link[:50])
 
             # === 提前去重：在 PDF 生成前检查磁力链接是否已存在 ===
             if self.check_resource_link and resource_link:
@@ -227,7 +228,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     processed_data['size'] = size
                     processed_data['resource_format'] = res_format
                     processed_data['source'] = self.source_name
-                    logger.info("[%s] ✅ 抓取成功: %s", idx, title[:60])
+                    self.log.info("[%s] ✅ 抓取成功: %s", idx, title[:60])
                     return True, processed_data
 
             # 写入 PDF 文件（测试模式跳过）
@@ -250,11 +251,11 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             processed_data['resource_format'] = res_format
             processed_data['source'] = self.source_name
 
-            logger.info("[%s] ✅ 抓取成功: %s", idx, title[:60])
+            self.log.info("[%s] ✅ 抓取成功: %s", idx, title[:60])
             return False, processed_data
 
         except Exception as e:
-            logger.error("[-] 解析详情页 JSON 密文发生错误: %s", e)
+            self.log.error("[-] 解析详情页 JSON 密文发生错误: %s", e)
             return False, None
 
     def get_categories(self):
