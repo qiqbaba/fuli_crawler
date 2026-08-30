@@ -10,6 +10,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 from crawlers.base_crawler import PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin
+from utils.fanhao_filter import has_fanhao
+from utils.lang_filter import is_japanese
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -120,7 +122,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         return None
 
     def parse_list_page(self, list_page_html, page_num):
-        """解析列表页解密后的 HTML，从 JSON 中提取详情页 URL 列表"""
+        """解析列表页解密后的 HTML，从 JSON 中提取条目信息（包含标题与详情页 URL）"""
         if not list_page_html:
             return []
 
@@ -144,18 +146,24 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             data = json.loads(decoded_json)
             
             items = data.get('l', {}).get('a', [])
-            sub_urls = []
+            parsed_items = []
             for item in items:
                 href = item.get('url', '')
                 if href:
-                    sub_urls.append(urljoin(self.base_domain, href))
-            return sub_urls
+                    full_url = urljoin(self.base_domain, href)
+                    title = item.get('name', '') or item.get('title', '') or item.get('t', '')
+                    parsed_items.append({
+                        'url': full_url,
+                        'title': str(title).strip()
+                    })
+            return parsed_items
         except Exception as e:
             self.log.error("[-] 解析列表页 JSON 数据失败: %s", e)
             return []
 
-    def process_sub_page_if_needed(self, sub_url, idx):
+    def process_sub_page_if_needed(self, raw_item, idx):
         """提取详情页数据并进行解密和 PDF 渲染"""
+        sub_url = raw_item['url'] if isinstance(raw_item, dict) else raw_item
         headers = self._build_headers(referer=self.base_domain + "/")
         
         html_text = None
@@ -231,9 +239,11 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     self.log.info("[%s] ✅ 抓取成功: %s", idx, title[:60])
                     return True, processed_data
 
-            # 写入 PDF 文件（测试模式跳过）
+            # 写入 PDF 文件（测试模式跳过，番号/日语跳过）
             pdf_path = ''
-            if not self.is_test:
+            if (self.skip_fanhao and has_fanhao(title)) or (self.skip_japanese and is_japanese(title)):
+                self.log.info("[%s] 详情页标题命中番号/日语过滤，跳过 PDF 生成: %s", idx, title[:40])
+            elif not self.is_test:
                 pdf_path = self.retry_generate_pdf(sub_url, pub_time, title, no_proxy_last=True)
 
             # 数据清洗入库

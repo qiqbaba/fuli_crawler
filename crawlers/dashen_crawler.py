@@ -9,6 +9,8 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from curl_cffi import requests
 
 from crawlers.base_crawler import DecryptSiteBaseCrawler, CrawlConfig
+from utils.fanhao_filter import has_fanhao
+from utils.lang_filter import is_japanese
 
 
 class DashenCrawler(DecryptSiteBaseCrawler):
@@ -410,8 +412,10 @@ class DashenCrawler(DecryptSiteBaseCrawler):
                 data['source'] = self.source_name
                 return True, data
 
-        # 处理 PDF 文件生成
-        if self.is_test:
+        # 处理 PDF 文件生成（测试模式跳过，番号/日语过滤跳过）
+        if (self.skip_fanhao and has_fanhao(title)) or (self.skip_japanese and is_japanese(title)):
+            self.log.info("[%s] 详情页标题命中番号/日语过滤，跳过 PDF 生成: %s", idx, title[:40])
+        elif self.is_test:
             self.log.info("-> 测试模式下跳过保存 PDF 以节省时间")
         else:
             data['pdf_path'] = self.retry_generate_pdf(

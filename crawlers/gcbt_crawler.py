@@ -6,6 +6,8 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from config import is_local_mode
 from crawlers.base_crawler import PlaywrightBaseCrawler
+from utils.fanhao_filter import has_fanhao
+from utils.lang_filter import is_japanese
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -66,13 +68,14 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         return html_text
 
     def parse_list_page(self, list_page_html, page_num):
-        """解析列表页卡片，提取子页面详情页链接"""
+        """解析列表页卡片，提取条目信息（包含标题与详情页 URL）"""
         if not list_page_html:
             return []
         
         soup = BeautifulSoup(list_page_html, 'html.parser')
-        sub_urls = []
+        parsed_items = []
         list_url = self.get_list_url(page_num)
+        seen_urls = set()
         
         for header in soup.find_all(['h2', 'h1']):
             a_tag = header.find('a')
@@ -80,17 +83,26 @@ class GcbtCrawler(PlaywrightBaseCrawler):
                 href = a_tag.get('href', '')
                 if '/download/' in href and href.endswith('.html'):
                     full_url = urljoin(list_url, href)
-                    if full_url not in sub_urls:
-                        sub_urls.append(full_url)
+                    if full_url not in seen_urls:
+                        seen_urls.add(full_url)
+                        title = a_tag.get_text().strip() or a_tag.get('title', '').strip()
+                        if title.endswith(" - GCBT"):
+                            title = title[:-7].strip()
+                        parsed_items.append({
+                            'url': full_url,
+                            'title': title,
+                            'class_name': '视频'
+                        })
                         
-        return sub_urls
+        return parsed_items
 
 
 
     # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
-    def process_sub_page_if_needed(self, sub_url, idx):
+    def process_sub_page_if_needed(self, raw_item, idx):
         """处理详情页并转换数据与 PDF"""
+        sub_url = raw_item['url'] if isinstance(raw_item, dict) else raw_item
         is_existing = False
         _, html_text = self._http_get(sub_url, timeout=25)
         
@@ -206,9 +218,11 @@ class GcbtCrawler(PlaywrightBaseCrawler):
                 data['source'] = self.source_name
                 return True, data
 
-        # 6. 生成并渲染 PDF 文件（直接保存原网页，测试模式跳过）
+        # 6. 生成并渲染 PDF 文件（直接保存原网页，测试模式跳过，番号/日语过滤跳过）
         pdf_path = ''
-        if not self.is_test and article:
+        if (self.skip_fanhao and has_fanhao(title)) or (self.skip_japanese and is_japanese(title)):
+            self.log.info("[%s] 详情页标题命中番号/日语过滤，跳过 PDF 生成: %s", idx, title[:40])
+        elif not self.is_test and article:
             pdf_path = self.retry_generate_pdf(sub_url, pub_time, title, no_proxy_last=True)
             
         # 7. 调用通用清洗逻辑

@@ -2224,12 +2224,15 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 data['source'] = self.source_name
                 return True, data
 
-        # 处理 PDF 文件生成
-        if self.is_test:
+        # 处理 PDF 文件生成（测试模式跳过，番号/日语过滤跳过）
+        item_title = raw_item.get('title', '') if isinstance(raw_item, dict) else data.get('title', '')
+        if (self.skip_fanhao and has_fanhao(item_title)) or (self.skip_japanese and is_japanese(item_title)):
+            self.log.info("[%s] 详情页标题命中番号/日语过滤，跳过 PDF 生成: %s", idx, item_title[:40])
+        elif self.is_test:
             self.log.info("-> 测试模式下跳过保存 PDF 以节省时间")
         else:
             data['pdf_path'] = self.retry_generate_pdf(
-                url, date_str, raw_item['title'],
+                url, date_str, item_title,
                 no_proxy_last=True
             )
 

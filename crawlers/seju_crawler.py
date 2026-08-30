@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 from config import USER_AGENTS
 from crawlers.base_crawler import PlaywrightBaseCrawler
 from utils.date_parser import parse_date
+from utils.fanhao_filter import has_fanhao
+from utils.lang_filter import is_japanese
 from utils.proxy_manager import get_proxy_manager
 from utils.logger import get_logger
 from utils.resource_link_cleaner import clean_resource_lines
@@ -119,7 +121,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
             return None
 
     def parse_list_page(self, list_page_html, page_num):
-        """解析列表页卡片，提取出所有子页面的完整 URL 列表"""
+        """解析列表页卡片，提取条目信息（包含标题与详情页 URL）"""
         if not list_page_html:
             return []
         
@@ -132,7 +134,7 @@ class SejuCrawler(PlaywrightBaseCrawler):
             preview = list_page_html[:300].replace('\n', ' ')
             self.log.warning("[!] 页面 HTML 预览: %s", preview)
 
-        sub_urls = []
+        parsed_items = []
         list_url = self.get_list_url(page_num)
         for i, card in enumerate(articles):
             try:
@@ -142,10 +144,15 @@ class SejuCrawler(PlaywrightBaseCrawler):
                 sub_url_path = card_title_node.get('href')
                 if not sub_url_path:
                     continue
-                sub_urls.append(urljoin(list_url, sub_url_path))
+                full_url = urljoin(list_url, sub_url_path)
+                title = card_title_node.get_text().strip() or card_title_node.get('title', '').strip()
+                parsed_items.append({
+                    'url': full_url,
+                    'title': title
+                })
             except Exception as e:
                 self.log.error("[-] 解析第 %s 个卡片链接时出错: %s", i + 1, e)
-        return sub_urls
+        return parsed_items
 
     # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
@@ -280,13 +287,17 @@ class SejuCrawler(PlaywrightBaseCrawler):
         if getattr(self, 'no_pdf', False):
             self.log.info("-> 启用了 no_pdf 模式，跳过 PDF 渲染和保存")
             return ""
+        if (self.skip_fanhao and has_fanhao(title)) or (self.skip_japanese and is_japanese(title)):
+            self.log.info("-> 标题命中番号/日语过滤，跳过 PDF 渲染和保存: %s", title[:40])
+            return ""
         
         pdf_date = pub_time if pub_time and pub_time != "Unknown_Date" else "Unknown_Date"
         saved_path = self.retry_generate_pdf(current_url, pdf_date, title, no_proxy_last=True)
         return saved_path
 
-    def process_sub_page_if_needed(self, sub_url, idx):
+    def process_sub_page_if_needed(self, raw_item, idx):
         """处理单个子网页，提取信息并保存 PDF (纯 Playwright 实现)"""
+        sub_url = raw_item['url'] if isinstance(raw_item, dict) else raw_item
         is_existing = False
         html_text, current_url, sub_page = self._fetch_sub_page(sub_url)
 
