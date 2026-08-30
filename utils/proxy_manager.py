@@ -7,9 +7,7 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# 导入拆分后的组件与常量以实现向后兼容
-from utils.proxy_fetcher import PROXY_SOURCES
-from utils.proxy_verifier import PROXY_TEST_URLS
+# 导入拆分后的组件以实现向后兼容
 from utils.proxy_pool import ProxyPool
 
 # ========== 全局代理管理器实例 ==========

@@ -14,19 +14,25 @@ class BaseDBManager(ABC):
 
     def check_url_exists(self, url, source=None):
         """去重检查：单条 URL 是否已存在于 AWS DynamoDB 中（支持相对路径匹配）"""
+        if not getattr(self, 'aws_helper', None):
+            return False
         return self.aws_helper.check_url_exists(url, source=source)
 
     def filter_existing_urls(self, urls, source=None):
         """去重检查：批量检查哪些 URL 已存在于 AWS DynamoDB 中（支持相对路径匹配）"""
+        if not getattr(self, 'aws_helper', None):
+            return []
         return self.aws_helper.filter_existing_urls(urls, source=source)
 
     def filter_existing_resource_links(self, resource_links):
         """去重检查：批量检查哪些 resource_link 已存在于 AWS DynamoDB 中"""
+        if not getattr(self, 'aws_helper', None):
+            return []
         return self.aws_helper.filter_existing_resource_links(resource_links)
 
     def mark_urls_processed(self, urls, source=None):
         """将已处理（如过滤/跳过）的 URL 标记为已存在，避免后续重复爬取详情页"""
-        if hasattr(self, 'aws_helper') and self.aws_helper:
+        if getattr(self, 'aws_helper', None):
             self.aws_helper.mark_urls_processed(urls, source=source)
 
     @abstractmethod
@@ -49,8 +55,11 @@ class BaseDBManager(ABC):
 
     def close(self):
         """关闭连接，清理去重服务后台线程池"""
-        if hasattr(self, 'aws_helper'):
-            self.aws_helper.shutdown()
+        if getattr(self, 'aws_helper', None) is not None:
+            try:
+                self.aws_helper.shutdown()
+            except Exception:
+                pass
         self.persistence.close()
 
     # ========== 爬虫断点续爬状态管理 ==========
@@ -85,14 +94,15 @@ class DBManager(BaseDBManager):
         self.persistence = SqlitePersistenceService(db_path, conn=self.conn, lock=self.lock)
         self.state_service = SqliteCrawlStateService(conn=self.conn, lock=self.lock)
         
-        # 初始化去重服务
+        # 初始化去重服务（失败时降级为无去重模式，不阻断爬虫运行）
         try:
             self.aws_helper = DynamoDBDeduplicationService()
             logger.info("本地 DBManager 已成功集成 AWS DynamoDB 比对源")
         except Exception as e:
+            self.aws_helper = None
             logger.error("初始化 AWS DynamoDB 失败: %s", e)
-            logger.warning("请检查 AWS 凭证环境变量配置！")
-            raise e
+            logger.warning("已降级为无去重模式：跳过 DynamoDB 去重检查，仅使用本地持久化。")
+            logger.warning("如需启用去重，请检查 AWS 凭证环境变量配置！")
 
     @staticmethod
     def ensure_tables(db_path, cursor=None):
@@ -107,7 +117,8 @@ class DBManager(BaseDBManager):
         """
         inserted = self.persistence.insert_resource(data)
         if inserted:
-            self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'), source=data.get('source'))
+            if self.aws_helper:
+                self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'), source=data.get('source'))
             return True
         return False
 
@@ -121,7 +132,7 @@ class DBManager(BaseDBManager):
         if not data_list:
             return 0, 0
         inserted_count, skipped_count = self.persistence.insert_resources_batch(data_list)
-        if inserted_count > 0:
+        if inserted_count > 0 and self.aws_helper:
             self.aws_helper.insert_resources_batch(data_list)
         return inserted_count, skipped_count
 
@@ -147,14 +158,15 @@ class SupabaseDBManager(BaseDBManager):
         self.persistence = SupabasePersistenceService(self.client)
         self.state_service = SupabaseCrawlStateService(self.client, self.supabase_url, self.supabase_key)
         
-        # 初始化去重服务
+        # 初始化去重服务（失败时降级为无去重模式，不阻断爬虫运行）
         try:
             self.aws_helper = DynamoDBDeduplicationService()
             logger.info("[*] 云端 SupabaseDBManager 已成功集成 AWS DynamoDB 比对源")
         except Exception as e:
+            self.aws_helper = None
             logger.error("[-] 初始化 AWS DynamoDB 失败: %s", e)
-            logger.warning("[!] 请检查 AWS 凭证环境变量配置！")
-            raise e
+            logger.warning("[!] 已降级为无去重模式：跳过 DynamoDB 去重检查，仅使用 Supabase 持久化。")
+            logger.warning("[!] 如需启用去重，请检查 AWS 凭证环境变量配置！")
 
     def insert_resource(self, data):
         """
@@ -168,7 +180,8 @@ class SupabaseDBManager(BaseDBManager):
         """
         result = self.persistence.insert_resource(data)
         if result is True:
-            self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'), source=data.get('source'))
+            if self.aws_helper:
+                self.aws_helper.insert_resource(data.get('url'), data.get('resource_link'), source=data.get('source'))
             return True
         return False
 
@@ -182,6 +195,6 @@ class SupabaseDBManager(BaseDBManager):
         if not data_list:
             return 0, 0
         inserted_count, skipped_count = self.persistence.insert_resources_batch(data_list)
-        if inserted_count > 0:
+        if inserted_count > 0 and self.aws_helper:
             self.aws_helper.insert_resources_batch(data_list)
         return inserted_count, skipped_count

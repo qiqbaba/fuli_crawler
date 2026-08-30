@@ -45,6 +45,7 @@ def __getattr__(name):
         'get_proxy_dict', 'report_failure', 'report_success'
     ):
         import utils.proxy_manager as pm
+        return getattr(pm, name)
     elif name in ('extract_fanhao', 'has_fanhao', 'batch_has_fanhao'):
         import utils.fanhao_filter as ff
         return getattr(ff, name)

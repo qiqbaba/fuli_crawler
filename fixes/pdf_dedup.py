@@ -35,7 +35,6 @@ import os
 import re
 import sys
 import time
-import csv
 import shutil
 import hashlib
 import sqlite3
@@ -43,7 +42,7 @@ import argparse
 from datetime import datetime
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Dict, Tuple, Optional, Set, Any, Union
+from typing import List, Dict, Tuple, Optional, Set, Any
 
 # ========== 路径引导与环境初始化 ==========
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,7 +53,6 @@ from fixes.db_utils import (  # noqa: E402
     setup_fixes_module,
     get_connection,
     get_db_path,
-    resolve_pdf_path,
     format_size,
     backup_db,
     vacuum_db,
@@ -63,11 +61,8 @@ from fixes.db_utils import (  # noqa: E402
     export_records_to_db,
     export_to_csv,
     print_banner,
-    print_section,
     print_step,
-    print_success,
     print_warning,
-    print_error,
     confirm_action,
     pause_for_user,
 )
@@ -76,7 +71,7 @@ setup_fixes_module()
 
 from config import PDF_BASE_DIR  # noqa: E402
 from utils.logger import get_logger  # noqa: E402
-from utils.pdf_utils import parse_filename, clean_title_suffix, to_relative_path  # noqa: E402
+from utils.pdf_utils import parse_filename, to_relative_path  # noqa: E402
 
 logger = get_logger(__name__)
 
@@ -693,7 +688,7 @@ def generate_dedup_markdown_report(plans: List[DedupActionPlan], stats: Dict[str
         )
 
     if len(plans) > 50:
-        lines.append(f"\n*(仅展示前 50 组样例，完整明细请查看导出的 DB / CSV 文件)*\n")
+        lines.append("\n*(仅展示前 50 组样例，完整明细请查看导出的 DB / CSV 文件)*\n")
 
     with open(rep_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))

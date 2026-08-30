@@ -9,7 +9,6 @@
 """
 
 import re
-import sys
 
 # 假名占有效字符比例阈值
 JAPANESE_CHAR_RATIO_THRESHOLD = 0.2

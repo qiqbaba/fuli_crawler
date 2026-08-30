@@ -60,12 +60,9 @@ from fixes.db_utils import (  # noqa: E402
     setup_fixes_module,
     get_connection,
     get_db_path,
-    get_total_count,
     backup_db,
-    vacuum_db,
     get_export_dir,
     get_timestamp,
-    export_records_to_db,
     export_to_csv,
     print_banner,
     print_section,
@@ -303,7 +300,7 @@ def run_replace_domain(args) -> None:
 
     if not is_run:
         print_step("\n当前为预览模式，未修改数据库。")
-        print_step(f"确认替换请附加 --run 参数。")
+        print_step("确认替换请附加 --run 参数。")
         conn.close()
         return
 

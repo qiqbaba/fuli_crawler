@@ -1,10 +1,6 @@
-import os
 import re
-import time
-import random
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
-from config import is_local_mode
 from crawlers.base_crawler import PlaywrightBaseCrawler
 from utils.fanhao_filter import has_fanhao
 from utils.lang_filter import is_japanese

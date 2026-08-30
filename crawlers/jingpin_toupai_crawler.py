@@ -1,12 +1,9 @@
-import os
-import re
 import base64
 import random
 import time
 import threading
 import json
 from curl_cffi import requests
-from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 from crawlers.base_crawler import PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin
@@ -182,7 +179,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     html_text = self.decrypt_html(r.text)
                     if html_text:
                         break
-            except Exception as e:
+            except Exception:
                 pass
             if attempt < max_retries - 1:
                 time.sleep(random.uniform(0.5, 1.5))

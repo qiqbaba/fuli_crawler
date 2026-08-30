@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 from functools import lru_cache
 from typing import Dict, Optional
 
@@ -18,19 +19,22 @@ logger = get_logger(__name__)
 
 # ========== 运行模式配置 ==========
 _force_mode = None  # 可选值为 'local' 或 'cloud'
+_force_mode_lock = threading.Lock()
 
 def set_run_mode(mode):
     """设置运行模式（通常由 main.py 命令行参数指定）"""
     global _force_mode
-    if mode in ('local', 'cloud'):
-        _force_mode = mode
+    with _force_mode_lock:
+        if mode in ('local', 'cloud'):
+            _force_mode = mode
 
 def is_local_mode():
     """判断当前是否为本地模式"""
-    if _force_mode == 'local':
-        return True
-    if _force_mode == 'cloud':
-        return False
+    with _force_mode_lock:
+        if _force_mode == 'local':
+            return True
+        if _force_mode == 'cloud':
+            return False
     # 默认 auto 模式：如果未检测到 GitHub Actions 环境，则判定为本地模式
     return os.environ.get("GITHUB_ACTIONS") != "true"
 

@@ -1,10 +1,8 @@
-import os
 import threading
 import time
 import random
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
-from config import USER_AGENTS
 from crawlers.base_crawler import PlaywrightBaseCrawler
 from utils.date_parser import parse_date
 from utils.fanhao_filter import has_fanhao

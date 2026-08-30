@@ -6,7 +6,7 @@ import os
 import re
 import asyncio
 import aiohttp
-from typing import List, Dict, Optional
+from typing import List, Dict
 from utils.logger import get_logger
 
 logger = get_logger(__name__)

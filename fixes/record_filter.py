@@ -39,7 +39,6 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # ========== 路径引导与环境初始化 ==========
@@ -57,7 +56,6 @@ from fixes.db_utils import (  # noqa: E402
     format_size,
     vacuum_db,
     backup_db,
-    get_export_dir,
     get_timestamp,
     export_records_to_db,
     export_to_csv,
@@ -74,7 +72,6 @@ from fixes.db_utils import (  # noqa: E402
 
 setup_fixes_module()
 
-from config import PDF_BASE_DIR  # noqa: E402
 from utils.fanhao_filter import extract_fanhao  # noqa: E402
 
 ColumnSpec = Union[str, Tuple[str, str]]
@@ -578,7 +575,7 @@ def run_duplicates_cli(args) -> None:
         total_del_rec += d_rec
         total_del_pdf += d_pdf
         total_fail += f_pdf
-        total_del_bytes += d_bytes
+        total_bytes += d_bytes
 
     vacuum_db(conn)
     conn.close()
@@ -586,7 +583,7 @@ def run_duplicates_cli(args) -> None:
     print_banner("CLI 去重执行结果")
     print(f"  删除记录总数:          {total_del_rec} 条")
     print(f"  级联删除 PDF 文件数:   {total_del_pdf} 个 (失败: {total_fail})")
-    print(f"  释放物理磁盘空间:      {format_size(total_del_bytes)}")
+    print(f"  释放物理磁盘空间:      {format_size(total_bytes)}")
     print("=" * 60)
 
 

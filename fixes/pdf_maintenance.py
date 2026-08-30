@@ -83,10 +83,7 @@ from fixes.db_utils import (
     setup_fixes_module,
     get_connection,
     get_db_path,
-    resolve_pdf_path,
-    format_size,
     backup_db,
-    vacuum_db,
     get_export_dir,
     get_timestamp,
     export_records_to_db,
@@ -649,7 +646,7 @@ def run_check_dates(args):
     pdf_base = PDF_BASE_DIR
 
     print("=" * 60)
-    print(f"[*] 开始检查 PDF 文件与数据库日期的匹配情况...")
+    print("[*] 开始检查 PDF 文件与数据库日期的匹配情况...")
     print(f"[*] 数据库路径: {db_path}")
     print(f"[*] PDF 根目录: {pdf_base}")
     print("=" * 60)
@@ -1096,7 +1093,7 @@ def run_fix_names_and_paths(args):
             conn.commit()
             print(f"\n[+] Phase 2 完成！成功修复 {phase2_success}/{len(mismatches)} 个文件。")
         else:
-            print(f"\n[*] Phase 2 预览完成，未执行实际操作。")
+            print("\n[*] Phase 2 预览完成，未执行实际操作。")
     else:
         print("[+] 所有文件名日期与数据库一致，无需修复。")
 
@@ -1226,7 +1223,7 @@ def run_redownload_small_pdfs(args):
             print("-" * 60)
         if len(to_download) > preview_limit:
             print(f"... 还有 {len(to_download) - preview_limit} 个文件未列出")
-        print(f"\n[*] 预览结束。")
+        print("\n[*] 预览结束。")
         try:
             confirm = input("[*] 检测完毕，是否直接开始重新下载、域名自愈并覆盖修复？[y/N]: ").strip().lower()
             if confirm in ('y', 'yes'):
@@ -1270,7 +1267,7 @@ def run_redownload_small_pdfs(args):
                 else:
                     print(f"  [-] 首次请求/渲染异常: {status_msg}")
                     # 检查网址是否失效，尝试从页面或永久域名拉取最新镜像域名
-                    print(f"  [*] 正在检查网址是否失效，并根据永久域名获取最新镜像域名...")
+                    print("  [*] 正在检查网址是否失效，并根据永久域名获取最新镜像域名...")
                     if page_html:
                         extracted = extract_domains_from_text(page_html)
                         if extracted:
@@ -1744,7 +1741,7 @@ def _move_orphans_to_root(db_path, pdf_base, args):
             except Exception as e:
                 print(f"  [-] 关联失败 {fn}: {e}")
         conn.commit()
-        print(f"[+] 自动关联完成。\n")
+        print("[+] 自动关联完成。\n")
 
     # 5. 报告
     print("\n" + "=" * 60)
@@ -2019,79 +2016,6 @@ def run_orphan(args):
         print("[-] 无效的序号。")
 
 
-def run_clean_missing_records(args):
-    """清理数据库中对应物理 PDF 文件已不存在的残留记录（原 clean_deleted_records.py）"""
-    db_path = get_db_path()
-    pdf_base = os.path.abspath(PDF_BASE_DIR)
-    scope = getattr(args, "scope", "unknown")
-
-    print("=" * 60)
-    print("           清理物理缺失 PDF 对应的数据库脏记录")
-    print("=" * 60)
-    print(f"[*] 运行模式: {'【正式删除模式】' if args.run else '【预览模式 (Dry Run)】'}")
-    print(f"[*] 数据库路径: {db_path}")
-    print(f"[*] 扫描范围: {'Unknown_Year 目录' if scope == 'unknown' else '全量 PDF 记录'}")
-    print("=" * 60)
-
-    if not os.path.exists(db_path):
-        print(f"[-] 错误: 数据库文件不存在: {db_path}")
-        return
-
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-
-    if scope == "unknown":
-        cursor.execute("SELECT id, title, pdf_path FROM resources WHERE pdf_path LIKE '%Unknown_Year%'")
-    else:
-        cursor.execute("SELECT id, title, pdf_path FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
-
-    rows = cursor.fetchall()
-    print(f"[*] 数据库中待检查记录数: {len(rows)}")
-
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    to_delete = []
-
-    for r_id, title, pdf_path in rows:
-        if not pdf_path:
-            continue
-        abs_p = pdf_path if os.path.isabs(pdf_path) else os.path.join(project_root, pdf_path)
-        if not os.path.exists(abs_p):
-            to_delete.append((r_id, title, pdf_path))
-
-    print(f"[*] 发现物理文件已不存在但数据库中残留的记录数: {len(to_delete)}")
-    print("=" * 60)
-
-    if not to_delete:
-        print("[+] 没有需要清理的记录。")
-        conn.close()
-        return
-
-    for idx, (r_id, title, pdf_path) in enumerate(to_delete[:50], 1):
-        print(f"[{idx}] ID: {r_id} | 标题: {title[:50]} | 路径: {pdf_path}")
-    if len(to_delete) > 50:
-        print(f"  ... 以及其他 {len(to_delete) - 50} 条记录")
-
-    print("=" * 60)
-
-    if args.run:
-        print(f"[*] 开始从数据库删除这 {len(to_delete)} 条记录...")
-        delete_ids = [item[0] for item in to_delete]
-        batch_size = 500
-        for i in range(0, len(delete_ids), batch_size):
-            batch = delete_ids[i:i + batch_size]
-            placeholders = ",".join("?" for _ in batch)
-            cursor.execute(f"DELETE FROM resources WHERE id IN ({placeholders})", batch)
-        conn.commit()
-        print(f"[+] 成功删除了 {len(delete_ids)} 条残留记录！")
-        vacuum_db(conn)
-    else:
-        print("[*] 当前为预览模式，未执行任何删除操作。")
-        print("[*] 确认删除请运行: python fixes/pdf_maintenance.py clean-missing --run")
-
-    conn.close()
-
-
-
 # ===================================================================
 # 功能 6: associate - 扫描未关联/断链 PDF 智能回填数据库
 # ===================================================================
@@ -2139,7 +2063,7 @@ def run_associate(args):
     run_mode = getattr(args, "run", False)
 
     print("=" * 70)
-    print(f"[*] 启动 PDF 孤儿文件与断链记录智能关联程序")
+    print("[*] 启动 PDF 孤儿文件与断链记录智能关联程序")
     print(f"[*] 运行模式: {'【正式执行模式 (写入数据库)】' if run_mode else '【预览模式 (Dry Run)】'}")
     print(f"[*] 项目根目录: {project_root}")
     print(f"[*] 目标数据库: {target_db}")

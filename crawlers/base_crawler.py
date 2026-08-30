@@ -1177,7 +1177,7 @@ class BaseCrawler:
 
         except KeyboardInterrupt:
             self.log.warning("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
-        except Exception as e:
+        except Exception:
             self.log.exception("\n[致命错误] 运行中发生未捕获的异常")
         finally:
             self.on_finish()
@@ -1194,7 +1194,7 @@ class PlaywrightBaseCrawler(BaseCrawler):
         # Perf 1: 是否跨页面复用浏览器，避免每页销毁重建
         self._reuse_browser = True
         # ========== Anti-detection 配置 ==========
-        from config import is_headless_forced, HEADFUL_LOCAL, HEADFUL_CLOUD, is_stealth_enabled, is_local_mode
+        from config import is_headless_forced, HEADFUL_LOCAL, HEADFUL_CLOUD, is_stealth_enabled
         # 浏览器类型固定为 chromium
         self.browser_type = "chromium"
         # 本地模式是否使用 headful（有头）模式，默认 True 便于调试且更难被检测
@@ -1641,7 +1641,6 @@ class DomainRotationMixin:
             if new_set == old_set:
                 return False  # 域名没有变化，无需更新
             
-            old_domains = self.domains[:]
             self.domains = unique_domains
             self._update_base_domain(0)
             self._domain_cooldown.clear()
@@ -1695,7 +1694,6 @@ class DomainRotationMixin:
             return None
         
         def _pw_fetch():
-            nonlocal html
             if not hasattr(self, "_get_thread_resources"):
                 return None
             self.log.info("[*] Playwright 并发访问主站: %s", self.main_domain)
@@ -2098,16 +2096,15 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 try:
                     list_url = self.base_list_url.format(self.current_class, 1)
                 except Exception:
-                    url = self.base_list_url
-                    if "{cat}" in url:
-                        url = url.replace("{cat}", str(self.current_class))
-                    elif "{}" in url:
-                        url = url.replace("{}", str(self.current_class), 1)
-                    if "{page}" in url:
-                        url = url.replace("{page}", "1")
-                    elif "{}" in url:
-                        url = url.replace("{}", "1", 1)
-                    list_url = url
+                    list_url = self.base_list_url
+                    if "{cat}" in list_url:
+                        list_url = list_url.replace("{cat}", str(self.current_class))
+                    elif "{}" in list_url:
+                        list_url = list_url.replace("{}", str(self.current_class), 1)
+                    if "{page}" in list_url:
+                        list_url = list_url.replace("{page}", "1")
+                    elif "{}" in list_url:
+                        list_url = list_url.replace("{}", "1", 1)
             headers = self._build_headers(referer=list_url)
             redirect_content = None
 

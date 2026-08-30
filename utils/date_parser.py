@@ -60,7 +60,9 @@ def parse_date(date_str):
         return str(now.year), now.strftime("%Y-%m-%d")
         
     # 格式5: MM-DD (默认今年)
-    match_short = re.search(r'(?<!\d)(\d{1,2})[-/月](\d{1,2})(?:日)?(?!\d)', date_str)
+    # 先剥离 URL，避免路径中的数字段 /05/15 被误匹配为日期
+    text_no_url = re.sub(r'https?://[^\s]+', '', date_str)
+    match_short = re.search(r'(?<!\d)(\d{1,2})[-/月](\d{1,2})(?:日)?(?!\d)', text_no_url)
     if match_short:
         month_val = int(match_short.group(1))
         day_val = int(match_short.group(2))

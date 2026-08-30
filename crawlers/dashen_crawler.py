@@ -3,7 +3,6 @@ import json
 import random
 import time
 import base64
-import threading
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, urlunparse
 from curl_cffi import requests
@@ -259,7 +258,6 @@ class DashenCrawler(DecryptSiteBaseCrawler):
 
         # 最多尝试轮换所有域名的次数
         for _ in range(len(self.domains)):
-            from urllib.parse import urlparse, urlunparse
             parsed_url = urlparse(original_url)
             with self._domain_lock:
                 current_base = self.base_domain

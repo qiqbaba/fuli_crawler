@@ -31,11 +31,25 @@
 import csv
 import json
 import os
+import re
 import shutil
 import sqlite3
 import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+
+
+# 安全表名白名单正则：仅允许字母、数字与下划线，杜绝 SQL 注入
+_TABLE_NAME_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
+
+def _safe_table_name(table_name: str, default: str = "resources") -> str:
+    """校验并返回安全的 SQLite 表名（防止 SQL 注入）"""
+    if not table_name:
+        return default
+    if _TABLE_NAME_RE.match(table_name):
+        return table_name
+    print(f"[-] 警告: 检测到非法表名 {table_name!r}，已回退为默认表 {default!r}")
+    return default
 
 
 def setup_fixes_module() -> str:
@@ -66,12 +80,14 @@ def get_connection(db_path: str) -> sqlite3.Connection:
 
 def get_columns(cursor: sqlite3.Cursor, table_name: str = "resources") -> List[str]:
     """获取指定表所有列名（默认 resources 表）"""
+    table_name = _safe_table_name(table_name)
     cursor.execute(f"PRAGMA table_info({table_name})")
     return [row[1] for row in cursor.fetchall()]
 
 
 def get_total_count(conn: sqlite3.Connection, table_name: str = "resources") -> int:
     """获取指定表的记录总数"""
+    table_name = _safe_table_name(table_name)
     cursor = conn.cursor()
     cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
     row = cursor.fetchone()
@@ -191,6 +207,8 @@ def export_records_to_db(
         for k in r.keys():
             if not k.startswith("_") and k not in all_keys:
                 all_keys.append(k)
+
+    table_name = _safe_table_name(table_name)
 
     if "id" not in all_keys:
         col_defs = ["id INTEGER PRIMARY KEY AUTOINCREMENT"] + [f"{col} TEXT" for col in all_keys]
@@ -315,6 +333,7 @@ def delete_records_cascade_pdf(
         return 0, 0, 0, 0
 
     root = project_root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    table_name = _safe_table_name(table_name)
     cursor = conn.cursor()
 
     # 1. 查询这些记录对应的 pdf_path

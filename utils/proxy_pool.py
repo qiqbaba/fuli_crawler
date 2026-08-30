@@ -488,7 +488,7 @@ class ProxyPool:
                                         self._working_proxies.append(proxy)
                             
                             logger.info("[*] 启动后台代理验证线程，目标数量: %s 个，针对爬虫源: %s", target_count, source or "global")
-                            working = self.verifier.verify_proxies(
+                            self.verifier.verify_proxies(
                                 proxies=self._proxies,
                                 force=force,
                                 max_workers=max_workers,
@@ -798,8 +798,6 @@ class ProxyPool:
         """
         if not proxy_url:
             return
-
-        current_thread_id = threading.get_ident()
 
         with self._lock:
             # 清除所有线程中对此失败代理的绑定，防止其他线程继续复用坏代理
