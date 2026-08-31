@@ -61,4 +61,6 @@ cache/
 temp_profiles/
 /upload_to_dynamodb.py
 
-
+# 临时排查脚本
+scratch_*
+scratch/

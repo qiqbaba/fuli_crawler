@@ -1027,39 +1027,50 @@ def run_fix_names_and_paths(args):
 
     # 建立数据库索引
     print("[*] 正在构建数据库索引...")
-    cursor.execute("SELECT id, title, publish_time, pdf_path, url FROM resources")
+    known_sources = {"seju", "u3c3", "datang", "gcbt", "madou", "jingpin_toupai", "taose", "dashen", "tanhua", "jingpin", "mianfei_guochan"}
+    cursor.execute("SELECT id, title, publish_time, pdf_path, url, source FROM resources")
     db_rows = cursor.fetchall()
 
     db_by_pdf_filename = defaultdict(list)
+    db_by_title_and_source = defaultdict(list)
     db_by_title = defaultdict(list)
     for row in db_rows:
-        r_id, r_title, r_publish_time, r_pdf_path, r_url = row
+        r_id, r_title, r_publish_time, r_pdf_path, r_url, r_source = row
         pub_time = r_publish_time.strip() if r_publish_time else "Unknown_Date"
         if not pub_time:
             pub_time = "Unknown_Date"
         record = {"id": r_id, "title": r_title, "publish_time": pub_time,
-                  "pdf_path": r_pdf_path, "url": r_url}
+                  "pdf_path": r_pdf_path, "url": r_url, "source": r_source or ""}
         if r_pdf_path:
             filename_part = os.path.basename(r_pdf_path.replace('\\', '/')).lower()
             db_by_pdf_filename[filename_part].append(record)
         if r_title:
-            db_by_title[r_title.strip()].append(record)
+            t_str = r_title.strip()
+            db_by_title[t_str].append(record)
+            if r_source:
+                db_by_title_and_source[(t_str, r_source.lower())].append(record)
 
     # 分析不匹配
     print("[*] 正在比对文件名日期与数据库日期...")
     mismatches = []
     for filename, full_path in all_pdf_files:
-        fn_date, fn_title_part = parse_filename(filename)
+        fn_date, fn_title_part, fn_source, _ = parse_pdf_filename(filename, known_sources)
         fn_clean_title = clean_title_suffix(fn_title_part)
 
         matched_records = []
         if filename.lower() in db_by_pdf_filename:
             matched_records = db_by_pdf_filename[filename.lower()]
         if not matched_records:
-            if fn_title_part in db_by_title:
-                matched_records = db_by_title[fn_title_part]
-            elif fn_clean_title in db_by_title:
-                matched_records = db_by_title[fn_clean_title]
+            if fn_source:
+                if (fn_title_part, fn_source.lower()) in db_by_title_and_source:
+                    matched_records = db_by_title_and_source[(fn_title_part, fn_source.lower())]
+                elif (fn_clean_title, fn_source.lower()) in db_by_title_and_source:
+                    matched_records = db_by_title_and_source[(fn_clean_title, fn_source.lower())]
+            else:
+                if fn_title_part in db_by_title:
+                    matched_records = db_by_title[fn_title_part]
+                elif fn_clean_title in db_by_title:
+                    matched_records = db_by_title[fn_clean_title]
         if not matched_records:
             continue
 
@@ -2178,8 +2189,9 @@ def run_associate(args):
         t_key = t.strip().lower()
 
         matched_recs = []
-        if s and (t_key, s.lower()) in db_by_sanitized_title_and_source:
-            matched_recs = db_by_sanitized_title_and_source[(t_key, s.lower())]
+        if s:
+            if (t_key, s.lower()) in db_by_sanitized_title_and_source:
+                matched_recs = db_by_sanitized_title_and_source[(t_key, s.lower())]
         elif t_key in db_by_sanitized_title:
             matched_recs = db_by_sanitized_title[t_key]
 

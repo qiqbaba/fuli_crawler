@@ -4,6 +4,10 @@ import sqlite3
 import base64
 import subprocess
 import hashlib
+import threading
+import urllib.parse
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -836,6 +840,27 @@ def on_bottom_page_size_change():
         st.session_state.f_page_size = st.session_state.bottom_page_size
     reset_page()
 
+def prev_page():
+    if st.session_state.current_page > 1:
+        st.session_state.current_page -= 1
+        st.session_state.top_jump = st.session_state.current_page
+        st.session_state.bottom_jump = st.session_state.current_page
+
+def next_page():
+    st.session_state.current_page += 1
+    st.session_state.top_jump = st.session_state.current_page
+    st.session_state.bottom_jump = st.session_state.current_page
+
+def on_top_jump_change():
+    new_page = st.session_state.top_jump
+    st.session_state.current_page = new_page
+    st.session_state.bottom_jump = new_page
+
+def on_bottom_jump_change():
+    new_page = st.session_state.bottom_jump
+    st.session_state.current_page = new_page
+    st.session_state.top_jump = new_page
+
 # 排序选项配置
 sort_options = ["最新入库 (ID ↓)", "最早入库 (ID ↑)", "发布时间 (新→旧)", "发布时间 (旧→新)", "标题名称 (A→Z)", "标题名称 (Z→A)"]
 
@@ -845,6 +870,7 @@ if st.session_state.get("last_filters_hash") != current_filters_hash:
     st.session_state.last_filters_hash = current_filters_hash
     st.session_state.current_page = 1
     st.session_state.top_jump = 1
+    st.session_state.bottom_jump = 1
 
 # 查询数据
 total_records, df = db_reader.query_records(
@@ -865,6 +891,7 @@ total_pages = max(1, (total_records + page_size - 1) // page_size)
 if total_records > 0 and st.session_state.current_page > total_pages:
     st.session_state.current_page = 1
     st.session_state.top_jump = 1
+    st.session_state.bottom_jump = 1
     total_records, df = db_reader.query_records(
         keyword=st.session_state.f_keyword,
         source=st.session_state.f_source,
@@ -874,6 +901,10 @@ if total_records > 0 and st.session_state.current_page > total_pages:
         page=1,
         page_size=page_size
     )
+
+# 确保输入框页码在 [1, total_pages] 范围内核准
+st.session_state.top_jump = max(1, min(int(st.session_state.top_jump), total_pages))
+st.session_state.bottom_jump = max(1, min(int(st.session_state.bottom_jump), total_pages))
 
 # 检查每条记录的本地 PDF 实际存在情况
 if not df.empty:
@@ -888,41 +919,96 @@ PDF_THUMB_CACHE_DIR = os.path.join(PROJECT_ROOT, "cache", "pdf_thumbs")
 os.makedirs(PDF_THUMB_CACHE_DIR, exist_ok=True)
 
 
-@st.cache_data(max_entries=600, ttl=3600, show_spinner=False)
-def load_pdf_pages_as_base64(file_path: str, mtime: float, dpi: int = 105, quality: int = 75) -> list:
-    """使用多级持久化磁盘缓存与 PyMuPDF 高性能将 PDF 渲染为高清图片"""
-    try:
-        key = hashlib.md5(f"{file_path}_{mtime}_{dpi}_{quality}".encode("utf-8")).hexdigest()
-        
-        # 1. 优先尝试从本地磁盘缩略图缓存快速读取
-        images = []
-        i = 0
-        while True:
-            cpath = os.path.join(PDF_THUMB_CACHE_DIR, f"{key}_{i}.jpg")
-            if os.path.exists(cpath):
-                with open(cpath, "rb") as f:
-                    images.append(base64.b64encode(f.read()).decode("utf-8"))
-                i += 1
-            else:
-                break
-                
-        if images:
-            return images
+class PDFRequestHandler(BaseHTTPRequestHandler):
+    """用于动态按需光栅化并流式输出 PDF 页面 JPEG 的轻量高性能 HTTP Handler"""
+    def log_message(self, format, *args):
+        pass  # 禁用标准请求日志输出，保持控制台整洁
 
-        # 2. 缓存未命中：使用 PyMuPDF 光栅化并写入持久化磁盘缓存
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        if parsed.path == "/pdf_page":
+            query = urllib.parse.parse_qs(parsed.query)
+            file_path = query.get("path", [""])[0]
+            page_num = int(query.get("page", ["0"])[0])
+            mtime = query.get("mtime", ["0"])[0]
+            dpi = int(query.get("dpi", ["105"])[0])
+            quality = int(query.get("quality", ["75"])[0])
+
+            if not file_path or not os.path.exists(file_path):
+                self.send_error(404, "File not found")
+                return
+
+            try:
+                # 缓存 key
+                key = hashlib.md5(f"{file_path}_{mtime}_{dpi}_{quality}".encode("utf-8")).hexdigest()
+                cpath = os.path.join(PDF_THUMB_CACHE_DIR, f"{key}_{page_num}.jpg")
+                
+                img_bytes = None
+                if os.path.exists(cpath):
+                    with open(cpath, "rb") as f:
+                        img_bytes = f.read()
+                else:
+                    import pymupdf
+                    doc = pymupdf.open(file_path)
+                    if 0 <= page_num < len(doc):
+                        pix = doc[page_num].get_pixmap(dpi=dpi)
+                        img_bytes = pix.tobytes("jpeg", quality)
+                        with open(cpath, "wb") as f:
+                            f.write(img_bytes)
+                    doc.close()
+
+                if img_bytes:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "image/jpeg")
+                    self.send_header("Content-Length", str(len(img_bytes)))
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Cache-Control", "public, max-age=604800, immutable")
+                    self.end_headers()
+                    self.wfile.write(img_bytes)
+                else:
+                    self.send_error(404, "Page not found")
+            except Exception as e:
+                self.send_error(500, str(e))
+        else:
+            self.send_error(404, "Not Found")
+
+
+_PDF_SERVER_PORT = None
+_PDF_SERVER_LOCK = threading.Lock()
+
+
+def ensure_pdf_server_started(start_port=8515) -> int:
+    """确保全局单例后台多线程 HTTP 静态服务已启动"""
+    global _PDF_SERVER_PORT
+    with _PDF_SERVER_LOCK:
+        if _PDF_SERVER_PORT is not None:
+            return _PDF_SERVER_PORT
+        for p in range(start_port, start_port + 50):
+            try:
+                server = ThreadingHTTPServer(('127.0.0.1', p), PDFRequestHandler)
+                t = threading.Thread(target=server.serve_forever, daemon=True)
+                t.start()
+                _PDF_SERVER_PORT = p
+                return p
+            except OSError:
+                continue
+        _PDF_SERVER_PORT = start_port
+        return start_port
+
+
+@st.cache_data(max_entries=3000, ttl=3600, show_spinner=False)
+def get_pdf_page_count(file_path: str, mtime: float) -> int:
+    """极速获取 PDF 的总页数（耗时 <0.1ms，纯元数据读取，零光栅化）"""
+    if not file_path or not os.path.exists(file_path):
+        return 0
+    try:
         import pymupdf
         doc = pymupdf.open(file_path)
-        images = []
-        for i, page in enumerate(doc):
-            cpath = os.path.join(PDF_THUMB_CACHE_DIR, f"{key}_{i}.jpg")
-            pix = page.get_pixmap(dpi=dpi)
-            pix.save(cpath, "jpeg", quality)
-            with open(cpath, "rb") as f:
-                images.append(base64.b64encode(f.read()).decode("utf-8"))
+        count = len(doc)
         doc.close()
-        return images
+        return count
     except Exception:
-        return []
+        return 0
 
 
 @st.cache_data(max_entries=300, ttl=3600, show_spinner=False)
@@ -1010,24 +1096,28 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
     if resolved_pdf:
         try:
             mtime = os.path.getmtime(resolved_pdf)
-            page_images = load_pdf_pages_as_base64(resolved_pdf, mtime)
-            if page_images:
-                imgs_html_list = []
+            page_count = get_pdf_page_count(resolved_pdf, mtime)
+            if page_count > 0:
+                server_port = ensure_pdf_server_started()
+                enc_path = urllib.parse.quote(resolved_pdf)
                 placeholder_pixel = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
-                for p_idx, b64_img in enumerate(page_images):
-                    data_uri = f"data:image/jpeg;base64,{b64_img}"
-                    # 前 2 个卡片的第一页直接立即挂载，其余卡片与后续页面走视口 IntersectionObserver 懒加载
-                    if card_index < 2 and p_idx == 0:
+                imgs_html_list = []
+                for p_idx in range(page_count):
+                    img_url = f"http://127.0.0.1:{server_port}/pdf_page?path={enc_path}&page={p_idx}&mtime={mtime}&dpi=105&quality=75"
+                    img_id = f"pdf_img_{item_id}_{p_idx}"
+                    # 每张卡片的第一页作为主预览图直接挂载真实 src，确保立即可见且绝无串图残留
+                    if p_idx == 0:
                         imgs_html_list.append(
-                            f'<img class="pdf-page-img loaded" src="{data_uri}" loading="lazy" />'
+                            f'<img id="{img_id}" data-item-id="{item_id}" class="pdf-page-img loaded" src="{img_url}" loading="lazy" />'
                         )
                     else:
+                        # 卡片内第 2 页及后续页走视口与容器滑动懒加载（真·按需动态触发渲染）
                         imgs_html_list.append(
-                            f'<img class="pdf-page-img lazy-pdf-img" src="{placeholder_pixel}" data-src="{data_uri}" loading="lazy" />'
+                            f'<img id="{img_id}" data-item-id="{item_id}" class="pdf-page-img lazy-pdf-img" src="{placeholder_pixel}" data-src="{img_url}" loading="lazy" />'
                         )
                 imgs_html = "".join(imgs_html_list)
                 pdf_display = f'''
-                <div class="pdf-scroll-container" id="pdf_scroll_{item_id}" style="height: {iframe_height}px;">
+                <div class="pdf-scroll-container" id="pdf_scroll_{item_id}" data-item-id="{item_id}" style="height: {iframe_height}px;">
                     {imgs_html}
                 </div>
                 '''
@@ -1036,7 +1126,7 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
                 # 备用方案：若图片解析异常则走原 iframe 预览
                 base64_pdf = load_pdf_as_base64(resolved_pdf, mtime)
                 st.markdown(f'''
-                <div class="pdf-scroll-container" style="height: {iframe_height}px;">
+                <div class="pdf-scroll-container" id="pdf_scroll_{item_id}" data-item-id="{item_id}" style="height: {iframe_height}px;">
                     <iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=0" 
                             loading="lazy"
                             width="100%" 
@@ -1089,31 +1179,18 @@ def render_pagination(key_prefix: str = "bottom"):
             on_change=on_bottom_page_size_change
         )
     with p_col3:
-        if st.button("⬅️ 上一页", key=f"{key_prefix}_prev", disabled=(st.session_state.current_page <= 1), use_container_width=True):
-            st.session_state.current_page -= 1
-            st.session_state.top_jump = st.session_state.current_page
-            st.session_state.bottom_jump = st.session_state.current_page
-            st.rerun()
+        st.button("⬅️ 上一页", key=f"{key_prefix}_prev", disabled=(st.session_state.current_page <= 1), use_container_width=True, on_click=prev_page)
     with p_col4:
-        page_input = st.number_input(
+        st.number_input(
             "跳转页码",
             min_value=1,
             max_value=total_pages,
-            value=st.session_state.current_page,
             key=f"{key_prefix}_jump",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            on_change=on_bottom_jump_change
         )
-        if page_input != st.session_state.current_page:
-            st.session_state.current_page = page_input
-            st.session_state.top_jump = page_input
-            st.session_state.bottom_jump = page_input
-            st.rerun()
     with p_col5:
-        if st.button("下一页 ➡️", key=f"{key_prefix}_next", disabled=(st.session_state.current_page >= total_pages), use_container_width=True):
-            st.session_state.current_page += 1
-            st.session_state.top_jump = st.session_state.current_page
-            st.session_state.bottom_jump = st.session_state.current_page
-            st.rerun()
+        st.button("下一页 ➡️", key=f"{key_prefix}_next", disabled=(st.session_state.current_page >= total_pages), use_container_width=True, on_click=next_page)
 
 
 # ==================== 顶部紧凑单行整合工具栏（筛选 + 排版 + 分页，无背景框） ====================
@@ -1155,31 +1232,18 @@ with st.container():
             unsafe_allow_html=True
         )
     with f_cols[8]:
-        if st.button("⬅️ 上页", key="top_prev", disabled=(st.session_state.current_page <= 1), use_container_width=True):
-            st.session_state.current_page -= 1
-            st.session_state.top_jump = st.session_state.current_page
-            st.session_state.bottom_jump = st.session_state.current_page
-            st.rerun()
+        st.button("⬅️ 上页", key="top_prev", disabled=(st.session_state.current_page <= 1), use_container_width=True, on_click=prev_page)
     with f_cols[9]:
-        page_input = st.number_input(
+        st.number_input(
             "跳转页码",
             min_value=1,
             max_value=total_pages,
-            value=st.session_state.current_page,
             key="top_jump",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            on_change=on_top_jump_change
         )
-        if page_input != st.session_state.current_page:
-            st.session_state.current_page = page_input
-            st.session_state.top_jump = page_input
-            st.session_state.bottom_jump = page_input
-            st.rerun()
     with f_cols[10]:
-        if st.button("下页 ➡️", key="top_next", disabled=(st.session_state.current_page >= total_pages), use_container_width=True):
-            st.session_state.current_page += 1
-            st.session_state.top_jump = st.session_state.current_page
-            st.session_state.bottom_jump = st.session_state.current_page
-            st.rerun()
+        st.button("下页 ➡️", key="top_next", disabled=(st.session_state.current_page >= total_pages), use_container_width=True, on_click=next_page)
 
 # 顶部工具栏与内容区之间的极简单线分隔
 st.markdown('<div class="toolbar-divider"></div>', unsafe_allow_html=True)
@@ -1207,34 +1271,38 @@ else:
             use_container_width=True,
             hide_index=True
         )
-    elif layout_mode == "单列大图":
-        # 单列大屏流式预览（行间单线分隔）
-        for idx, row in df.reset_index(drop=True).iterrows():
-            if idx > 0:
-                st.markdown('<div class="grid-row-divider"></div>', unsafe_allow_html=True)
-            render_record_card(row.to_dict(), iframe_height=650, card_index=idx)
-    elif layout_mode == "三列紧凑":
-        # 三列网格画廊（行间单线分隔，列间单线分隔）
-        rows_list = df.to_dict("records")
-        for i in range(0, len(rows_list), 3):
-            if i > 0:
-                st.markdown('<div class="grid-row-divider"></div>', unsafe_allow_html=True)
-            cols = st.columns(3)
-            for j in range(3):
-                if i + j < len(rows_list):
-                    with cols[j]:
-                        render_record_card(rows_list[i + j], iframe_height=420, card_index=i + j)
     else:
-        # 默认：双列网格画廊（行间单线分隔，列间单线分隔）
-        rows_list = df.to_dict("records")
-        for i in range(0, len(rows_list), 2):
-            if i > 0:
-                st.markdown('<div class="grid-row-divider"></div>', unsafe_allow_html=True)
-            cols = st.columns(2)
-            for j in range(2):
-                if i + j < len(rows_list):
-                    with cols[j]:
-                        render_record_card(rows_list[i + j], iframe_height=520, card_index=i + j)
+        # 画廊模式：启动本地极速 HTTP PDF 服务（按需流式动态渲染）
+        ensure_pdf_server_started()
+
+        if layout_mode == "单列大图":
+            # 单列大屏流式预览（行间单线分隔）
+            for idx, row in df.reset_index(drop=True).iterrows():
+                if idx > 0:
+                    st.markdown('<div class="grid-row-divider"></div>', unsafe_allow_html=True)
+                render_record_card(row.to_dict(), iframe_height=650, card_index=idx)
+        elif layout_mode == "三列紧凑":
+            # 三列网格画廊（行间单线分隔，列间单线分隔）
+            rows_list = df.to_dict("records")
+            for i in range(0, len(rows_list), 3):
+                if i > 0:
+                    st.markdown('<div class="grid-row-divider"></div>', unsafe_allow_html=True)
+                cols = st.columns(3)
+                for j in range(3):
+                    if i + j < len(rows_list):
+                        with cols[j]:
+                            render_record_card(rows_list[i + j], iframe_height=420, card_index=i + j)
+        else:
+            # 默认：双列网格画廊（行间单线分隔，列间单线分隔）
+            rows_list = df.to_dict("records")
+            for i in range(0, len(rows_list), 2):
+                if i > 0:
+                    st.markdown('<div class="grid-row-divider"></div>', unsafe_allow_html=True)
+                cols = st.columns(2)
+                for j in range(2):
+                    if i + j < len(rows_list):
+                        with cols[j]:
+                            render_record_card(rows_list[i + j], iframe_height=520, card_index=i + j)
 
     # 底部单线分隔与翻页器
     st.markdown('<div class="grid-row-divider" style="margin: 20px 0 12px 0;"></div>', unsafe_allow_html=True)
@@ -1277,7 +1345,13 @@ components.html(
                 }
 
                 function checkContainerScroll(container) {
-                    if (!container || container.dataset.initScrolled === "1") return;
+                    if (!container) return;
+                    const curItemId = container.dataset.itemId || "";
+                    if (container.dataset.renderedItemId !== curItemId) {
+                        container.dataset.renderedItemId = curItemId;
+                        container.dataset.initScrolled = "0";
+                    }
+                    if (container.dataset.initScrolled === "1") return;
                     const firstImg = container.querySelector('.pdf-page-img');
                     if (firstImg && firstImg.complete && firstImg.naturalHeight > 0) {
                         if (container.scrollHeight > container.clientHeight) {
@@ -1306,7 +1380,11 @@ components.html(
 
                 // 2. 扫描并观察所有懒加载图片
                 const lazyImages = pDoc.querySelectorAll('img.lazy-pdf-img');
-                lazyImages.forEach(img => window._pdfImgObserver.observe(img));
+                lazyImages.forEach(img => {
+                    if (img.dataset.src && img.src !== img.dataset.src) {
+                        window._pdfImgObserver.observe(img);
+                    }
+                });
 
                 // 3. 为所有卡片容器绑定内部滚动事件（用户在容器内向下滑动时，即刻动态渲染容器内后续所有页码）
                 const containers = pDoc.querySelectorAll('.pdf-scroll-container');
