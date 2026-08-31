@@ -11,5 +11,5 @@ aiohttp-socks
 PySocks
 lingua-language-detector
 flask
-
-
+streamlit
+pandas
