@@ -54,6 +54,10 @@ datang_top10.txt
 proxies.txt
 stats/circuit_break_crawlers.txt
 
+# 缓存
+cache/
+.cache/
+
 temp_profiles/
 /upload_to_dynamodb.py
 

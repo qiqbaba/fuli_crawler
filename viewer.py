@@ -3,6 +3,7 @@ import sys
 import sqlite3
 import base64
 import subprocess
+import hashlib
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
@@ -222,10 +223,14 @@ st.markdown("""
         margin: 0 2px;
     }
 
-    /* 顶部单行工具栏内所有控件的尺寸与底部基线严格强制对齐（高度减小 1/4，从 38px 至 28.5px） */
+    /* 顶部单行工具栏内所有控件的尺寸与底部基线严格强制对齐（高度统一为 28.5px） */
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) button,
-    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] input,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInputRootElement"],
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInputContainer"],
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInput"] > div,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] > div,
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInput"] input,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] input,
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stSelectbox"] > div > div,
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="select"] > div,
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="input"],
@@ -235,6 +240,13 @@ st.markdown("""
         max-height: 28.5px !important;
         box-sizing: border-box !important;
         font-size: 11.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInputRootElement"],
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInputContainer"] {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        display: flex !important;
+        align-items: center !important;
     }
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stSelectbox"] > div > div,
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="select"] > div {
@@ -249,6 +261,9 @@ st.markdown("""
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] input {
         padding: 0 6px !important;
         height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        line-height: 26.5px !important;
     }
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) button {
         border-radius: 4px !important;
@@ -292,16 +307,16 @@ st.markdown("""
         min-width: 0 !important;
     }
 
-    /* 卡片标题行（统一高度确保下方内容基线完全对齐） */
+    /* 卡片标题行（单行展示，高度统一确保下方内容基线完全对齐） */
     .card-title-row {
         display: flex;
-        align-items: flex-start;
+        align-items: center;
         gap: 6px;
         margin: 0 0 1px 0 !important;
         padding: 0 !important;
-        line-height: 1.35;
-        min-height: 38px !important;
-        max-height: 38px !important;
+        line-height: 19px;
+        min-height: 19px !important;
+        max-height: 19px !important;
         width: 100% !important;
         min-width: 0 !important;
         overflow: hidden;
@@ -317,20 +332,16 @@ st.markdown("""
         font-weight: 700;
         white-space: nowrap;
         flex-shrink: 0;
-        margin-top: 1px;
+        line-height: 15px;
     }
     .card-title-text {
         font-size: 13.5px;
         font-weight: 600;
         color: #eceff1;
-        word-break: break-word;
-        overflow-wrap: anywhere;
-        line-height: 1.35;
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
+        white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        line-height: 19px;
         flex: 1 1 auto;
         min-width: 0;
     }
@@ -433,22 +444,50 @@ st.markdown("""
         word-break: keep-all !important;
     }
 
-    /* PDF 预览容器 */
-    .pdf-container {
+    /* PDF 预览滚动容器：初始自动上滑 200px，且支持鼠标自由上下滑动查看完整内容 */
+    .pdf-scroll-container {
+        position: relative !important;
         width: 100% !important;
         min-width: 0 !important;
         max-width: 100% !important;
         box-sizing: border-box !important;
         border-radius: 6px;
-        overflow: hidden;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
         border: 1px solid rgba(255, 255, 255, 0.12);
         background: #1e1e1e;
+        scroll-behavior: auto;
     }
-    .pdf-container iframe {
+    .pdf-scroll-container::-webkit-scrollbar {
+        width: 6px;
+    }
+    .pdf-scroll-container::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.2);
+    }
+    .pdf-scroll-container::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.25);
+        border-radius: 3px;
+    }
+    .pdf-scroll-container::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.45);
+    }
+    .pdf-page-img {
         width: 100% !important;
-        min-width: 100% !important;
         max-width: 100% !important;
-        box-sizing: border-box !important;
+        height: auto !important;
+        display: block !important;
+        user-select: none;
+        transition: opacity 0.2s ease-in-out;
+    }
+    .pdf-page-img.lazy-pdf-img {
+        opacity: 0;
+        min-height: 280px;
+        background: rgba(255, 255, 255, 0.02);
+    }
+    .pdf-page-img.loaded {
+        opacity: 1;
+        min-height: unset;
+        background: transparent;
     }
 
     /* 无 PDF 记录的空状态占位卡片（维持视觉平衡与严格等宽） */
@@ -502,8 +541,11 @@ st.markdown("""
         padding: 0 !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.pagination-text) button,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInputContainer"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInput"] > div,
     div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInput"] input,
-    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stSelectbox"] > div > div {
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stSelectbox"] > div > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-baseweb="select"] > div {
         height: 38px !important;
         min-height: 38px !important;
         max-height: 38px !important;
@@ -512,11 +554,6 @@ st.markdown("""
         border-radius: 6px !important;
         display: flex !important;
         align-items: center !important;
-    }
-    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInput"] > div {
-        height: 38px !important;
-        min-height: 38px !important;
-        max-height: 38px !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.pagination-text) button {
         padding: 0 8px !important;
@@ -847,6 +884,47 @@ if not df.empty:
     df["pdf_status"] = df["pdf_path"].apply(check_pdf_exists)
 
 
+PDF_THUMB_CACHE_DIR = os.path.join(PROJECT_ROOT, "cache", "pdf_thumbs")
+os.makedirs(PDF_THUMB_CACHE_DIR, exist_ok=True)
+
+
+@st.cache_data(max_entries=600, ttl=3600, show_spinner=False)
+def load_pdf_pages_as_base64(file_path: str, mtime: float, dpi: int = 105, quality: int = 75) -> list:
+    """使用多级持久化磁盘缓存与 PyMuPDF 高性能将 PDF 渲染为高清图片"""
+    try:
+        key = hashlib.md5(f"{file_path}_{mtime}_{dpi}_{quality}".encode("utf-8")).hexdigest()
+        
+        # 1. 优先尝试从本地磁盘缩略图缓存快速读取
+        images = []
+        i = 0
+        while True:
+            cpath = os.path.join(PDF_THUMB_CACHE_DIR, f"{key}_{i}.jpg")
+            if os.path.exists(cpath):
+                with open(cpath, "rb") as f:
+                    images.append(base64.b64encode(f.read()).decode("utf-8"))
+                i += 1
+            else:
+                break
+                
+        if images:
+            return images
+
+        # 2. 缓存未命中：使用 PyMuPDF 光栅化并写入持久化磁盘缓存
+        import pymupdf
+        doc = pymupdf.open(file_path)
+        images = []
+        for i, page in enumerate(doc):
+            cpath = os.path.join(PDF_THUMB_CACHE_DIR, f"{key}_{i}.jpg")
+            pix = page.get_pixmap(dpi=dpi)
+            pix.save(cpath, "jpeg", quality)
+            with open(cpath, "rb") as f:
+                images.append(base64.b64encode(f.read()).decode("utf-8"))
+        doc.close()
+        return images
+    except Exception:
+        return []
+
+
 @st.cache_data(max_entries=300, ttl=3600, show_spinner=False)
 def load_pdf_as_base64(file_path: str, mtime: float) -> str:
     """缓存读取并编码本地 PDF 文件，避免重复磁盘 I/O 与 Base64 计算"""
@@ -854,7 +932,7 @@ def load_pdf_as_base64(file_path: str, mtime: float) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def render_record_card(row: dict, iframe_height: int = 520):
+def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0):
     """渲染单条记录卡片（无外层背景框，结构清晰解耦）"""
     item_id = row.get("id")
     title = row.get("title") or "（无标题）"
@@ -928,23 +1006,46 @@ def render_record_card(row: dict, iframe_height: int = 520):
     else:
         st.markdown(meta_html, unsafe_allow_html=True)
     
-    # 5. PDF 预览区域 / 无 PDF 占位容器（高度统一为 iframe_height，严格对齐网格，支持原生 loading="lazy" 懒加载）
+    # 5. PDF 预览区域 / 无 PDF 占位容器（初始上滑 200px，且支持鼠标自由上下滑动查看全部内容）
     if resolved_pdf:
         try:
             mtime = os.path.getmtime(resolved_pdf)
-            base64_pdf = load_pdf_as_base64(resolved_pdf, mtime)
-            pdf_display = f'''
-            <div class="pdf-container" style="height: {iframe_height}px;">
-                <iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=0" 
-                        loading="lazy"
-                        width="100%" 
-                        height="{iframe_height}px" 
-                        type="application/pdf"
-                        style="border: none; display: block; height: {iframe_height}px;">
-                </iframe>
-            </div>
-            '''
-            st.markdown(pdf_display, unsafe_allow_html=True)
+            page_images = load_pdf_pages_as_base64(resolved_pdf, mtime)
+            if page_images:
+                imgs_html_list = []
+                placeholder_pixel = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+                for p_idx, b64_img in enumerate(page_images):
+                    data_uri = f"data:image/jpeg;base64,{b64_img}"
+                    # 前 2 个卡片的第一页直接立即挂载，其余卡片与后续页面走视口 IntersectionObserver 懒加载
+                    if card_index < 2 and p_idx == 0:
+                        imgs_html_list.append(
+                            f'<img class="pdf-page-img loaded" src="{data_uri}" loading="lazy" />'
+                        )
+                    else:
+                        imgs_html_list.append(
+                            f'<img class="pdf-page-img lazy-pdf-img" src="{placeholder_pixel}" data-src="{data_uri}" loading="lazy" />'
+                        )
+                imgs_html = "".join(imgs_html_list)
+                pdf_display = f'''
+                <div class="pdf-scroll-container" id="pdf_scroll_{item_id}" style="height: {iframe_height}px;">
+                    {imgs_html}
+                </div>
+                '''
+                st.markdown(pdf_display, unsafe_allow_html=True)
+            else:
+                # 备用方案：若图片解析异常则走原 iframe 预览
+                base64_pdf = load_pdf_as_base64(resolved_pdf, mtime)
+                st.markdown(f'''
+                <div class="pdf-scroll-container" style="height: {iframe_height}px;">
+                    <iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=0" 
+                            loading="lazy"
+                            width="100%" 
+                            height="{iframe_height}px" 
+                            type="application/pdf"
+                            style="border: none; display: block; height: {iframe_height}px;">
+                    </iframe>
+                </div>
+                ''', unsafe_allow_html=True)
         except Exception as e:
             st.error(f"读取 PDF 文件失败: {e}")
     else:
@@ -1111,7 +1212,7 @@ else:
         for idx, row in df.reset_index(drop=True).iterrows():
             if idx > 0:
                 st.markdown('<div class="grid-row-divider"></div>', unsafe_allow_html=True)
-            render_record_card(row.to_dict(), iframe_height=650)
+            render_record_card(row.to_dict(), iframe_height=650, card_index=idx)
     elif layout_mode == "三列紧凑":
         # 三列网格画廊（行间单线分隔，列间单线分隔）
         rows_list = df.to_dict("records")
@@ -1122,7 +1223,7 @@ else:
             for j in range(3):
                 if i + j < len(rows_list):
                     with cols[j]:
-                        render_record_card(rows_list[i + j], iframe_height=420)
+                        render_record_card(rows_list[i + j], iframe_height=420, card_index=i + j)
     else:
         # 默认：双列网格画廊（行间单线分隔，列间单线分隔）
         rows_list = df.to_dict("records")
@@ -1133,9 +1234,109 @@ else:
             for j in range(2):
                 if i + j < len(rows_list):
                     with cols[j]:
-                        render_record_card(rows_list[i + j], iframe_height=520)
+                        render_record_card(rows_list[i + j], iframe_height=520, card_index=i + j)
 
     # 底部单线分隔与翻页器
     st.markdown('<div class="grid-row-divider" style="margin: 20px 0 12px 0;"></div>', unsafe_allow_html=True)
     render_pagination("bottom")
+
+# 注入 JavaScript：基于 IntersectionObserver 视口真懒加载 + 内部自由滑动动态渲染 + 初始滚动 200px
+components.html(
+    """
+    <script>
+    (function() {
+        function initPdfViewportLazyLoading() {
+            try {
+                const pDoc = window.parent.document;
+                if (!pDoc) return;
+
+                function loadSingleImage(img) {
+                    if (img && img.dataset.src && (!img.src || img.src !== img.dataset.src)) {
+                        img.src = img.dataset.src;
+                        img.onload = () => {
+                            img.classList.remove('lazy-pdf-img');
+                            img.classList.add('loaded');
+                            checkContainerScroll(img.closest('.pdf-scroll-container'));
+                        };
+                        img.onerror = () => {
+                            img.classList.remove('lazy-pdf-img');
+                            img.classList.add('loaded');
+                        };
+                    }
+                }
+
+                function loadAllImagesInContainer(container) {
+                    if (!container) return;
+                    const lazyImgs = container.querySelectorAll('img.lazy-pdf-img, img[data-src]');
+                    lazyImgs.forEach(img => {
+                        loadSingleImage(img);
+                        try {
+                            if (window._pdfImgObserver) window._pdfImgObserver.unobserve(img);
+                        } catch(e) {}
+                    });
+                }
+
+                function checkContainerScroll(container) {
+                    if (!container || container.dataset.initScrolled === "1") return;
+                    const firstImg = container.querySelector('.pdf-page-img');
+                    if (firstImg && firstImg.complete && firstImg.naturalHeight > 0) {
+                        if (container.scrollHeight > container.clientHeight) {
+                            container.scrollTop = 200;
+                            container.dataset.initScrolled = "1";
+                        }
+                    }
+                }
+
+                // 1. 初始化 IntersectionObserver（提前 300px 预加载，确保滑到时已加载完毕）
+                if (!window._pdfImgObserver) {
+                    window._pdfImgObserver = new IntersectionObserver((entries, observer) => {
+                        entries.forEach(entry => {
+                            if (entry.isIntersecting) {
+                                const img = entry.target;
+                                loadSingleImage(img);
+                                observer.unobserve(img);
+                            }
+                        });
+                    }, {
+                        root: null,
+                        rootMargin: '300px 0px 300px 0px',
+                        threshold: 0.01
+                    });
+                }
+
+                // 2. 扫描并观察所有懒加载图片
+                const lazyImages = pDoc.querySelectorAll('img.lazy-pdf-img');
+                lazyImages.forEach(img => window._pdfImgObserver.observe(img));
+
+                // 3. 为所有卡片容器绑定内部滚动事件（用户在容器内向下滑动时，即刻动态渲染容器内后续所有页码）
+                const containers = pDoc.querySelectorAll('.pdf-scroll-container');
+                containers.forEach(container => {
+                    if (!container.dataset.scrollBound) {
+                        container.dataset.scrollBound = "1";
+                        container.addEventListener('scroll', () => {
+                            loadAllImagesInContainer(container);
+                        }, { passive: true });
+                    }
+                    checkContainerScroll(container);
+                });
+            } catch(e) {}
+        }
+
+        initPdfViewportLazyLoading();
+        const timers = [30, 80, 150, 300, 600, 1200, 2000];
+        timers.forEach(t => setTimeout(initPdfViewportLazyLoading, t));
+
+        try {
+            if (!window._pdfMutationObserver) {
+                window._pdfMutationObserver = new MutationObserver(initPdfViewportLazyLoading);
+                window._pdfMutationObserver.observe(window.parent.document.body, { childList: true, subtree: true });
+            }
+        } catch(e) {}
+    })();
+    </script>
+    """,
+    height=0,
+    width=0
+)
+
 
