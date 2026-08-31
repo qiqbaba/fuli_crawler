@@ -360,8 +360,8 @@ class ProxyPool:
         """
         now = time.time()
         
-        # 如果已验证代理数量已经足够，且未超过缓存时间，则跳过抓取
-        if not force and (now - self._last_fetch_time) < self.cache_ttl and self._proxies:
+        # 如果缓存代理数量已经足够（>= 500 个），且未超过缓存时间，则跳过抓取
+        if not force and (now - self._last_fetch_time) < self.cache_ttl and len(self._proxies) >= 500:
             logger.info("使用缓存的代理列表（%s 个）", len(self._proxies))
             return len(self._proxies)
         

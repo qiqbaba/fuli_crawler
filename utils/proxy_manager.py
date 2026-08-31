@@ -43,7 +43,7 @@ def init_proxy_manager(force_fetch=False, force_verify=False) -> Optional[ProxyP
     if manager is None:
         return None
     
-    if force_fetch or not manager._proxies:
+    if force_fetch or len(manager._proxies) < 500:
         manager.fetch_proxies(force=force_fetch)
     
     if force_verify or not manager._working_proxies:
