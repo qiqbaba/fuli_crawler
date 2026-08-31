@@ -207,27 +207,64 @@ CONFIG_MAP = {
     "dashen": PDFRenderConfig(
         emulate_media="screen",
         ad_selectors=[
+            # 新版 SPA 横幅广告与底飘广告容器及元素
+            '.hf-container',
+            '#hf-container',
+            '.hf-link',
+            '.hf-img',
+            '.dp-container',
+            '#dp-container',
+            '.dp-link',
+            '.dp-img',
+            # 合作伙伴广告区域与友情链接、页脚广告
+            '.partner-grid',
+            '.partner-links',
+            '.site-footer',
+            'footer.site-footer',
+            # 旧版固定高度广告及浮动层
             'div[style*="height:60px"]',
             'div[style*="height:140px"]',
             'div[style*="height:150px"]',
+            'div[style*="height:55px"]',
+            'div[style*="height:70px"]',
+            'div[style*="height:80px"]',
+            'div[style*="height:95px"]',
             '#bottom_float',
             '.bottom_float',
-            '.dp-container',
-            '#dp-container',
+            # 弹窗与遮罩层
             '.layui-layer',
             '.layui-layer-shade',
             '[id*="layui-layer"]',
+            '.modal',
+            '.modal-backdrop',
+            '.swal-overlay',
+            '.swal-modal',
+            '.swal2-container',
         ],
         ad_block_js="""() => {
+            // 1. 移除所有 iframe
             document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
             if (document.body) document.body.style.overflow = 'auto';
             if (document.documentElement) document.documentElement.style.overflow = 'auto';
-            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:140px"], div[style*="height:150px"]');
+
+            // 2. 移除横幅广告与底飘广告
+            document.querySelectorAll('.hf-container, #hf-container, .hf-link, .hf-img, .dp-container, #dp-container, .dp-link, .dp-img').forEach(el => el.remove());
+
+            // 3. 移除合作伙伴广告卡片、友情链接及页脚广告
+            document.querySelectorAll('.partner-grid, .partner-links').forEach(el => {
+                const card = el.closest('.info-card') || el;
+                card.remove();
+            });
+            document.querySelectorAll('.site-footer, footer.site-footer').forEach(el => el.remove());
+
+            // 4. 移除旧版固定高度广告及浮动层
+            const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:140px"], div[style*="height:150px"], div[style*="height:55px"], div[style*="height:70px"], div[style*="height:80px"], div[style*="height:95px"]');
             adDivs.forEach(div => div.remove());
-            const bottomFloat = document.getElementById('bottom_float') || document.querySelector('.bottom_float') || document.getElementById('dp-container') || document.querySelector('.dp-container');
-            if (bottomFloat) {
-                bottomFloat.remove();
-            }
+            const bottomFloat = document.getElementById('bottom_float') || document.querySelector('.bottom_float');
+            if (bottomFloat) bottomFloat.remove();
+
+            // 5. 移除弹窗及遮罩层
+            document.querySelectorAll('.layui-layer, .layui-layer-shade, [id*="layui-layer"], .modal, .modal-backdrop, .swal-overlay, .swal-modal, .swal2-container').forEach(el => el.remove());
         }""",
         ad_url_patterns=[
             r'(?:doubleclick|googleads|googlesyndication|google-analytics)\.com',
