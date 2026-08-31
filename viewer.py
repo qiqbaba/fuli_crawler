@@ -5,6 +5,7 @@ import base64
 import subprocess
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 # 导入项目配置
 from config import PROJECT_ROOT, PDF_BASE_DIR, get_db_path
@@ -20,9 +21,9 @@ st.set_page_config(
 # 自定义 CSS 样式提升视觉体验
 st.markdown("""
 <style>
-    /* 优化顶部留白与全局间距，让筛选栏直接紧贴顶部 Header */
+    /* 优化全局间距与顶部留白 */
     .block-container {
-        padding-top: 3.1rem !important;
+        padding-top: 0.6rem !important;
         padding-bottom: 2.0rem !important;
         padding-left: 1.5rem !important;
         padding-right: 1.5rem !important;
@@ -32,44 +33,80 @@ st.markdown("""
     div[data-testid="stVerticalBlock"] {
         gap: 0.45rem !important;
     }
+
+    /* Streamlit 原生顶部 Header：静态嵌入在顶部状态栏中，随页面正常滚动 */
+    header[data-testid="stHeader"],
+    .stAppHeader {
+        position: static !important;
+        height: auto !important;
+        min-height: 0 !important;
+        background: transparent !important;
+        display: flex !important;
+        align-items: center !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        z-index: 1 !important;
+    }
+    div[data-testid="stToolbar"] {
+        position: static !important;
+        display: flex !important;
+        align-items: center !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    #MainMenu {
+        visibility: visible !important;
+        display: block !important;
+    }
     
-    /* 顶部嵌入式状态栏（直接无缝嵌入最顶部 Header 系统栏） */
+    /* 隐藏注入脚本的空组件容器 */
+    iframe[data-testid="stCustomComponentV1"],
+    div[data-testid="stCustomComponentV1"] {
+        display: none !important;
+        height: 0 !important;
+        width: 0 !important;
+        position: absolute !important;
+    }
+
+    /* 顶部状态栏（通栏布局，右侧容纳原生 Header，随页面共同滚动） */
     .top-status-bar {
-        position: fixed !important;
-        top: 0 !important;
-        left: 1.2rem !important;
-        right: 145px !important;
-        height: 2.875rem !important;
-        z-index: 1000000 !important;
+        position: relative !important;
+        top: auto !important;
+        left: auto !important;
+        right: auto !important;
+        width: 100% !important;
+        height: 1.9rem !important;
+        min-height: 1.9rem !important;
+        z-index: 1 !important;
         display: flex;
         align-items: center;
         flex-wrap: nowrap;
-        gap: 12px;
+        gap: 8px 12px;
         background: transparent !important;
         border: none !important;
         border-radius: 0 !important;
         padding: 0 !important;
-        font-size: 12.5px;
-        margin: 0 !important;
+        font-size: 11px;
+        margin: 0 0 6px 0 !important;
     }
     .status-item {
         display: inline-flex;
         align-items: center;
-        gap: 5px;
+        gap: 4px;
         white-space: nowrap;
     }
     .status-label {
         color: #90a4ae;
-        font-size: 12px;
+        font-size: 11px;
     }
     .status-val {
         color: #4caf50;
         font-weight: 700;
-        font-size: 13px;
+        font-size: 11.5px;
     }
     .status-divider {
         width: 1px;
-        height: 12px;
+        height: 10px;
         background: rgba(255, 255, 255, 0.15);
     }
     .status-spacer {
@@ -78,29 +115,32 @@ st.markdown("""
     .status-meta {
         display: inline-flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         color: #78909c;
-        font-size: 11.5px;
+        font-size: 10.5px;
         white-space: nowrap;
     }
     .status-meta code {
         background: rgba(255, 255, 255, 0.08);
-        padding: 2px 6px;
-        border-radius: 4px;
+        padding: 1px 5px;
+        border-radius: 3px;
+        font-size: 10.5px;
         color: #cfd8dc;
     }
     
     /* 工具栏面板与输入框微调 */
     div[data-testid="stWidgetLabel"] {
         min-height: auto !important;
-        margin-bottom: -2px !important;
+        margin-bottom: -3px !important;
+        padding-bottom: 0 !important;
     }
     div[data-testid="stWidgetLabel"] p {
-        font-size: 11.5px !important;
+        font-size: 10.5px !important;
         font-weight: 500 !important;
         color: #90a4ae !important;
         white-space: nowrap !important;
-        line-height: 16px !important;
+        line-height: 14px !important;
+        margin: 0 !important;
     }
 
     /* 区域交界单线分隔体系（无背景框极简设计） */
@@ -151,56 +191,77 @@ st.markdown("""
         line-height: normal !important;
     }
     
-    /* 顶部单行工具栏统计药丸徽章（与输入框/按钮严格对齐） */
+    /* 顶部单行工具栏统计药丸徽章（高度减小 1/4，从 38px 至 28.5px，与输入框/按钮严格对齐） */
     .toolbar-stat-badge {
         display: flex;
         align-items: center;
         justify-content: center;
-        height: 38px !important;
-        min-height: 38px !important;
-        max-height: 38px !important;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
         background: rgba(255, 255, 255, 0.04);
         border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 6px;
-        font-size: 12px;
+        border-radius: 4px;
+        font-size: 11px;
         color: #cfd8dc;
         white-space: nowrap !important;
-        padding: 0 8px;
+        padding: 0 6px;
         box-sizing: border-box !important;
         width: 100%;
         margin: 0 !important;
+        line-height: 26.5px !important;
     }
     .toolbar-stat-badge .stat-num {
         color: #4caf50;
         font-weight: 700;
-        margin: 0 3px;
+        margin: 0 2px;
     }
     .toolbar-stat-badge .stat-page {
         color: #42a5f5;
         font-weight: 700;
-        margin: 0 3px;
+        margin: 0 2px;
     }
 
-    /* 顶部单行工具栏内所有 38px 控件的尺寸与底部基线严格强制对齐 */
+    /* 顶部单行工具栏内所有控件的尺寸与底部基线严格强制对齐（高度减小 1/4，从 38px 至 28.5px） */
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) button,
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] input,
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInput"] input,
-    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stSelectbox"] > div > div {
-        height: 38px !important;
-        min-height: 38px !important;
-        max-height: 38px !important;
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stSelectbox"] > div > div,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="select"] > div,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="input"],
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="base-input"] {
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
         box-sizing: border-box !important;
-        font-size: 12.5px !important;
+        font-size: 11.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stSelectbox"] > div > div,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="select"] > div {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        padding-left: 6px !important;
+        padding-right: 6px !important;
+        min-height: 28.5px !important;
+        height: 28.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInput"] input,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] input {
+        padding: 0 6px !important;
+        height: 28.5px !important;
     }
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) button {
-        border-radius: 6px !important;
-        padding: 0 6px !important;
+        border-radius: 4px !important;
+        padding: 0 4px !important;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
     }
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) button p {
-        font-size: 12.5px !important;
+        font-size: 11px !important;
         line-height: normal !important;
         font-weight: 600 !important;
         margin: 0 !important;
+        white-space: nowrap !important;
     }
 
     /* 分页条文字 */
@@ -632,7 +693,7 @@ except Exception as e:
     st.error(f"读取数据库统计信息失败: {e}")
     st.stop()
 
-# 顶部单行状态栏（指标与数据库信息合并展示）
+# 顶部单行状态栏（指标与数据库信息合并展示，右侧嵌入原生 Deploy/菜单）
 st.markdown(
     f"""
     <div class="top-status-bar">
@@ -660,9 +721,42 @@ st.markdown(
             <span class="status-label">📑 内容分类</span>
             <span class="status-val">{len(stats["categories"])}</span>
         </div>
+        <div class="status-spacer"></div>
     </div>
     """,
     unsafe_allow_html=True
+)
+
+# 动态将原生 Header 挂载至顶部状态栏，彻底消除独立悬浮
+components.html(
+    """
+    <script>
+    function placeHeaderInToolbar() {
+        try {
+            const pDoc = window.parent.document;
+            const header = pDoc.querySelector('header[data-testid="stHeader"], .stAppHeader');
+            const target = pDoc.querySelector('.top-status-bar');
+            if (header && target && !target.contains(header)) {
+                header.style.position = 'static';
+                header.style.height = 'auto';
+                header.style.minHeight = '0';
+                header.style.margin = '0';
+                header.style.padding = '0';
+                header.style.background = 'transparent';
+                header.style.display = 'flex';
+                header.style.alignItems = 'center';
+                target.appendChild(header);
+            }
+        } catch (e) {}
+    }
+    placeHeaderInToolbar();
+    setTimeout(placeHeaderInToolbar, 50);
+    setTimeout(placeHeaderInToolbar, 200);
+    setTimeout(placeHeaderInToolbar, 600);
+    </script>
+    """,
+    height=0,
+    width=0
 )
 
 # 初始化筛选与分页 session_state
@@ -679,9 +773,9 @@ if "f_sort" not in st.session_state:
 if "f_layout" not in st.session_state:
     st.session_state.f_layout = "双列画廊 (推荐)"
 if "f_page_size" not in st.session_state:
-    st.session_state.f_page_size = 6
+    st.session_state.f_page_size = 10
 if "bottom_page_size" not in st.session_state:
-    st.session_state.bottom_page_size = 6
+    st.session_state.bottom_page_size = 10
 if "current_page" not in st.session_state:
     st.session_state.current_page = 1
 if "top_jump" not in st.session_state:
@@ -751,6 +845,13 @@ if not df.empty:
         return "✅ 已存在" if resolved else ("⚠️ 路径缺失" if path else "❌ 无文件")
     
     df["pdf_status"] = df["pdf_path"].apply(check_pdf_exists)
+
+
+@st.cache_data(max_entries=300, ttl=3600, show_spinner=False)
+def load_pdf_as_base64(file_path: str, mtime: float) -> str:
+    """缓存读取并编码本地 PDF 文件，避免重复磁盘 I/O 与 Base64 计算"""
+    with open(file_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
 
 
 def render_record_card(row: dict, iframe_height: int = 520):
@@ -827,16 +928,15 @@ def render_record_card(row: dict, iframe_height: int = 520):
     else:
         st.markdown(meta_html, unsafe_allow_html=True)
     
-    # 5. PDF 预览区域 / 无 PDF 占位容器（高度统一为 iframe_height，严格对齐网格）
+    # 5. PDF 预览区域 / 无 PDF 占位容器（高度统一为 iframe_height，严格对齐网格，支持原生 loading="lazy" 懒加载）
     if resolved_pdf:
         try:
-            with open(resolved_pdf, "rb") as f:
-                pdf_bytes = f.read()
-            
-            base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+            mtime = os.path.getmtime(resolved_pdf)
+            base64_pdf = load_pdf_as_base64(resolved_pdf, mtime)
             pdf_display = f'''
             <div class="pdf-container" style="height: {iframe_height}px;">
                 <iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=0" 
+                        loading="lazy"
                         width="100%" 
                         height="{iframe_height}px" 
                         type="application/pdf"
@@ -876,8 +976,8 @@ def render_pagination(key_prefix: str = "bottom"):
             unsafe_allow_html=True
         )
     with p_col2:
-        page_size_opts = [4, 6, 8, 12, 20, 50]
-        cur_idx = page_size_opts.index(st.session_state.f_page_size) if st.session_state.f_page_size in page_size_opts else 1
+        page_size_opts = [10, 20, 30, 40, 50]
+        cur_idx = page_size_opts.index(st.session_state.f_page_size) if st.session_state.f_page_size in page_size_opts else 0
         st.selectbox(
             "每页条数",
             options=page_size_opts,
@@ -934,8 +1034,8 @@ with st.container():
     with f_cols[5]:
         st.selectbox("🎴 排版模式", ["双列画廊 (推荐)", "单列大图", "三列紧凑", "📊 纯表格视图"], key="f_layout")
     with f_cols[6]:
-        page_size_opts = [4, 6, 8, 12, 20, 50]
-        cur_idx = page_size_opts.index(st.session_state.f_page_size) if st.session_state.f_page_size in page_size_opts else 1
+        page_size_opts = [10, 20, 30, 40, 50]
+        cur_idx = page_size_opts.index(st.session_state.f_page_size) if st.session_state.f_page_size in page_size_opts else 0
         st.selectbox(
             "每页条数",
             options=page_size_opts,
