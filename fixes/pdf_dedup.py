@@ -872,7 +872,7 @@ def main():
         "--keep", "-k",
         choices=["primary", "larger", "newest", "oldest"],
         default="primary",
-        help="保留策略: primary (规范文件名优先，默认), larger (最大体积), newest (最新生成), oldest (最早生成)"
+        help="保留策略: primary (规范性得分 > 体积 > 最新, 默认), larger (体积 > 规范性 > 最新), newest (最新 > 规范性 > 体积), oldest (最早 > 规范性 > 体积)"
     )
     parser.add_argument(
         "--run", action="store_true", default=False,

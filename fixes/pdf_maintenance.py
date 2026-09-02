@@ -2538,7 +2538,7 @@ def main():
     p_dedup.add_argument("--mode", "-m", choices=["all", "hash", "name", "title", "db"], default="all",
                          help="查重模式: hash (内容MD5), name/title (文件名与标题变体), db (数据库关联), all (全量综合，默认)")
     p_dedup.add_argument("--keep", "-k", choices=["primary", "larger", "newest", "oldest"], default="primary",
-                         help="保留策略: primary (规范文件名优先，默认), larger (最大体积), newest (最新生成), oldest (最早生成)")
+                         help="保留策略: primary (规范性得分 > 体积 > 最新, 默认), larger (体积 > 规范性 > 最新), newest (最新 > 规范性 > 体积), oldest (最早 > 规范性 > 体积)")
     p_dedup.add_argument("--run", action="store_true", default=False,
                          help="正式执行物理文件清理与数据库重定向，不加此参数时仅进行安全预览 (Dry Run)")
     p_dedup.add_argument("--dry-run", action="store_true", default=False, help="显式指定预览模式")

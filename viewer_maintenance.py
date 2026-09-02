@@ -291,7 +291,7 @@ def render_tab_pdf_maintenance():
                         run_redownload_small_pdfs(args)
                     except SystemExit:
                         pass
-                status.update(label=T("重抓渲染完成！"), state="complete")
+                status.update(label=T("重抓渲染完成！"), state="complete", expanded=True)
                 st.code(log.get_text(), language="text")
 
     # ---------------- 4. 缺失 PDF 并发重建 ----------------
@@ -326,7 +326,7 @@ def render_tab_pdf_maintenance():
                         run_rebuild(args)
                     except SystemExit:
                         pass
-                status.update(label=T("操作完成！" if btn_rebuild_run else "预览扫描完成"), state="complete")
+                status.update(label=T("操作完成！" if btn_rebuild_run else "预览扫描完成"), state="complete", expanded=True)
                 st.code(log.get_text(), language="text")
 
     # ---------------- 5. 孤立 PDF 隔离与还原 ----------------
@@ -433,7 +433,7 @@ def render_tab_pdf_dedup():
     
     db_path = get_db_path()
     
-    col1, col2, col3, col4 = st.columns([1.2, 1.2, 1.0, 1.0])
+    col1, col2, col3, col4 = st.columns([1.1, 1.5, 0.9, 0.9])
     with col1:
         mode = st.selectbox(
             T("查重维度 (Mode)"),
@@ -445,8 +445,14 @@ def render_tab_pdf_dedup():
     with col2:
         keep = st.selectbox(
             T("保留策略 (Keep)"),
-            ["primary (推荐: 优先标准命名/大体积/最新)", "larger (优先保留体积最大版本)", "newest (优先保留最新修改时间)", "oldest (优先保留最早创建版本)"],
+            [
+                "primary (推荐: 规范性得分 > 体积最大 > 最新修改)",
+                "larger (优先体积: 体积最大 > 规范性得分 > 最新修改)",
+                "newest (优先最新: 修改时间最新 > 规范性得分 > 体积最大)",
+                "oldest (优先最早: 修改时间最早 > 规范性得分 > 体积最大)"
+            ],
             key="dedup_keep_sel",
+            help="【保留判定完整条件链】\n1. 规范性打分：不在 Unknown_Year (+100分) > 含有效日期 YYYY-MM-DD (+50分) > 无 _1/_2 序号后缀 (+30分)\n2. 体积比较：文件字节大小 (bytes)\n3. 时间排序：文件最后修改时间 (mtime)",
             format_func=T
         )
         keep_val = keep.split(" ")[0]
@@ -479,7 +485,7 @@ def render_tab_pdf_dedup():
                     )
                 except SystemExit:
                     pass
-            status.update(label=T("去重纠偏完成！" if btn_run_dedup else "查重预览完成"), state="complete")
+            status.update(label=T("去重纠偏完成！" if btn_run_dedup else "查重预览完成"), state="complete", expanded=True)
             st.code(log.get_text(), language="text")
 
 
@@ -650,7 +656,7 @@ def render_tab_data_cleaner():
                         run_fetch_sizes(args)
                     except SystemExit:
                         pass
-                status.update(label=T("磁力大小补全完成！" if btn_fs_run else "扫描完成"), state="complete")
+                status.update(label=T("磁力大小补全完成！" if btn_fs_run else "扫描完成"), state="complete", expanded=True)
                 st.code(log.get_text(), language="text")
 
     # ---------------- 5. 空资源链接 Playwright 重抓 ----------------
@@ -681,7 +687,7 @@ def render_tab_data_cleaner():
                         run_fetch_empty_links(args)
                     except SystemExit:
                         pass
-                status.update(label=T("重抓完成！" if btn_fel_run else "扫描完成"), state="complete")
+                status.update(label=T("重抓完成！" if btn_fel_run else "扫描完成"), state="complete", expanded=True)
                 st.code(log.get_text(), language="text")
 
 
@@ -711,9 +717,9 @@ def render_tab_record_filter():
     # ---------------- 1. 数据库多维记录查重 ----------------
     if sub_tool.startswith("1."):
         st.markdown(T("#### 数据库记录多维查重、独立 DB 导出与批量去重 (强制级联删除 PDF)"))
-        st.info(T("检测数据库重复记录，支持导出为独立 SQLite `.db` 库，按保留最新/最旧一条进行去重，并**强制同步级联删除关联的物理 PDF 文件**。"))
+        st.info(T("检测数据库重复记录，支持导出为独立 SQLite `.db` 库。**去重判定条件**：① 优先在含物理 PDF 记录中筛选（防误删丢失文件）；② 再按 ID 最大 (最新) 或 ID 最小 (最旧) 保留唯一一条；③ 对多余副本**强制同步级联删除关联的物理 PDF 文件**。"))
         
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3 = st.columns([1.1, 1.4, 0.9])
         with c1:
             field_choice = st.selectbox(
                 T("查重维度 (Field)"),
@@ -723,7 +729,16 @@ def render_tab_record_filter():
             )
             field_val = field_choice.split(" ")[0]
         with c2:
-            keep_choice = st.selectbox(T("去重保留策略"), ["newest (保留最新一条: ID 最大)", "oldest (保留最旧一条: ID 最小)"], key="dup_keep_choice", format_func=T)
+            keep_choice = st.selectbox(
+                T("去重保留策略"),
+                [
+                    "newest (优先含PDF记录 > 最新入库: ID 最大)",
+                    "oldest (优先含PDF记录 > 最旧入库: ID 最小)"
+                ],
+                key="dup_keep_choice",
+                help="【去重保留判定完整条件链】\n1. PDF 优先判定：若组内存在已生成 PDF 的记录 (pdf_path 非空)，优先在含 PDF 的候选集中筛选（防止误删导致 PDF 孤立丢失）；\n2. ID 时序排序：在候选集中按 ID 最大 (最新入库) 或 ID 最小 (最早入库) 确定唯一保留记录；\n3. 物理级联清理：对其余冗余副本强制从数据库删除，并同步物理级联删除关联的本地 PDF 文件。",
+                format_func=T
+            )
             keep_val = keep_choice.split(" ")[0]
         with c3:
             export_db_opt = st.checkbox("默认导出为独立 SQLite .db", value=True)
@@ -752,7 +767,7 @@ def render_tab_record_filter():
                         run_duplicates_cli(args)
                     except SystemExit:
                         pass
-                status.update(label=T("去重与级联删除完成！" if btn_dup_run else "查重完成"), state="complete")
+                status.update(label=T("去重与级联删除完成！" if btn_dup_run else "查重完成"), state="complete", expanded=True)
                 st.code(log.get_text(), language="text")
 
     # ---------------- 2. 严格日本番号识别 ----------------
@@ -782,7 +797,7 @@ def render_tab_record_filter():
                         run_fanhao_cli(args)
                     except SystemExit:
                         pass
-                status.update(label=T("番号处理完成！"), state="complete")
+                status.update(label=T("番号处理完成！"), state="complete", expanded=True)
                 st.code(log.get_text(), language="text")
 
 

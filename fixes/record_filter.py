@@ -463,8 +463,8 @@ def run_duplicates_menu(args=None) -> None:
                 continue
 
             print("\n  请选择保留策略：")
-            print("    k - 保留最新一条 (ID 最大)，删除其余副本 (默认)")
-            print("    o - 保留最旧一条 (ID 最小)，删除其余副本")
+            print("    k - 优先保留有 PDF 记录 > 最新入库 (ID 最大)，删除其余副本 (默认)")
+            print("    o - 优先保留有 PDF 记录 > 最旧入库 (ID 最小)，删除其余副本")
             keep_input = input("  请选择 [k/o] (默认 k): ").strip().lower()
             keep_newest = (keep_input != "o")
 
@@ -790,7 +790,7 @@ def main():
     # duplicates
     p_dup = subparsers.add_parser("duplicates", help="数据库查重、默认 DB 导出、批量去重并级联清理 PDF")
     p_dup.add_argument("--field", choices=["url", "resource_link", "title_link", "all"], default="all", help="查重字段维度")
-    p_dup.add_argument("--keep", choices=["newest", "oldest"], default="newest", help="保留策略 (默认保留最新)")
+    p_dup.add_argument("--keep", choices=["newest", "oldest"], default="newest", help="保留策略: newest (优先保留有PDF记录 > 最新ID, 默认), oldest (优先保留有PDF记录 > 最旧ID)")
     p_dup.add_argument("--run", action="store_true", default=False, help="正式执行去重（默认仅预览）")
     p_dup.add_argument("--dry-run", action="store_true", default=False, help="显式指定预览模式")
     p_dup.add_argument("--export-db", action="store_true", default=False, help="导出重复记录为独立 .db 数据库")

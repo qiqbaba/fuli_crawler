@@ -21,6 +21,9 @@ from utils.pdf_utils import parse_filename
 from utils.fanhao_filter import extract_fanhao
 from utils.resource_link_cleaner import clean_resource_link
 from utils.ui_compact import T
+import viewer_maintenance
+import importlib
+importlib.reload(viewer_maintenance)
 from viewer_maintenance import render_maintenance_hub
 
 
@@ -70,6 +73,79 @@ st.markdown("""
         --loading-spinner-right: #38bdf8;
         --loading-glow-gradient: linear-gradient(90deg, #0284c7, #38bdf8, #6366f1, #10b981, #0284c7);
         --loading-glow-shadow: 0 0 14px rgba(2, 132, 199, 0.8), 0 0 22px rgba(56, 189, 248, 0.6);
+    }
+
+    /* 浅色模式复选框 (Checkbox) 静态兜底 */
+    html[data-theme="light"] div[data-testid="stCheckbox"] label,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label *,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label * {
+        color: #1e293b !important;
+    }
+    html[data-theme="light"] div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) > div:first-of-type,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) [class*="e1e6q2zh4"],
+    body[data-theme="light"] div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) > div:first-of-type,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) [class*="e1e6q2zh4"] {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        border: 1.5px solid #cbd5e1 !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+    }
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] > div:first-of-type,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-checked="true"] > div:first-of-type,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] [class*="e1e6q2zh4"],
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] > div:first-of-type,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-checked="true"] > div:first-of-type,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] [class*="e1e6q2zh4"] {
+        background-color: #0284c7 !important;
+        background: #0284c7 !important;
+        border: 1.5px solid #0284c7 !important;
+    }
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] svg,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] svg polyline,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] svg,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] svg polyline {
+        stroke: #ffffff !important;
+        fill: none !important;
+    }
+
+    /* 浅色模式单选框 (Radio) 静态兜底 */
+    html[data-theme="light"] div[data-testid="stRadio"] label,
+    html[data-theme="light"] div[data-testid="stRadio"] label *,
+    body[data-theme="light"] div[data-testid="stRadio"] label,
+    body[data-theme="light"] div[data-testid="stRadio"] label * {
+        color: #1e293b !important;
+    }
+    html[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9234"],
+    html[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child,
+    body[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9234"],
+    body[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        border: 1.5px solid #cbd5e1 !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+    }
+    html[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9235"],
+    html[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child > div,
+    body[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9235"],
+    body[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child > div {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+    }
+    html[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9234"],
+    html[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child,
+    body[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9234"],
+    body[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child {
+        background-color: #0284c7 !important;
+        background: #0284c7 !important;
+        border: 1.5px solid #0284c7 !important;
+    }
+    html[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9235"],
+    html[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child > div,
+    body[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9235"],
+    body[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child > div {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
     }
 
     /* 顶部流动霓虹光带扫描动画 */
@@ -2085,8 +2161,70 @@ function applyAppTheme(themeId) {
                     btn.style.setProperty('color', '#334155', 'important');
                     btn.style.setProperty('box-shadow', '0 1px 2px rgba(0,0,0,0.04)', 'important');
                 });
+
+                // 7. Checkbox 复选框与 Toggle 开关 ── 浅色模式适配（彻底消除黑色小方块）
+                pDoc.querySelectorAll('div[data-testid="stCheckbox"]').forEach(cb => {
+                    const isSelected = cb.querySelector('label[data-selected="true"], label[data-checked="true"], div[data-baseweb="checkbox"][aria-checked="true"], input[type="checkbox"]:checked');
+                    const box = cb.querySelector('[class*="e1e6q2zh4"], div[data-baseweb="checkbox"] > div, label > div:first-of-type');
+                    const polyline = cb.querySelector('svg polyline');
+                    const toggleTrack = cb.querySelector('[class*="e1e6q2zh5"], div[role="switch"]');
+                    const toggleThumb = cb.querySelector('[class*="e1e6q2zh6"], div[role="switch"] > div');
+
+                    cb.querySelectorAll('label, p, span, div[data-testid="stWidgetLabel"] *').forEach(el => {
+                        el.style.setProperty('color', '#1e293b', 'important');
+                    });
+                    if (box && !toggleTrack) {
+                        if (isSelected) {
+                            box.style.setProperty('background-color', '#0284c7', 'important');
+                            box.style.setProperty('background', '#0284c7', 'important');
+                            box.style.setProperty('border', '1.5px solid #0284c7', 'important');
+                            if (polyline) polyline.style.setProperty('stroke', '#ffffff', 'important');
+                        } else {
+                            box.style.setProperty('background-color', '#ffffff', 'important');
+                            box.style.setProperty('background', '#ffffff', 'important');
+                            box.style.setProperty('border', '1.5px solid #cbd5e1', 'important');
+                        }
+                    }
+                    if (toggleTrack) {
+                        toggleTrack.style.setProperty('background-color', isSelected ? '#0284c7' : '#cbd5e1', 'important');
+                        toggleTrack.style.setProperty('background', isSelected ? '#0284c7' : '#cbd5e1', 'important');
+                    }
+                    if (toggleThumb) {
+                        toggleThumb.style.setProperty('background-color', '#ffffff', 'important');
+                        toggleThumb.style.setProperty('background', '#ffffff', 'important');
+                    }
+                });
+
+                // 8. Radio 单选框 ── 浅色模式适配（彻底消除黑色实心圆）
+                pDoc.querySelectorAll('div[data-testid="stRadio"]').forEach(rg => {
+                    rg.querySelectorAll('div[data-testid="stWidgetLabel"] p, div[data-testid="stWidgetLabel"] label, div[data-testid="stWidgetLabel"] *').forEach(el => {
+                        el.style.setProperty('color', '#334155', 'important');
+                    });
+                });
+                pDoc.querySelectorAll('label[data-testid="stRadioOption"], div[data-testid="stRadioOption"], div[data-baseweb="radio"]').forEach(opt => {
+                    const isSelected = opt.hasAttribute('data-selected') || opt.getAttribute('data-selected') === 'true' || opt.getAttribute('aria-checked') === 'true' || opt.querySelector('[data-selected="true"], input[type="radio"]:checked');
+                    const outerCircle = opt.querySelector('[class*="etak9234"], label > div > div > div:first-child, div[data-baseweb="radio"] > div');
+                    const innerDot = opt.querySelector('[class*="etak9235"], label > div > div > div:first-child > div, div[data-baseweb="radio"] > div > div');
+
+                    opt.querySelectorAll('label, p, span').forEach(el => el.style.setProperty('color', '#1e293b', 'important'));
+                    if (outerCircle) {
+                        if (isSelected) {
+                            outerCircle.style.setProperty('background-color', '#0284c7', 'important');
+                            outerCircle.style.setProperty('background', '#0284c7', 'important');
+                            outerCircle.style.setProperty('border', '1.5px solid #0284c7', 'important');
+                        } else {
+                            outerCircle.style.setProperty('background-color', '#ffffff', 'important');
+                            outerCircle.style.setProperty('background', '#ffffff', 'important');
+                            outerCircle.style.setProperty('border', '1.5px solid #cbd5e1', 'important');
+                        }
+                    }
+                    if (innerDot) {
+                        innerDot.style.setProperty('background-color', '#ffffff', 'important');
+                        innerDot.style.setProperty('background', '#ffffff', 'important');
+                    }
+                });
             } else {
-                // 深色模式：还原 stButton / stLinkButton / stPopover 按钮的内联样式
+                // 深色模式：还原 stButton / stLinkButton / stPopover / stCheckbox / stRadio 按钮的内联样式
                 pDoc.querySelectorAll(
                     'div[data-testid="stButton"] button, ' +
                     'div[data-testid="stLinkButton"] a, ' +
@@ -2097,6 +2235,36 @@ function applyAppTheme(themeId) {
                     el.style.removeProperty('border');
                     el.style.removeProperty('color');
                     el.style.removeProperty('box-shadow');
+                });
+                pDoc.querySelectorAll('div[data-testid="stCheckbox"]').forEach(cb => {
+                    cb.querySelectorAll('label, p, span, div[data-testid="stWidgetLabel"] *').forEach(el => el.style.removeProperty('color'));
+                    const box = cb.querySelector('[class*="e1e6q2zh4"], div[data-baseweb="checkbox"] > div, label > div:first-of-type');
+                    if (box) {
+                        box.style.removeProperty('background-color');
+                        box.style.removeProperty('background');
+                        box.style.removeProperty('border');
+                    }
+                    const polyline = cb.querySelector('svg polyline');
+                    if (polyline) polyline.style.removeProperty('stroke');
+                    const toggleTrack = cb.querySelector('[class*="e1e6q2zh5"], div[role="switch"]');
+                    if (toggleTrack) {
+                        toggleTrack.style.removeProperty('background-color');
+                        toggleTrack.style.removeProperty('background');
+                    }
+                    const toggleThumb = cb.querySelector('[class*="e1e6q2zh6"], div[role="switch"] > div');
+                    if (toggleThumb) toggleThumb.style.removeProperty('background-color');
+                });
+                pDoc.querySelectorAll('div[data-testid="stRadio"] div[data-testid="stWidgetLabel"] *').forEach(el => el.style.removeProperty('color'));
+                pDoc.querySelectorAll('label[data-testid="stRadioOption"], div[data-testid="stRadioOption"], div[data-baseweb="radio"]').forEach(opt => {
+                    opt.querySelectorAll('label, p, span').forEach(el => el.style.removeProperty('color'));
+                    const outerCircle = opt.querySelector('[class*="etak9234"], label > div > div > div:first-child, div[data-baseweb="radio"] > div');
+                    if (outerCircle) {
+                        outerCircle.style.removeProperty('background-color');
+                        outerCircle.style.removeProperty('background');
+                        outerCircle.style.removeProperty('border');
+                    }
+                    const innerDot = opt.querySelector('[class*="etak9235"], label > div > div > div:first-child > div, div[data-baseweb="radio"] > div > div');
+                    if (innerDot) innerDot.style.removeProperty('background-color');
                 });
             }
         };
@@ -2422,6 +2590,134 @@ function applyAppTheme(themeId) {
                     padding: 0 !important;
                     min-height: unset !important;
                     height: auto !important;
+                }
+
+                /* ================= 复选框 (Checkbox) 浅色模式完整适配 ================= */
+                div[data-testid="stCheckbox"] label,
+                div[data-testid="stCheckbox"] label *,
+                div[data-testid="stCheckbox"] [data-testid="stWidgetLabel"] *,
+                div[data-baseweb="checkbox"] label,
+                div[data-baseweb="checkbox"] label * {
+                    color: #1e293b !important;
+                }
+
+                /* 未选中状态复选框方块 (白底 + 浅灰边框，彻底消除黑色方块) */
+                div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) > div:first-of-type,
+                div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) [class*="e1e6q2zh4"],
+                div[data-testid="stCheckbox"] div[data-baseweb="checkbox"]:not([aria-checked="true"]) > div:first-child,
+                div[data-testid="stCheckbox"] input[type="checkbox"]:not(:checked) + div,
+                div[data-testid="stCheckbox"] label:not([data-selected="true"]) div:first-child:not([data-testid="stWidgetLabel"]) {
+                    background-color: #ffffff !important;
+                    background: #ffffff !important;
+                    border: 1.5px solid #cbd5e1 !important;
+                    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+                }
+
+                /* 未选中复选框 Hover 状态 */
+                div[data-testid="stCheckbox"] label:hover:not([data-selected="true"]):not([data-checked="true"]) > div:first-of-type,
+                div[data-testid="stCheckbox"] label:hover:not([data-selected="true"]):not([data-checked="true"]) [class*="e1e6q2zh4"] {
+                    border-color: #0284c7 !important;
+                    background-color: #f0f9ff !important;
+                    background: #f0f9ff !important;
+                }
+
+                /* 选中状态复选框方块 (天蓝底色 + 白色边框) */
+                div[data-testid="stCheckbox"] label[data-selected="true"] > div:first-of-type,
+                div[data-testid="stCheckbox"] label[data-checked="true"] > div:first-of-type,
+                div[data-testid="stCheckbox"] label[data-selected="true"] [class*="e1e6q2zh4"],
+                div[data-testid="stCheckbox"] div[data-baseweb="checkbox"][aria-checked="true"] > div:first-child,
+                div[data-testid="stCheckbox"] input[type="checkbox"]:checked + div {
+                    background-color: #0284c7 !important;
+                    background: #0284c7 !important;
+                    border: 1.5px solid #0284c7 !important;
+                    box-shadow: 0 1px 3px rgba(2, 132, 199, 0.25) !important;
+                }
+
+                /* 选中复选框内的对勾 SVG 图标 */
+                div[data-testid="stCheckbox"] label[data-selected="true"] svg,
+                div[data-testid="stCheckbox"] label[data-selected="true"] svg polyline,
+                div[data-testid="stCheckbox"] label[data-checked="true"] svg,
+                div[data-testid="stCheckbox"] label[data-checked="true"] svg polyline,
+                div[data-testid="stCheckbox"] div[data-baseweb="checkbox"][aria-checked="true"] svg,
+                div[data-testid="stCheckbox"] div[data-baseweb="checkbox"][aria-checked="true"] svg polyline {
+                    stroke: #ffffff !important;
+                    color: #ffffff !important;
+                    fill: none !important;
+                }
+
+                /* ================= 单选框 (Radio Button) 浅色模式完整适配 ================= */
+                div[data-testid="stRadio"] label,
+                div[data-testid="stRadio"] label *,
+                div[data-testid="stRadioOption"] label,
+                div[data-testid="stRadioOption"] label *,
+                div[data-testid="stRadio"] [data-testid="stWidgetLabel"] *,
+                div[data-baseweb="radio"] label,
+                div[data-baseweb="radio"] label * {
+                    color: #1e293b !important;
+                }
+
+                /* 未选中状态单选框 (白底 + 浅灰边框外圈，白色/透明内点，彻底消除黑圆圈) */
+                div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9234"],
+                div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child,
+                div[data-testid="stRadio"] label:not([data-selected="true"]) [class*="etak9234"],
+                div[data-testid="stRadio"] div[data-baseweb="radio"]:not([aria-checked="true"]) > div:first-child {
+                    background-color: #ffffff !important;
+                    background: #ffffff !important;
+                    border: 1.5px solid #cbd5e1 !important;
+                    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+                }
+
+                /* 未选中状态内部圆点 (消除黑色实心圆) */
+                div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9235"],
+                div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child > div,
+                div[data-testid="stRadio"] label:not([data-selected="true"]) [class*="etak9235"],
+                div[data-testid="stRadio"] div[data-baseweb="radio"]:not([aria-checked="true"]) > div:first-child > div {
+                    background-color: #ffffff !important;
+                    background: #ffffff !important;
+                }
+
+                /* 未选中单选框 Hover 状态 */
+                div[data-testid="stRadioOption"]:not([data-selected="true"]):hover [class*="etak9234"],
+                div[data-testid="stRadioOption"]:not([data-selected="true"]):hover label > div > div > div:first-child,
+                div[data-testid="stRadio"] label:not([data-selected="true"]):hover [class*="etak9234"] {
+                    border-color: #0284c7 !important;
+                }
+
+                /* 选中状态单选框 (天蓝外圈 + 白色同心圆点) */
+                div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9234"],
+                div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child,
+                div[data-testid="stRadio"] label[data-selected="true"] [class*="etak9234"],
+                div[data-testid="stRadio"] div[data-baseweb="radio"][aria-checked="true"] > div:first-child {
+                    background-color: #0284c7 !important;
+                    background: #0284c7 !important;
+                    border: 1.5px solid #0284c7 !important;
+                    box-shadow: 0 1px 3px rgba(2, 132, 199, 0.25) !important;
+                }
+
+                div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9235"],
+                div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child > div,
+                div[data-testid="stRadio"] label[data-selected="true"] [class*="etak9235"],
+                div[data-testid="stRadio"] div[data-baseweb="radio"][aria-checked="true"] > div:first-child > div {
+                    background-color: #ffffff !important;
+                    background: #ffffff !important;
+                }
+
+                /* ================= 开关控件 (Toggle Switch) 浅色模式适配 ================= */
+                div[data-testid="stCheckbox"] label:not([data-selected="true"]) div[class*="e1e6q2zh5"],
+                div[data-testid="stCheckbox"] label:not([data-selected="true"]) div[role="switch"] {
+                    background-color: #cbd5e1 !important;
+                    background: #cbd5e1 !important;
+                }
+                div[data-testid="stCheckbox"] label[data-selected="true"] div[class*="e1e6q2zh5"],
+                div[data-testid="stCheckbox"] label[data-selected="true"] div[role="switch"] {
+                    background-color: #0284c7 !important;
+                    background: #0284c7 !important;
+                }
+                div[data-testid="stCheckbox"] div[class*="e1e6q2zh6"],
+                div[data-testid="stCheckbox"] div[role="switch"] > div {
+                    background-color: #ffffff !important;
+                    background: #ffffff !important;
+                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15) !important;
                 }
 
                 /* 全局所有次要按钮、链接按钮、Popover 触发按钮（浅色模式统一白底） */
@@ -3425,6 +3721,9 @@ function injectHeaderMetadata() {
                     el.style.removeProperty('color');
                     el.style.removeProperty('box-shadow');
                 });
+            }
+            if (pDoc._forceWidgetStyles) {
+                pDoc._forceWidgetStyles(theme);
             }
         })(curTheme);
 
