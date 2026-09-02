@@ -27,7 +27,7 @@ from viewer_maintenance import render_maintenance_hub
 # 设置页面配置（收起侧边栏以最大化内容区域）
 st.set_page_config(
     page_title="资源预览器",
-    page_icon="📚",
+    page_icon="◈",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -286,6 +286,23 @@ st.markdown("""
         box-shadow: 0 0 14px rgba(33, 150, 243, 0.65) !important;
     }
 
+    /* 强制主容器 100% 满宽展开，彻底消除宽屏/高分屏下页面偏左与右侧大面积空白 */
+    html, body, .stApp,
+    [data-testid="stAppViewContainer"],
+    .stMain,
+    [data-testid="stMain"],
+    [data-testid="stAppViewBlockContainer"],
+    [data-testid="stMainBlockContainer"],
+    .stMainBlockContainer,
+    .block-container,
+    div[data-testid="stTabs"],
+    div[data-testid="stTabPanel"] {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
     /* 优化全局间距与顶部留白：彻底覆盖 Streamlit 所有主内容容器选择器 */
     .block-container,
     .stMainBlockContainer,
@@ -519,34 +536,66 @@ st.markdown("""
         color: #ffffff !important;
         font-weight: 600 !important;
     }
-    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-baseweb="tab-highlight"],
-    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) .react-aria-SelectionIndicator {
+    /* 全局隐藏 BaseWeb 原生指示高亮与底部分割线 */
+    div[data-testid="stTabs"] [data-baseweb="tab-highlight"],
+    div[data-testid="stTabs"] [data-baseweb="tab-border"],
+    div[data-testid="stTabs"] .react-aria-SelectionIndicator {
         display: none !important;
     }
 
-    /* 运维面板内部二级 Sub-Tab 保持内嵌样式 */
+    /* 运维面板内部二级 Sub-Tab 保持内嵌胶囊样式 */
     div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab-list"],
     div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tablist"] {
-        background: rgba(15, 23, 42, 0.8) !important;
-        border: 1px solid rgba(56, 189, 248, 0.25) !important;
+        background: rgba(15, 23, 42, 0.75) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
         border-radius: 8px !important;
-        padding: 3px 6px !important;
-        gap: 6px !important;
+        padding: 3px 4px !important;
+        gap: 4px !important;
         margin-bottom: 12px !important;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2) !important;
     }
     div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"],
-    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"] {
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"],
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"] {
         font-size: 12.5px !important;
-        font-weight: 600 !important;
+        font-weight: 500 !important;
         border-radius: 6px !important;
         padding: 4px 14px !important;
         color: #94a3b8 !important;
         border: none !important;
+        outline: none !important;
+        background: transparent !important;
+        transition: all 0.15s ease !important;
     }
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"]:hover,
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"]:hover,
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"]:hover {
+        background: rgba(255, 255, 255, 0.06) !important;
+        color: #f8fafc !important;
+    }
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"],
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"],
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"][aria-selected="true"],
     div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] {
-        background: linear-gradient(135deg, rgba(14, 165, 233, 0.3), rgba(99, 102, 241, 0.3)) !important;
+        background: rgba(56, 189, 248, 0.15) !important;
         color: #38bdf8 !important;
-        border: 1px solid rgba(56, 189, 248, 0.5) !important;
+        font-weight: 600 !important;
+        border: none !important;
+        outline: none !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3) !important;
+    }
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] p,
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] p {
+        color: #38bdf8 !important;
+        font-weight: 600 !important;
+        background: transparent !important;
+        border: none !important;
+    }
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="false"] p,
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="false"] p {
+        color: #94a3b8 !important;
+        background: transparent !important;
+        border: none !important;
     }
 
     
@@ -711,29 +760,33 @@ st.markdown("""
         justify-content: center !important;
         background: rgba(30, 41, 59, 0.8) !important;
         border: 1px solid rgba(255, 255, 255, 0.14) !important;
-        color: #e2e8f0 !important;
+        color: #cbd5e1 !important;
         transition: all 0.15s ease !important;
     }
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button:not(:disabled):hover {
-        background: rgba(56, 189, 248, 0.18) !important;
-        border-color: #38bdf8 !important;
-        color: #38bdf8 !important;
-        box-shadow: 0 0 8px rgba(56, 189, 248, 0.25) !important;
+        background: rgba(255, 255, 255, 0.12) !important;
+        border-color: rgba(255, 255, 255, 0.28) !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
     }
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button:disabled {
         background: rgba(15, 23, 42, 0.45) !important;
         border: 1px solid rgba(255, 255, 255, 0.06) !important;
-        color: #64748b !important;
-        opacity: 0.45 !important;
+        color: #475569 !important;
+        opacity: 0.35 !important;
         cursor: not-allowed !important;
     }
     div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button p {
-        font-size: 13px !important;
-        line-height: normal !important;
-        font-weight: 600 !important;
+        font-size: 15px !important;
+        line-height: 1 !important;
+        font-weight: 700 !important;
         margin: 0 !important;
+        padding: 0 !important;
         white-space: nowrap !important;
         color: inherit !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
 
     /* 分页条文字 */
@@ -901,10 +954,10 @@ st.markdown("""
     div[data-testid="stHorizontalBlock"]:has(.card-meta-row) a:hover,
     div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stButton"] button:not(:disabled):hover,
     div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stLinkButton"] a:hover {
-        background: rgba(56, 189, 248, 0.18) !important;
-        border-color: #38bdf8 !important;
-        color: #38bdf8 !important;
-        box-shadow: 0 0 8px rgba(56, 189, 248, 0.25) !important;
+        background: rgba(255, 255, 255, 0.12) !important;
+        border-color: rgba(255, 255, 255, 0.28) !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] {
         display: inline-flex !important;
@@ -1064,32 +1117,38 @@ st.markdown("""
         align-items: center !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button {
-        padding: 0 8px !important;
+        padding: 0 !important;
+        display: flex !important;
+        align-items: center !important;
         justify-content: center !important;
         background: rgba(30, 41, 59, 0.8) !important;
         border: 1px solid rgba(255, 255, 255, 0.14) !important;
-        color: #e2e8f0 !important;
+        color: #cbd5e1 !important;
         transition: all 0.15s ease !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button:not(:disabled):hover {
-        background: rgba(56, 189, 248, 0.18) !important;
-        border-color: #38bdf8 !important;
-        color: #38bdf8 !important;
-        box-shadow: 0 0 10px rgba(56, 189, 248, 0.2) !important;
+        background: rgba(255, 255, 255, 0.12) !important;
+        border-color: rgba(255, 255, 255, 0.28) !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button:disabled {
         background: rgba(15, 23, 42, 0.45) !important;
         border: 1px solid rgba(255, 255, 255, 0.06) !important;
-        color: #64748b !important;
-        opacity: 0.45 !important;
+        color: #475569 !important;
+        opacity: 0.35 !important;
         cursor: not-allowed !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button p {
-        font-size: 13px !important;
-        line-height: normal !important;
-        font-weight: 600 !important;
+        font-size: 16px !important;
+        line-height: 1 !important;
+        font-weight: 700 !important;
         margin: 0 !important;
+        padding: 0 !important;
         color: inherit !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
 
     /* 全局标准通用按钮规范 (深色模式基准) */
@@ -1103,10 +1162,10 @@ st.markdown("""
     }
     button[data-testid="stBaseButton-secondary"]:not(:disabled):hover,
     .stButton > button:not([data-testid="stBaseButton-primary"]):not(:disabled):hover {
-        background: rgba(56, 189, 248, 0.16) !important;
-        border-color: #38bdf8 !important;
-        color: #38bdf8 !important;
-        box-shadow: 0 0 10px rgba(56, 189, 248, 0.2) !important;
+        background: rgba(255, 255, 255, 0.12) !important;
+        border-color: rgba(255, 255, 255, 0.28) !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
     }
     button[data-testid="stBaseButton-secondary"]:disabled,
     .stButton > button:not([data-testid="stBaseButton-primary"]):disabled {
@@ -2091,73 +2150,83 @@ function applyAppTheme(themeId) {
                 .header-db-meta-bar .meta-val-warn { color: #d97706 !important; }
                 .header-db-meta-bar .meta-divider { background: #cbd5e1 !important; }
 
-                /* 顶部右上角切换按钮 (浅色模式状态) */
-                #header-theme-icon-btn, .header-theme-icon-btn {
+                /* 顶部右上角切换按钮 (浅色模式状态)
+                   同样需要 html[data-theme="light"] 前缀提升特异性，
+                   否则会被基础样式表中同名的深色规则(位于 body 中、文档顺序更靠后)覆盖 */
+                html[data-theme="light"] #header-theme-icon-btn, html[data-theme="light"] .header-theme-icon-btn {
                     background: #f1f5f9 !important;
                     border: 1px solid #cbd5e1 !important;
                     color: #0f172a !important;
                     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
                 }
-                #header-theme-icon-btn:hover, .header-theme-icon-btn:hover {
+                html[data-theme="light"] #header-theme-icon-btn:hover, html[data-theme="light"] .header-theme-icon-btn:hover {
                     background: #e2e8f0 !important;
                     border-color: #0284c7 !important;
                     box-shadow: 0 0 10px rgba(2, 132, 199, 0.3) !important;
                     transform: scale(1.1) !important;
                 }
 
-                /* 顶层主 Tab 导航 ── 浅色模式（Header 胶囊条） */
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"],
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div[data-baseweb="tab-list"],
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [role="tablist"] {
+                /* 顶层主 Tab 导航 ── 浅色模式（Header 胶囊条）
+                   注意：必须带 html[data-theme="light"] 前缀并复用基础深色规则的完整子链，
+                   否则特异性低于基础(深色)规则，浅色下选中 Tab 会残留黑色胶囊背景。 */
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"],
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div[data-baseweb="tab-list"],
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [role="tablist"] {
                     background: rgba(0, 0, 0, 0.05) !important;
                     border: 1px solid rgba(0, 0, 0, 0.1) !important;
                     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05) !important;
                 }
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-testid="stTab"],
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-baseweb="tab"],
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [role="tab"] {
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"] > div[data-testid="stTab"],
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div[data-baseweb="tab-list"] > div[data-baseweb="tab"],
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [role="tab"] {
                     color: #64748b !important;
                     background: transparent !important;
                 }
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-testid="stTab"]:hover,
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-baseweb="tab"]:hover,
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [role="tab"]:hover {
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"] > div[data-testid="stTab"]:hover,
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:hover,
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [role="tab"]:hover {
                     background: rgba(0, 0, 0, 0.05) !important;
                     color: #0f172a !important;
                 }
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-testid="stTab"][aria-selected="true"],
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-baseweb="tab"][aria-selected="true"],
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [role="tab"][aria-selected="true"] {
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"] > div[data-testid="stTab"][aria-selected="true"],
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div[data-baseweb="tab-list"] > div[data-baseweb="tab"][aria-selected="true"],
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [role="tab"][aria-selected="true"] {
                     background: #ffffff !important;
                     color: #0284c7 !important;
-                    border: 1px solid rgba(0, 0, 0, 0.08) !important;
+                    border: none !important;
+                    outline: none !important;
                     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
                 }
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [aria-selected="true"] p,
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-testid="stTab"][aria-selected="true"] p {
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"] > div[data-testid="stTab"][aria-selected="true"] p,
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [aria-selected="true"] p {
                     color: #0284c7 !important;
                     font-weight: 600 !important;
                 }
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [aria-selected="false"] p,
-                div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-testid="stTab"][aria-selected="false"] p {
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"] > div[data-testid="stTab"][aria-selected="false"] p,
+                html[data-theme="light"] div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [aria-selected="false"] p {
                     color: #64748b !important;
                     font-weight: 500 !important;
                 }
 
-                /* 运维中心内嵌二级 Tab ── 浅色模式 */
+                /* 运维中心内嵌二级 Tab ── 浅色模式（iOS/macOS 现代分段控制风格） */
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab-list"],
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tablist"] {
                     background: #f1f5f9 !important;
                     border: 1px solid #e2e8f0 !important;
                     border-radius: 8px !important;
-                    padding: 3px 6px !important;
+                    padding: 3px 4px !important;
+                    gap: 4px !important;
+                    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03) !important;
                 }
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"],
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"],
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"] {
                     background: transparent !important;
                     color: #64748b !important;
-                    border: 1px solid transparent !important;
+                    border: none !important;
+                    outline: none !important;
+                    border-radius: 6px !important;
+                    transition: all 0.15s ease !important;
                 }
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"]:hover,
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"]:hover,
@@ -2168,18 +2237,26 @@ function applyAppTheme(themeId) {
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"],
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"],
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"][aria-selected="true"],
-                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"],
-                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] p,
-                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] p {
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] {
                     background: #ffffff !important;
                     color: #0284c7 !important;
-                    border: 1px solid #0284c7 !important;
-                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+                    border: none !important;
+                    outline: none !important;
+                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04) !important;
                     font-weight: 600 !important;
+                }
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] p,
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] p {
+                    color: #0284c7 !important;
+                    font-weight: 600 !important;
+                    background: transparent !important;
+                    border: none !important;
                 }
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="false"] p,
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="false"] p {
                     color: #64748b !important;
+                    background: transparent !important;
+                    border: none !important;
                 }
 
                 /* 筛选工具栏输入框、下拉框、标签与按钮 */
@@ -2245,6 +2322,59 @@ function applyAppTheme(themeId) {
                 div[data-testid="stSelectbox"] svg {
                     fill: #64748b !important;
                     color: #64748b !important;
+                }
+
+                /* React Aria 下拉框 (Streamlit >= 1.55 使用 data-rac 而非 data-baseweb) ── 浅色模式彻底消除黑色小方块 */
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] {
+                    background-color: #ffffff !important;
+                    background: #ffffff !important;
+                    border: 1px solid #cbd5e1 !important;
+                    color: #0f172a !important;
+                    box-shadow: none !important;
+                }
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] > div,
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] > div * {
+                    background-color: transparent !important;
+                    background: transparent !important;
+                }
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] input {
+                    background-color: #ffffff !important;
+                    background: #ffffff !important;
+                    color: #0f172a !important;
+                }
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] input::placeholder {
+                    color: #94a3b8 !important;
+                }
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] button {
+                    background: transparent !important;
+                    background-color: transparent !important;
+                    border: none !important;
+                    box-shadow: none !important;
+                    color: #64748b !important;
+                }
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] svg {
+                    fill: #64748b !important;
+                    color: #64748b !important;
+                }
+                /* React Aria 下拉弹出层 ── 浅色模式 */
+                div[data-testid="stSelectboxVirtualDropdown"],
+                div[data-testid="stSelectboxVirtualDropdown"] * {
+                    background-color: #ffffff !important;
+                    background: #ffffff !important;
+                }
+                div[data-testid="stSelectboxVirtualDropdown"] {
+                    border: 1px solid #e2e8f0 !important;
+                    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1) !important;
+                }
+                div[data-testid="stSelectboxVirtualDropdown"] * {
+                    color: #1e293b !important;
+                }
+                div[data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover,
+                div[data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover *,
+                div[data-testid="stSelectboxVirtualDropdown"] [role="option"][aria-selected="true"],
+                div[data-testid="stSelectboxVirtualDropdown"] [role="option"][aria-selected="true"] * {
+                    background-color: #f1f5f9 !important;
+                    color: #0284c7 !important;
                 }
 
                 /* 下拉弹出层 */
@@ -2329,11 +2459,11 @@ function applyAppTheme(themeId) {
                 div[data-testid="stHorizontalBlock"]:has(.card-meta-row) a:hover,
                 div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stButton"] button:not(:disabled):hover,
                 div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stLinkButton"] a:hover {
-                    background-color: #f0f9ff !important;
-                    background: #f0f9ff !important;
-                    border-color: #0284c7 !important;
-                    color: #0284c7 !important;
-                    box-shadow: 0 1px 4px rgba(2, 132, 199, 0.15) !important;
+                    background-color: #f1f5f9 !important;
+                    background: #f1f5f9 !important;
+                    border-color: #94a3b8 !important;
+                    color: #0f172a !important;
+                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06) !important;
                 }
                 div[data-testid="stPopover"] > button:hover,
                 div[data-testid="stPopover"] button:hover,
@@ -2583,24 +2713,27 @@ function applyAppTheme(themeId) {
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) button {
                     background: #ffffff !important;
                     border: 1px solid #cbd5e1 !important;
-                    color: #334155 !important;
+                    color: #475569 !important;
                     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
                     transition: all 0.15s ease !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) button:not(:disabled):hover {
-                    background: #f0f9ff !important;
-                    border-color: #0284c7 !important;
-                    color: #0284c7 !important;
-                    box-shadow: 0 1px 4px rgba(2, 132, 199, 0.15) !important;
+                    background: #f1f5f9 !important;
+                    border-color: #94a3b8 !important;
+                    color: #0f172a !important;
+                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06) !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) button:disabled {
                     background: #f8fafc !important;
                     border-color: #e2e8f0 !important;
-                    color: #94a3b8 !important;
-                    opacity: 0.55 !important;
+                    color: #cbd5e1 !important;
+                    opacity: 0.45 !important;
                     cursor: not-allowed !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) button p {
+                    font-size: 16px !important;
+                    font-weight: 700 !important;
+                    line-height: 1 !important;
                     color: inherit !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) input {
@@ -2754,19 +2887,42 @@ function applyAppTheme(themeId) {
                 /* 运维中心内嵌二级 Tab ── 深色模式 */
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab-list"],
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tablist"] {
-                    background: rgba(15, 23, 42, 0.8) !important;
-                    border: 1px solid rgba(56, 189, 248, 0.25) !important;
+                    background: rgba(15, 23, 42, 0.75) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                    border-radius: 8px !important;
+                    padding: 3px 4px !important;
+                    gap: 4px !important;
                 }
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"],
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"],
                 div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"] {
                     color: #94a3b8 !important;
+                    border: none !important;
+                    outline: none !important;
+                    background: transparent !important;
                 }
-                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"],
-                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] * {
-                    background: linear-gradient(135deg, rgba(14, 165, 233, 0.3), rgba(99, 102, 241, 0.3)) !important;
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"],
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"],
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"][aria-selected="true"],
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] {
+                    background: rgba(56, 189, 248, 0.15) !important;
                     color: #38bdf8 !important;
-                    border: 1px solid rgba(56, 189, 248, 0.5) !important;
+                    border: none !important;
+                    outline: none !important;
+                    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3) !important;
+                }
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] p,
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] p {
+                    color: #38bdf8 !important;
+                    font-weight: 600 !important;
+                    background: transparent !important;
+                    border: none !important;
+                }
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="false"] p,
+                div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="false"] p {
+                    color: #94a3b8 !important;
+                    background: transparent !important;
+                    border: none !important;
                 }
 
                 /* 深色模式 Select 文字（防止切换后残留浅色文字样式） */
@@ -2792,6 +2948,49 @@ function applyAppTheme(themeId) {
                 div[data-testid="stSelectbox"] svg {
                     fill: #94a3b8 !important;
                     color: #94a3b8 !important;
+                }
+                /* React Aria 下拉框 (data-rac) ── 深色模式 */
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] {
+                    background-color: rgba(30, 41, 59, 0.8) !important;
+                    background: rgba(30, 41, 59, 0.8) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                    color: #f1f5f9 !important;
+                }
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] input {
+                    background-color: transparent !important;
+                    background: transparent !important;
+                    color: #f1f5f9 !important;
+                }
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] input::placeholder {
+                    color: #64748b !important;
+                }
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] button {
+                    background: transparent !important;
+                    background-color: transparent !important;
+                    border: none !important;
+                    box-shadow: none !important;
+                    color: #94a3b8 !important;
+                }
+                div[data-testid="stSelectbox"] div[data-rac][role="group"] svg {
+                    fill: #94a3b8 !important;
+                    color: #94a3b8 !important;
+                }
+                /* React Aria 下拉弹出层 ── 深色模式 */
+                div[data-testid="stSelectboxVirtualDropdown"] {
+                    background-color: #1e293b !important;
+                    background: #1e293b !important;
+                    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+                    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important;
+                }
+                div[data-testid="stSelectboxVirtualDropdown"] * {
+                    color: #f1f5f9 !important;
+                }
+                div[data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover,
+                div[data-testid="stSelectboxVirtualDropdown"] [role="option"]:hover *,
+                div[data-testid="stSelectboxVirtualDropdown"] [role="option"][aria-selected="true"],
+                div[data-testid="stSelectboxVirtualDropdown"] [role="option"][aria-selected="true"] * {
+                    background-color: rgba(56, 189, 248, 0.15) !important;
+                    color: #38bdf8 !important;
                 }
                 li[role="option"],
                 li[role="option"] * {
@@ -2829,45 +3028,51 @@ function applyAppTheme(themeId) {
                 div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button {
                     background: rgba(30, 41, 59, 0.8) !important;
                     border: 1px solid rgba(255, 255, 255, 0.14) !important;
-                    color: #e2e8f0 !important;
+                    color: #cbd5e1 !important;
                     transition: all 0.15s ease !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button:not(:disabled):hover {
-                    background: rgba(56, 189, 248, 0.18) !important;
-                    border-color: #38bdf8 !important;
-                    color: #38bdf8 !important;
-                    box-shadow: 0 0 8px rgba(56, 189, 248, 0.25) !important;
+                    background: rgba(255, 255, 255, 0.12) !important;
+                    border-color: rgba(255, 255, 255, 0.28) !important;
+                    color: #ffffff !important;
+                    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button:disabled {
                     background: rgba(15, 23, 42, 0.45) !important;
                     border: 1px solid rgba(255, 255, 255, 0.06) !important;
-                    color: #64748b !important;
-                    opacity: 0.45 !important;
+                    color: #475569 !important;
+                    opacity: 0.35 !important;
                     cursor: not-allowed !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button p {
+                    font-size: 15px !important;
+                    line-height: 1 !important;
+                    font-weight: 700 !important;
                     color: inherit !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button {
                     background: rgba(30, 41, 59, 0.8) !important;
                     border: 1px solid rgba(255, 255, 255, 0.14) !important;
-                    color: #e2e8f0 !important;
+                    color: #cbd5e1 !important;
                     transition: all 0.15s ease !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) button:not(:disabled):hover {
-                    background: rgba(56, 189, 248, 0.18) !important;
-                    border-color: #38bdf8 !important;
-                    color: #38bdf8 !important;
-                    box-shadow: 0 0 10px rgba(56, 189, 248, 0.2) !important;
+                    background: rgba(255, 255, 255, 0.12) !important;
+                    border-color: rgba(255, 255, 255, 0.28) !important;
+                    color: #ffffff !important;
+                    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) button:disabled {
                     background: rgba(15, 23, 42, 0.45) !important;
                     border: 1px solid rgba(255, 255, 255, 0.06) !important;
-                    color: #64748b !important;
-                    opacity: 0.45 !important;
+                    color: #475569 !important;
+                    opacity: 0.35 !important;
                     cursor: not-allowed !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) button p {
+                    font-size: 16px !important;
+                    line-height: 1 !important;
+                    font-weight: 700 !important;
                     color: inherit !important;
                 }
                 div[data-testid="stHorizontalBlock"]:has(.pagination-text) input {
@@ -3052,7 +3257,7 @@ function applyAppTheme(themeId) {
 
         const btn = pDoc.getElementById('header-theme-icon-btn');
         if (btn) {
-            btn.textContent = (currentTheme === 'light') ? '🌙' : '☀️';
+            btn.textContent = (currentTheme === 'light') ? '☾' : '☼';
             btn.title = (currentTheme === 'light') ? '切换为深色模式' : '切换为浅色模式';
         }
     } catch (e) {}
@@ -3129,7 +3334,7 @@ function injectHeaderMetadata() {
             };
             pDoc.body.appendChild(themeBtn);
         }
-        themeBtn.textContent = (curTheme === 'light') ? '🌙' : '☀️';
+        themeBtn.textContent = (curTheme === 'light') ? '☾' : '☼';
         themeBtn.title = (curTheme === 'light') ? '切换为深色模式' : '切换为浅色模式';
 
         // 每次 metadata 刷新时同步修正 Header 颜色（防止 Streamlit 重渲后恢复深色）
@@ -3236,12 +3441,13 @@ function initGlobalLoadingIndicator() {
 
         // 1. 创建或获取全局悬浮加载 HUD 容器（强制挂载在 body 顶层，彻底杜绝被页面容器磨砂虚化）
         let hud = pDoc.getElementById('app-global-loading-hud');
-        const hudContent = `
-            <div class="hud-spinner-ring"></div>
-            <div class="hud-text-box">
-                <div class="hud-sub-text">数据检索与视图渲染中，请稍候</div>
-            </div>
-        `;
+        const hudContent = [
+            '<div class="hud-spinner-ring"></div>',
+            '<div class="hud-text-box">',
+            '    <div class="hud-sub-text">数据检索与视图渲染中，请稍候</div>',
+            '</div>'
+        ].join('');
+
         if (hud) {
             hud.setAttribute('data-theme', curTheme);
             hud.classList.toggle('hud-theme-light', curTheme === 'light');
@@ -3262,17 +3468,46 @@ function initGlobalLoadingIndicator() {
             pDoc.body.appendChild(hud);
         }
 
-        function updateLoadingState(isRunning) {
-            if (hud) {
-                if (isRunning) {
-                    hud.classList.add('is-active');
+        let safetyClearTimer = null;
+
+        function checkStreamlitRunning() {
+            const stApp = pDoc.querySelector('.stApp, [data-testid="stApp"], [data-test-script-state]');
+            if (stApp && stApp.getAttribute('data-test-script-state') === 'running') {
+                return true;
+            }
+            return false;
+        }
+
+        function updateLoadingState(isRunning, isPending) {
+            if (!hud) return;
+            if (safetyClearTimer) {
+                clearTimeout(safetyClearTimer);
+                safetyClearTimer = null;
+            }
+
+            if (isRunning) {
+                hud.classList.add('is-active');
+                if (isPending) {
+                    // 若是由回车等预唤起，800ms 后核验：若 Streamlit 实际未进入 running 态则自动恢复
+                    safetyClearTimer = setTimeout(() => {
+                        if (!checkStreamlitRunning()) {
+                            hud.classList.remove('is-active');
+                        }
+                    }, 800);
                 } else {
-                    hud.classList.remove('is-active');
+                    // 全局最大超时熔断（防止极端网络/异常断开导致 loading 永久遮挡页面）
+                    safetyClearTimer = setTimeout(() => {
+                        if (!checkStreamlitRunning()) {
+                            hud.classList.remove('is-active');
+                        }
+                    }, 12000);
                 }
+            } else {
+                hud.classList.remove('is-active');
             }
         }
 
-        // 2. 监听 Streamlit 根容器的 running 状态属性
+        // 2. 监听 Streamlit 根容器的 running 状态属性（精准生命周期驱动，杜绝误判）
         const stApp = pDoc.querySelector('.stApp, [data-testid="stApp"], [data-test-script-state]');
         if (stApp) {
             const state = stApp.getAttribute('data-test-script-state');
@@ -3293,32 +3528,28 @@ function initGlobalLoadingIndicator() {
             updateLoadingState(false);
         }
 
-        // 3. 用户交互事件劫持：点击按钮、下拉选项、翻页跳转、回车搜索时瞬间唤起加载态（0ms 即时响应）
-        // 明确排除主题切换按钮 (#header-theme-icon-btn)，防止纯前端主题切换时加载遮罩永久卡死
+        // 3. 安全的即时交互预唤起（仅在输入框按回车搜索时预激活，绝不拦截下拉框展开、Tab切换及普通按钮）
         if (!pDoc._loadingEventsBound) {
             pDoc._loadingEventsBound = true;
-            pDoc.addEventListener('click', (e) => {
-                const themeBtnEl = e.target.closest('#header-theme-icon-btn, .header-theme-icon-btn');
-                if (themeBtnEl) {
-                    return; // 点击主题切换按钮时不触发加载遮罩
-                }
-                const interactiveEl = e.target.closest('button, [role="button"], [data-baseweb="select"], [data-baseweb="option"], [data-baseweb="tab"], [data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-primary"]');
-                if (interactiveEl) {
-                    if (interactiveEl.id === 'header-theme-icon-btn' || interactiveEl.classList.contains('header-theme-icon-btn')) {
-                        return;
-                    }
-                    updateLoadingState(true);
-                }
-            }, true);
-
             pDoc.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     const input = e.target.closest('input');
-                    if (input) {
-                        updateLoadingState(true);
+                    if (input && !e.target.closest('[data-baseweb="select"]')) {
+                        updateLoadingState(true, true);
                     }
                 }
             }, true);
+        }
+
+        // 4. 定时兜底状态校准：若 Streamlit 处于 idle 状态，确保移除 is-active 遮罩
+        if (!window._stLoadingInterval) {
+            window._stLoadingInterval = setInterval(() => {
+                if (hud && hud.classList.contains('is-active')) {
+                    if (!checkStreamlitRunning()) {
+                        hud.classList.remove('is-active');
+                    }
+                }
+            }, 500);
         }
     } catch (e) {}
 }
@@ -4039,7 +4270,7 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
 
 def render_pagination(key_prefix: str = "bottom"):
     """通用底部分页控制条"""
-    p_col1, p_col2, p_col3, p_col4, p_col5 = st.columns([3.0, 1.1, 1.0, 1.0, 1.0], vertical_alignment="center")
+    p_col1, p_col2, p_col3, p_col4, p_col5 = st.columns([3.2, 1.0, 0.45, 0.7, 0.45], vertical_alignment="center")
     with p_col1:
         st.markdown(
             f"<div class='pagination-text'>共找到 <span style='color:#4caf50;font-weight:700;margin:0 4px;'>{total_records:,}</span> 条数据（第 <b>{st.session_state.current_page}</b> / {total_pages} 页）</div>",
@@ -4058,7 +4289,7 @@ def render_pagination(key_prefix: str = "bottom"):
             on_change=on_bottom_page_size_change
         )
     with p_col3:
-        st.button(T("上一页"), key=f"{key_prefix}_prev", disabled=(st.session_state.current_page <= 1), use_container_width=True, on_click=prev_page)
+        st.button("‹", key=f"{key_prefix}_prev", help="上一页", disabled=(st.session_state.current_page <= 1), use_container_width=True, on_click=prev_page)
     with p_col4:
         st.number_input(
             "跳转页码",
@@ -4069,7 +4300,7 @@ def render_pagination(key_prefix: str = "bottom"):
             on_change=on_bottom_jump_change
         )
     with p_col5:
-        st.button(T("下一页"), key=f"{key_prefix}_next", disabled=(st.session_state.current_page >= total_pages), use_container_width=True, on_click=next_page)
+        st.button("›", key=f"{key_prefix}_next", help="下一页", disabled=(st.session_state.current_page >= total_pages), use_container_width=True, on_click=next_page)
 
 
 # ==================== 顶部主导航 Tab 与多维筛选工具栏 ====================
@@ -4077,7 +4308,7 @@ def render_pagination(key_prefix: str = "bottom"):
 main_tab_gallery, main_tab_maintenance = st.tabs([T("资源画廊浏览"), T("数据与系统维护中心")])
 
 with main_tab_gallery:
-    f_cols = st.columns([1.4, 0.6, 0.6, 0.85, 0.85, 1.0, 1.1, 0.72, 0.80, 0.24, 0.28, 0.24], vertical_alignment="bottom")
+    f_cols = st.columns([1.4, 0.6, 0.6, 0.85, 0.85, 1.0, 1.1, 0.72, 0.84, 0.18, 0.28, 0.18], vertical_alignment="bottom")
     with f_cols[0]:
         st.text_input(T("关键词搜索"), placeholder="输入标题 / 链接 / 磁力...", key="f_keyword", on_change=reset_page)
     with f_cols[1]:
@@ -4117,7 +4348,7 @@ with main_tab_gallery:
             unsafe_allow_html=True
         )
     with f_cols[9]:
-        st.button("上一页", key="top_prev", disabled=(st.session_state.current_page <= 1), use_container_width=True, on_click=prev_page)
+        st.button("‹", key="top_prev", help="上一页", disabled=(st.session_state.current_page <= 1), use_container_width=True, on_click=prev_page)
     with f_cols[10]:
         st.number_input(
             "跳转页码",
@@ -4128,7 +4359,7 @@ with main_tab_gallery:
             on_change=on_top_jump_change
         )
     with f_cols[11]:
-        st.button("下一页", key="top_next", disabled=(st.session_state.current_page >= total_pages), use_container_width=True, on_click=next_page)
+        st.button("›", key="top_next", help="下一页", disabled=(st.session_state.current_page >= total_pages), use_container_width=True, on_click=next_page)
 
     if df.empty:
         st.info(T("没有找到匹配条件的记录，请尝试调整搜索或筛选条件。"))

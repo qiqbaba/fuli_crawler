@@ -94,7 +94,7 @@ class LogCapture:
 
 
 # ===================================================================
-# 1. 面板一：📄 PDF 生命周期维护 (fixes/pdf_maintenance.py)
+# 1. 面板一： PDF 生命周期维护 (fixes/pdf_maintenance.py)
 # ===================================================================
 
 def render_tab_pdf_maintenance():
@@ -424,7 +424,7 @@ def render_tab_pdf_maintenance():
 
 
 # ===================================================================
-# 2. 面板二：🔍 PDF 多维查重去重 (fixes/pdf_dedup.py)
+# 2. 面板二： PDF 多维查重去重 (fixes/pdf_dedup.py)
 # ===================================================================
 
 def render_tab_pdf_dedup():
@@ -484,7 +484,7 @@ def render_tab_pdf_dedup():
 
 
 # ===================================================================
-# 3. 面板三：🧹 数据清洗与元数据 (fixes/data_cleaner.py)
+# 3. 面板三： 数据清洗与元数据 (fixes/data_cleaner.py)
 # ===================================================================
 
 def render_tab_data_cleaner():
@@ -686,7 +686,7 @@ def render_tab_data_cleaner():
 
 
 # ===================================================================
-# 4. 面板四：🗄️ 记录过滤与番号分离 (fixes/record_filter.py)
+# 4. 面板四： 记录过滤与番号分离 (fixes/record_filter.py)
 # ===================================================================
 
 def render_tab_record_filter():
@@ -787,7 +787,7 @@ def render_tab_record_filter():
 
 
 # ===================================================================
-# 5. 面板五：⚡ 缓存预热与数据库运维 (fixes/warmup_pdf_cache.py & db_utils.py)
+# 5. 面板五： 缓存预热与数据库运维 (fixes/warmup_pdf_cache.py & db_utils.py)
 # ===================================================================
 
 def render_tab_system_and_cache():
