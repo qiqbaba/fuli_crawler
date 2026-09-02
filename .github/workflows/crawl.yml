@@ -271,14 +271,14 @@ jobs:
         if: always()
         run: rm -rf /tmp/pdfs
 
-  # ========== 爬虫并行 job 2：同源集群站点爬虫（限制并发 max-parallel: 2 防止封禁） ==========
+  # ========== 爬虫并行 job 2：同源集群站点爬虫（限制并发 max-parallel: 4 防止封禁） ==========
   crawl_cluster:
     needs: fetch_proxies
     runs-on: ubuntu-latest
     timeout-minutes: 720
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 4
       matrix:
         crawler: [datang, madou, dashen, taose, tanhua, jingpin, mianfei_guochan]
 
