@@ -216,22 +216,13 @@ st.markdown("""
         filter: none !important;
     }
 
-    /* 运行状态：全屏背景磨砂遮罩（独立层仅遮罩底层内容，绝不影响最上层 HUD，自动适配明暗主题） */
+    /* 运行状态：彻底移除全屏磨砂遮罩，避免遮挡和模糊下方已流式渲染完成的卡片与控件 */
     .stApp[data-test-script-state="running"]::after {
-        content: "" !important;
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        background: var(--loading-mask-bg, rgba(10, 15, 29, 0.45)) !important;
-        backdrop-filter: var(--loading-mask-filter, blur(2.5px) brightness(0.8)) !important;
-        -webkit-backdrop-filter: var(--loading-mask-filter, blur(2.5px) brightness(0.8)) !important;
-        z-index: 999990 !important;
-        pointer-events: none !important;
+        display: none !important;
+        content: none !important;
     }
 
-    /* 运行状态：顶部高能流动渐变光带（纯 CSS 零延迟兜底，自适应主题色） */
+    /* 运行状态：顶部高能流动渐变光带（纯 CSS 零延迟兜底，自适应主题色，零遮挡内容） */
     .stApp[data-test-script-state="running"]::before {
         content: "" !important;
         position: fixed !important;
@@ -247,36 +238,38 @@ st.markdown("""
         pointer-events: none !important;
     }
 
-    /* 悬浮 HUD 加载器容器样式（最高层级，直接挂载在 body 上，自适应主题） */
+    /* 悬浮 HUD 加载器：轻量浮动胶囊（位于右下角，非侵入式，自适应主题） */
     #app-global-loading-hud {
         position: fixed !important;
-        top: 40% !important;
-        left: 50% !important;
-        transform: translate(-50%, -50%) !important;
+        bottom: 24px !important;
+        right: 24px !important;
+        top: auto !important;
+        left: auto !important;
+        transform: translateY(16px) scale(0.96) !important;
         z-index: 99999999 !important;
         display: flex !important;
         align-items: center !important;
-        gap: 12px !important;
-        background: var(--loading-hud-bg, rgba(15, 23, 42, 0.96)) !important;
-        backdrop-filter: blur(20px) !important;
-        -webkit-backdrop-filter: blur(20px) !important;
+        gap: 10px !important;
+        background: var(--loading-hud-bg, rgba(15, 23, 42, 0.92)) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
         border: 1.5px solid var(--loading-hud-border, #38bdf8) !important;
-        border-radius: 40px !important;
-        padding: 10px 22px !important;
-        box-shadow: var(--loading-hud-shadow, 0 20px 60px rgba(0, 0, 0, 0.9), 0 0 35px rgba(56, 189, 248, 0.5)) !important;
+        border-radius: 30px !important;
+        padding: 8px 16px !important;
+        box-shadow: var(--loading-hud-shadow, 0 12px 36px rgba(0, 0, 0, 0.7), 0 0 20px rgba(56, 189, 248, 0.35)) !important;
         pointer-events: none !important;
         user-select: none !important;
         opacity: 0 !important;
         visibility: hidden !important;
-        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.18s, transform 0.18s, background-color 0.25s, border-color 0.25s, box-shadow 0.25s !important;
+        transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.2s, transform 0.2s, background-color 0.25s, border-color 0.25s, box-shadow 0.25s !important;
     }
 
-    /* 当处于运行/计算状态时，中央悬浮 HUD 呈现（默认深色光晕） */
-    .stApp[data-test-script-state="running"] #app-global-loading-hud,
+    /* 仅当显式激活（长耗时/搜索按键）时优雅浮现，绝对不遮挡屏幕正中内容 */
     #app-global-loading-hud.is-active {
         opacity: 1 !important;
         visibility: visible !important;
-        animation: hudModalFadeIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards, hudPulseGlowDark 2.2s infinite ease-in-out !important;
+        transform: translateY(0) scale(1) !important;
+        animation: hudPulseGlowDark 2.2s infinite ease-in-out !important;
     }
 
     /* 浅色主题激活状态下的 HUD 光晕动画与显式覆盖 */
@@ -284,11 +277,8 @@ st.markdown("""
     body[data-theme="light"] #app-global-loading-hud.is-active,
     body.theme-light #app-global-loading-hud.is-active,
     #app-global-loading-hud.hud-theme-light.is-active,
-    #app-global-loading-hud[data-theme="light"].is-active,
-    .stApp[data-theme="light"][data-test-script-state="running"] #app-global-loading-hud,
-    html[data-theme="light"] .stApp[data-test-script-state="running"] #app-global-loading-hud,
-    body.theme-light .stApp[data-test-script-state="running"] #app-global-loading-hud {
-        animation: hudModalFadeIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards, hudPulseGlowLight 2.2s infinite ease-in-out !important;
+    #app-global-loading-hud[data-theme="light"].is-active {
+        animation: hudPulseGlowLight 2.2s infinite ease-in-out !important;
     }
 
     /* 浅色主题下的 HUD 显式 CSS 属性兜底 */
@@ -299,7 +289,7 @@ st.markdown("""
     #app-global-loading-hud[data-theme="light"] {
         background: rgba(255, 255, 255, 0.98) !important;
         border: 1.5px solid #0284c7 !important;
-        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 0 30px rgba(2, 132, 199, 0.25) !important;
+        box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15), 0 0 20px rgba(2, 132, 199, 0.25) !important;
     }
     body.theme-light #app-global-loading-hud .hud-spinner-ring,
     body[data-theme="light"] #app-global-loading-hud .hud-spinner-ring,
@@ -1985,18 +1975,7 @@ if "cached_stats" not in st.session_state:
         st.stop()
 stats = st.session_state.cached_stats
 
-# 激活全局高能加载/计算状态指示器
-st.markdown(
-    """
-    <div id="app-global-loading-hud">
-        <div class="hud-spinner-ring"></div>
-        <div class="hud-text-box">
-            <p class="hud-sub-text">数据检索与视图渲染中，请稍候</p>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+# 全局元数据与主题初始化
 
 # 动态将数据库元数据概览注入至顶部 Header（与 Deploy 按钮在同一行平铺），并激活全局高能加载/计算状态指示器
 header_meta_json = json.dumps({
@@ -3038,11 +3017,10 @@ function applyAppTheme(themeId) {
                     border: 1px solid #cbd5e1 !important;
                 }
 
-                /* 浅色模式全局加载遮罩微调与全屏遮罩 */
+                /* 浅色模式全局加载遮罩微调与全屏遮罩（彻底移除磨砂蒙层） */
                 .stApp[data-test-script-state="running"]::after {
-                    background: rgba(241, 245, 249, 0.6) !important;
-                    backdrop-filter: blur(2.5px) brightness(1.02) !important;
-                    -webkit-backdrop-filter: blur(2.5px) brightness(1.02) !important;
+                    display: none !important;
+                    content: none !important;
                 }
                 .stApp[data-test-script-state="running"]::before {
                     background: linear-gradient(90deg, #0284c7, #38bdf8, #6366f1, #10b981, #0284c7) !important;
@@ -3056,7 +3034,7 @@ function applyAppTheme(themeId) {
                 #app-global-loading-hud[data-theme="light"] {
                     background: rgba(255, 255, 255, 0.98) !important;
                     border: 1.5px solid #0284c7 !important;
-                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15), 0 0 30px rgba(2, 132, 199, 0.25) !important;
+                    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.15), 0 0 20px rgba(2, 132, 199, 0.25) !important;
                 }
                 #app-global-loading-hud .hud-spinner-ring,
                 body.theme-light #app-global-loading-hud .hud-spinner-ring,
@@ -3075,12 +3053,11 @@ function applyAppTheme(themeId) {
                     color: #0f172a !important;
                     font-weight: 600 !important;
                 }
-                .stApp[data-test-script-state="running"] #app-global-loading-hud,
                 #app-global-loading-hud.is-active,
                 body.theme-light #app-global-loading-hud.is-active,
                 body[data-theme="light"] #app-global-loading-hud.is-active,
                 #app-global-loading-hud.hud-theme-light.is-active {
-                    animation: hudModalFadeIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards, hudPulseGlowLight 2.2s infinite ease-in-out !important;
+                    animation: hudPulseGlowLight 2.2s infinite ease-in-out !important;
                 }
                 [data-testid="stStatusWidget"] {
                     background: #ffffff !important;
@@ -3499,11 +3476,10 @@ function applyAppTheme(themeId) {
                     font-weight: 600;
                 }
 
-                /* 深色模式全局加载遮罩微调与全屏遮罩 */
+                /* 深色模式全局加载遮罩微调与全屏遮罩（彻底移除磨砂蒙层） */
                 .stApp[data-test-script-state="running"]::after {
-                    background: rgba(10, 15, 29, 0.45) !important;
-                    backdrop-filter: blur(2.5px) brightness(0.8) !important;
-                    -webkit-backdrop-filter: blur(2.5px) brightness(0.8) !important;
+                    display: none !important;
+                    content: none !important;
                 }
                 .stApp[data-test-script-state="running"]::before {
                     background: linear-gradient(90deg, #00e5ff, #2979ff, #7c4dff, #00e676, #00e5ff) !important;
@@ -3517,7 +3493,7 @@ function applyAppTheme(themeId) {
                 #app-global-loading-hud[data-theme="dark"] {
                     background: rgba(15, 23, 42, 0.96) !important;
                     border: 1.5px solid #38bdf8 !important;
-                    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), 0 0 35px rgba(56, 189, 248, 0.5) !important;
+                    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7), 0 0 20px rgba(56, 189, 248, 0.35) !important;
                 }
                 #app-global-loading-hud .hud-spinner-ring,
                 body.theme-dark #app-global-loading-hud .hud-spinner-ring,
@@ -3536,12 +3512,11 @@ function applyAppTheme(themeId) {
                     color: #e2e8f0 !important;
                     font-weight: 600 !important;
                 }
-                .stApp[data-test-script-state="running"] #app-global-loading-hud,
                 #app-global-loading-hud.is-active,
                 body.theme-dark #app-global-loading-hud.is-active,
                 body[data-theme="dark"] #app-global-loading-hud.is-active,
                 #app-global-loading-hud.hud-theme-dark.is-active {
-                    animation: hudModalFadeIn 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards, hudPulseGlowDark 2.2s infinite ease-in-out !important;
+                    animation: hudPulseGlowDark 2.2s infinite ease-in-out !important;
                 }
 
                 /* 深色模式页面过渡动画 */
@@ -3584,13 +3559,10 @@ function injectHeaderMetadata() {
         // 1. 左侧：数据库统计元数据条
         const metaHtml = iconStripped(`
             <span class="meta-item">数据库 <b class="meta-val-plain">${metaData.dbName}</b></span>
-            <span class="meta-item">PDF <b class="meta-val-plain">${metaData.pdfDir}</b></span>
             <span class="meta-divider"></span>
             <span class="meta-item">数据库记录 <b class="meta-val">${metaData.total}</b></span>
             <span class="meta-divider"></span>
             <span class="meta-item">含 PDF 路径 <b class="meta-val">${metaData.hasPdf}</b></span>
-            <span class="meta-divider"></span>
-            <span class="meta-item">磁盘孤儿 PDF <b class="meta-val-warn">${metaData.orphans}</b></span>
             <span class="meta-divider"></span>
             <span class="meta-item">来源渠道 <b class="meta-val">${metaData.sources}</b></span>
             <span class="meta-divider"></span>
@@ -3777,6 +3749,11 @@ function initGlobalLoadingIndicator() {
             return false;
         }
 
+        function checkContentReady() {
+            // 当主视觉内容（卡片标题、PDF预览容器或表格）已就绪渲染到 DOM 中时即刻视为就绪
+            return !!pDoc.querySelector('.card-title-row, .pdf-scroll-container, div[data-testid="stDataFrame"], .pdf-empty-placeholder');
+        }
+
         function updateLoadingState(isRunning, isPending) {
             if (!hud) return;
             if (safetyClearTimer) {
@@ -3784,29 +3761,33 @@ function initGlobalLoadingIndicator() {
                 safetyClearTimer = null;
             }
 
+            // 如果主内容已经呈现，立即隐藏 HUD，绝不遮挡视野
+            if (checkContentReady() && !isPending) {
+                hud.classList.remove('is-active');
+                return;
+            }
+
             if (isRunning) {
                 hud.classList.add('is-active');
                 if (isPending) {
-                    // 若是由回车等预唤起，800ms 后核验：若 Streamlit 实际未进入 running 态则自动恢复
                     safetyClearTimer = setTimeout(() => {
-                        if (!checkStreamlitRunning()) {
+                        if (!checkStreamlitRunning() || checkContentReady()) {
                             hud.classList.remove('is-active');
                         }
-                    }, 800);
+                    }, 500);
                 } else {
-                    // 全局最大超时熔断（防止极端网络/异常断开导致 loading 永久遮挡页面）
                     safetyClearTimer = setTimeout(() => {
-                        if (!checkStreamlitRunning()) {
+                        if (!checkStreamlitRunning() || checkContentReady()) {
                             hud.classList.remove('is-active');
                         }
-                    }, 12000);
+                    }, 6000);
                 }
             } else {
                 hud.classList.remove('is-active');
             }
         }
 
-        // 2. 监听 Streamlit 根容器的 running 状态属性（精准生命周期驱动，杜绝误判）
+        // 2. 监听 Streamlit 根容器的 running 状态属性与 DOM 内容生成
         const stApp = pDoc.querySelector('.stApp, [data-testid="stApp"], [data-test-script-state]');
         if (stApp) {
             const state = stApp.getAttribute('data-test-script-state');
@@ -3820,8 +3801,11 @@ function initGlobalLoadingIndicator() {
                             updateLoadingState(curState === 'running');
                         }
                     }
+                    if (checkContentReady()) {
+                        hud.classList.remove('is-active');
+                    }
                 });
-                window._stLoadingObserver.observe(stApp, { attributes: true, attributeFilter: ['data-test-script-state'] });
+                window._stLoadingObserver.observe(stApp, { attributes: true, attributeFilter: ['data-test-script-state'], childList: true, subtree: true });
             }
         } else {
             updateLoadingState(false);
@@ -3840,15 +3824,15 @@ function initGlobalLoadingIndicator() {
             }, true);
         }
 
-        // 4. 定时兜底状态校准：若 Streamlit 处于 idle 状态，确保移除 is-active 遮罩
+        // 4. 定时兜底状态校准：若 Streamlit 处于 idle 状态或主内容已就绪，确保移除 is-active 遮罩
         if (!window._stLoadingInterval) {
             window._stLoadingInterval = setInterval(() => {
                 if (hud && hud.classList.contains('is-active')) {
-                    if (!checkStreamlitRunning()) {
+                    if (!checkStreamlitRunning() || checkContentReady()) {
                         hud.classList.remove('is-active');
                     }
                 }
-            }, 500);
+            }, 150);
         }
     } catch (e) {}
 }

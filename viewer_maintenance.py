@@ -124,7 +124,7 @@ def render_tab_pdf_maintenance():
     # ---------------- 1. 日期比对审计 ----------------
     if tool_choice.startswith("1."):
         st.markdown(T("#### PDF 文件与数据库发布日期比对审计"))
-        st.info(T("递归扫描 `pdf/` 物理文件，提取文件名中的日期与标题，比对数据库中的 `publish_time`，并可一键生成 Markdown 审计报告。"))
+        st.info(T("递归扫描 pdf/ 物理文件，提取文件名中的日期与标题，比对数据库中的 publish_time，并可一键生成 Markdown 审计报告。"))
         
         c1, c2 = st.columns([1, 4])
         with c1:
@@ -232,7 +232,7 @@ def render_tab_pdf_maintenance():
     # ---------------- 2. 路径与文件名纠偏 ----------------
     elif tool_choice.startswith("2."):
         st.markdown(T("#### PDF 文件名日期修正与年份目录纠偏 (fix-paths)"))
-        st.info(T("纠偏 Unknown_Year 下的 Unknown_Date 文件，根据数据库发布日期重命名并迁移至正确年份文件夹，同时同步更新数据库中的 `pdf_path`。"))
+        st.info(T("纠偏 Unknown_Year 下的 Unknown_Date 文件，根据数据库发布日期重命名并迁移至正确年份文件夹，同时同步更新数据库中的 pdf_path。"))
         
         f_cols = st.columns([1, 1, 2])
         with f_cols[0]:
@@ -267,13 +267,14 @@ def render_tab_pdf_maintenance():
         st.markdown(T("#### 重新抓取渲染体积过小 (<20KB) 的损坏 PDF (redownload)"))
         st.info(T("扫描物理目录中体积小于 20KB 的损坏/空白 PDF，拉起 Playwright 无头浏览器重新访问源 URL，渲染生成标准 A4 边距 PDF 并覆盖旧文件。"))
         
-        r_cols = st.columns([1, 1, 2])
-        with r_cols[0]:
-            r_workers = st.slider("并发下载线程数", min_value=1, max_value=8, value=4, key="redownload_workers")
-        with r_cols[1]:
-            st.write("")
-            st.write("")
-            btn_redownload_run = st.button(T("启动 Playwright 重新抓取渲染"), type="primary", use_container_width=True)
+        with st.form("pdf_maint_redownload_form", clear_on_submit=False):
+            r_cols = st.columns([1, 1, 2])
+            with r_cols[0]:
+                r_workers = st.slider("并发下载线程数", min_value=1, max_value=8, value=4, key="redownload_workers")
+            with r_cols[1]:
+                st.write("")
+                st.write("")
+                btn_redownload_run = st.form_submit_button(T("启动 Playwright 重新抓取渲染"), type="primary", use_container_width=True)
             
         if btn_redownload_run:
             from fixes.pdf_maintenance import run_redownload_small_pdfs
@@ -299,17 +300,18 @@ def render_tab_pdf_maintenance():
         st.markdown(T("#### 重建缺失 PDF 文件与路径相对化 (rebuild)"))
         st.info(T("扫描数据库中所有记录，将绝对路径统一转换为相对路径；对本地物理缺失的 PDF 支持多线程 Playwright 并发重新生成。"))
         
-        rb_cols = st.columns([1, 1, 1, 1])
-        with rb_cols[0]:
-            rb_workers = st.slider("并发重建线程数", min_value=1, max_value=8, value=4, key="rebuild_workers")
-        with rb_cols[1]:
-            skip_dl = st.checkbox("仅相对化路径 (跳过下载)", value=False, key="rebuild_skip_dl")
-        with rb_cols[2]:
-            st.write("")
-            btn_rebuild_prev = st.button(T("预览缺失清单 (Dry Run)"), use_container_width=True)
-        with rb_cols[3]:
-            st.write("")
-            btn_rebuild_run = st.button(T("正式执行重建/相对化"), type="primary", use_container_width=True)
+        with st.form("pdf_maint_rebuild_form", clear_on_submit=False):
+            rb_cols = st.columns([1, 1, 1, 1])
+            with rb_cols[0]:
+                rb_workers = st.slider("并发重建线程数", min_value=1, max_value=8, value=4, key="rebuild_workers")
+            with rb_cols[1]:
+                skip_dl = st.checkbox("仅相对化路径 (跳过下载)", value=False, key="rebuild_skip_dl")
+            with rb_cols[2]:
+                st.write("")
+                btn_rebuild_prev = st.form_submit_button(T("预览缺失清单 (Dry Run)"), use_container_width=True)
+            with rb_cols[3]:
+                st.write("")
+                btn_rebuild_run = st.form_submit_button(T("正式执行重建/相对化"), type="primary", use_container_width=True)
             
         if btn_rebuild_prev or btn_rebuild_run:
             from fixes.pdf_maintenance import run_rebuild
@@ -332,7 +334,7 @@ def render_tab_pdf_maintenance():
     # ---------------- 5. 孤立 PDF 隔离与还原 ----------------
     elif tool_choice.startswith("5."):
         st.markdown(T("#### 多余/孤立 PDF 文件管理与还原 (orphan)"))
-        st.info(T("将数据库中无记录的多余/废弃 PDF 隔离移至 `/pdf` 根目录；或从根目录智能分析归属还原归位回年份子目录。"))
+        st.info(T("将数据库中无记录的多余/废弃 PDF 隔离移至 /pdf 根目录；或从根目录智能分析归属还原归位回年份子目录。"))
         
         orphan_mode = st.radio("选择操作模式", ["模式 1: 扫描各年份目录，将多余无记录 PDF 隔离到根目录", "模式 2: 扫描根目录隔离文件，智能恢复归位至年份子目录"], key="orphan_mode_sel")
         
@@ -369,7 +371,7 @@ def render_tab_pdf_maintenance():
     # ---------------- 6. 磁盘未关联 PDF 智能回填 ----------------
     elif tool_choice.startswith("6."):
         st.markdown(T("#### 扫描磁盘未关联/断链 PDF 智能回填数据库 (associate)"))
-        st.info(T("精准比对数据库，找出物理文件存在但数据库 `pdf_path` 为空或断链的记录，通过标题与站点来源自动关联回填。"))
+        st.info(T("精准比对数据库，找出物理文件存在但数据库 pdf_path 为空或断链的记录，通过标题与站点来源自动关联回填。"))
         
         a_cols = st.columns([1, 1, 2])
         with a_cols[0]:
@@ -395,7 +397,7 @@ def render_tab_pdf_maintenance():
     # ---------------- 7. 清理失效 PDF 记录 ----------------
     elif tool_choice.startswith("7."):
         st.markdown(T("#### 清理数据库中对应物理 PDF 已丢失的残留脏记录 (clean-missing)"))
-        st.info(T("反向扫描数据库，检测 `pdf_path` 指向的物理文件是否真实存在，批量删除物理文件已不存在的数据库脏记录，并自动 VACUUM 回收空间。"))
+        st.info(T("反向扫描数据库，检测 pdf_path 指向的物理文件是否真实存在，批量删除物理文件已不存在的数据库脏记录，并自动 VACUUM 回收空间。"))
         
         cm_scope = st.radio("清理作用域", ["unknown (仅清理 Unknown_Year 目录下失效记录)", "all (全量检查并清理所有年份失效记录)"], key="cm_scope_radio")
         scope_val = "unknown" if "unknown" in cm_scope else "all"
@@ -433,41 +435,42 @@ def render_tab_pdf_dedup():
     
     db_path = get_db_path()
     
-    col1, col2, col3, col4 = st.columns([1.1, 1.5, 0.9, 0.9])
-    with col1:
-        mode = st.selectbox(
-            T("查重维度 (Mode)"),
-            ["hash (MD5 内容完全一致)", "name (文件名变体如 _1.pdf)", "db (数据库路径共享与无效引用)", "all (全量多维综合查重)"],
-            key="dedup_mode_sel",
-            format_func=T
-        )
-        mode_val = mode.split(" ")[0]
-    with col2:
-        keep = st.selectbox(
-            T("保留策略 (Keep)"),
-            [
-                "primary (推荐: 规范性得分 > 体积最大 > 最新修改)",
-                "larger (优先体积: 体积最大 > 规范性得分 > 最新修改)",
-                "newest (优先最新: 修改时间最新 > 规范性得分 > 体积最大)",
-                "oldest (优先最早: 修改时间最早 > 规范性得分 > 体积最大)"
-            ],
-            key="dedup_keep_sel",
-            help="【保留判定完整条件链】\n1. 规范性打分：不在 Unknown_Year (+100分) > 含有效日期 YYYY-MM-DD (+50分) > 无 _1/_2 序号后缀 (+30分)\n2. 体积比较：文件字节大小 (bytes)\n3. 时间排序：文件最后修改时间 (mtime)",
-            format_func=T
-        )
-        keep_val = keep.split(" ")[0]
-    with col3:
-        use_trash = st.checkbox("移入隔离区 (.trash)", value=False, help="若勾选，则将待删除副本移入隔离区而非直接删除。")
-    with col4:
-        export_csv_opt = st.checkbox("导出 CSV 审计表", value=True)
+    with st.form("pdf_dedup_form", clear_on_submit=False):
+        col1, col2, col3, col4 = st.columns([1.1, 1.5, 0.9, 0.9])
+        with col1:
+            mode = st.selectbox(
+                T("查重维度 (Mode)"),
+                ["hash (MD5 内容完全一致)", "name (文件名变体如 _1.pdf)", "db (数据库路径共享与无效引用)", "all (全量多维综合查重)"],
+                key="dedup_mode_sel",
+                format_func=T
+            )
+            mode_val = mode.split(" ")[0]
+        with col2:
+            keep = st.selectbox(
+                T("保留策略 (Keep)"),
+                [
+                    "primary (推荐: 规范性得分 > 体积最大 > 最新修改)",
+                    "larger (优先体积: 体积最大 > 规范性得分 > 最新修改)",
+                    "newest (优先最新: 修改时间最新 > 规范性得分 > 体积最大)",
+                    "oldest (优先最早: 修改时间最早 > 规范性得分 > 体积最大)"
+                ],
+                key="dedup_keep_sel",
+                help="【保留判定完整条件链】\n1. 规范性打分：不在 Unknown_Year (+100分) > 含有效日期 YYYY-MM-DD (+50分) > 无 _1/_2 序号后缀 (+30分)\n2. 体积比较：文件字节大小 (bytes)\n3. 时间排序：文件最后修改时间 (mtime)",
+                format_func=T
+            )
+            keep_val = keep.split(" ")[0]
+        with col3:
+            use_trash = st.checkbox("移入隔离区 (.trash)", value=False, help="若勾选，则将待删除副本移入隔离区而非直接删除。")
+        with col4:
+            export_csv_opt = st.checkbox("导出 CSV 审计表", value=True)
+            
+        st.markdown("---")
         
-    st.markdown("---")
-    
-    b_cols = st.columns([1, 1, 1, 2])
-    with b_cols[0]:
-        btn_preview = st.button(T("扫描并预览查重结果 (Dry Run)"), type="primary", use_container_width=True)
-    with b_cols[1]:
-        btn_run_dedup = st.button(T("正式执行去重纠偏 (Run)"), use_container_width=True)
+        b_cols = st.columns([1, 1, 1, 2])
+        with b_cols[0]:
+            btn_preview = st.form_submit_button(T("扫描并预览查重结果 (Dry Run)"), type="primary", use_container_width=True)
+        with b_cols[1]:
+            btn_run_dedup = st.form_submit_button(T("正式执行去重纠偏 (Run)"), use_container_width=True)
         
     if btn_preview or btn_run_dedup:
         from fixes.pdf_dedup import run_pdf_dedup
@@ -518,17 +521,18 @@ def render_tab_data_cleaner():
     # ---------------- 1. 广告与推广噪声清洗 ----------------
     if sub_tool.startswith("1."):
         st.markdown(T("#### 清理 resource_link 广告与标签噪声 (clean-noise)"))
-        st.info(T("扫描 `resource_link` 剔除广告推广行、下载渠道废弃说明、多余标签以及无用空行。支持同步云端 Supabase 与 AWS DynamoDB。"))
+        st.info(T("扫描 resource_link 剔除广告推广行、下载渠道废弃说明、多余标签以及无用空行。支持同步云端 Supabase 与 AWS DynamoDB。"))
         
-        sync_sup = st.checkbox("同步更新至云端 Supabase", value=False)
-        sync_dyn = st.checkbox("同步更新至 AWS DynamoDB", value=False)
-        exp_csv = st.checkbox("导出清洗前后明细 CSV", value=True)
-        
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            btn_prev = st.button(T("扫描并预览噪声记录 (Dry Run)"), use_container_width=True)
-        with c2:
-            btn_run = st.button(T("正式执行清洗写入数据库"), type="primary", use_container_width=True)
+        with st.form("clean_noise_form", clear_on_submit=False):
+            sync_sup = st.checkbox("同步更新至云端 Supabase", value=False)
+            sync_dyn = st.checkbox("同步更新至 AWS DynamoDB", value=False)
+            exp_csv = st.checkbox("导出清洗前后明细 CSV", value=True)
+            
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                btn_prev = st.form_submit_button(T("扫描并预览噪声记录 (Dry Run)"), use_container_width=True)
+            with c2:
+                btn_run = st.form_submit_button(T("正式执行清洗写入数据库"), type="primary", use_container_width=True)
             
         if btn_prev or btn_run:
             from fixes.data_cleaner import run_clean_noise
@@ -552,7 +556,7 @@ def render_tab_data_cleaner():
     # ---------------- 2. 域名/镜像批量替换 ----------------
     elif sub_tool.startswith("2."):
         st.markdown(T("#### 批量替换 URL 中的域名或镜像子串 (replace-domain)"))
-        st.info(T("当采集源网站域名变更或发布页镜像更新时，批量替换 `resources.url` 中的旧域名（如 `dyh.393659.xyz` 替换为 `dtn.628563.xyz`）。"))
+        st.info(T("当采集源网站域名变更或发布页镜像更新时，批量替换 resources.url 中的旧域名（如 dyh.393659.xyz 替换为 dtn.628563.xyz）。"))
         
         presets = {
             "大唐 (datang)": ("dyh.393659.xyz", "dtn.628563.xyz"),
@@ -598,7 +602,7 @@ def render_tab_data_cleaner():
     # ---------------- 3. 表结构升级与元数据提取 ----------------
     elif sub_tool.startswith("3."):
         st.markdown(T("#### 数据库表结构升级与历史元数据提取 (upgrade-db)"))
-        st.info(T("自动升级 `resources` 表对齐标准 12 字段并建立索引；从历史记录提取 `size`、`resource_format`、`pikpak_link` 并批量回填。"))
+        st.info(T("自动升级 resources 表对齐标准 12 字段并建立索引；从历史记录提取 size、resource_format、pikpak_link 并批量回填。"))
         
         u1, u2 = st.columns([1, 1])
         with u1:
@@ -625,19 +629,20 @@ def render_tab_data_cleaner():
     # ---------------- 4. Darklyn 磁力大小并发补全 ----------------
     elif sub_tool.startswith("4."):
         st.markdown(T("#### Darklyn API 磁力链接大小批量补全 (fetch-sizes)"))
-        st.info(T("扫描数据库中缺失 `size` 的磁力链接，并发调用 Darklyn API 批量查询真实文件大小并回填数据库。"))
+        st.info(T("扫描数据库中缺失 size 的磁力链接，并发调用 Darklyn API 批量查询真实文件大小并回填数据库。"))
         
-        c1, c2 = st.columns(2)
-        with c1:
-            limit_val = st.number_input("单次抓取条数限制 (0 表示无限制)", min_value=0, max_value=100000, value=200, step=100)
-        with c2:
-            workers_val = st.slider("并发请求线程数", min_value=1, max_value=16, value=6)
-            
-        b1, b2 = st.columns([1, 1])
-        with b1:
-            btn_fs_prev = st.button(T("扫描缺失大小的磁力记录"), use_container_width=True)
-        with b2:
-            btn_fs_run = st.button(T("启动并发查询并回填数据库"), type="primary", use_container_width=True)
+        with st.form("fetch_sizes_form", clear_on_submit=False):
+            c1, c2 = st.columns(2)
+            with c1:
+                limit_val = st.number_input("单次抓取条数限制 (0 表示无限制)", min_value=0, max_value=100000, value=200, step=100)
+            with c2:
+                workers_val = st.slider("并发请求线程数", min_value=1, max_value=16, value=6)
+                
+            b1, b2 = st.columns([1, 1])
+            with b1:
+                btn_fs_prev = st.form_submit_button(T("扫描缺失大小的磁力记录"), use_container_width=True)
+            with b2:
+                btn_fs_run = st.form_submit_button(T("启动并发查询并回填数据库"), type="primary", use_container_width=True)
             
         if btn_fs_prev or btn_fs_run:
             from fixes.data_cleaner import run_fetch_sizes
@@ -662,15 +667,16 @@ def render_tab_data_cleaner():
     # ---------------- 5. 空资源链接 Playwright 重抓 ----------------
     elif sub_tool.startswith("5."):
         st.markdown(T("#### Playwright 重新访问页面抓取并回填空资源链接 (fetch-empty-links)"))
-        st.info(T("针对数据库中 `resource_link` 为空的记录，拉起 Playwright 无头浏览器重新请求页面，解析正文回填资源链接。"))
+        st.info(T("针对数据库中 resource_link 为空的记录，拉起 Playwright 无头浏览器重新请求页面，解析正文回填资源链接。"))
         
-        site_filter = st.text_input("站点域名过滤 (如 seju.life，留空表示全部站点)", value="seju.life")
-        
-        b1, b2 = st.columns([1, 1])
-        with b1:
-            btn_fel_prev = st.button(T("扫描空链接记录清单"), use_container_width=True)
-        with b2:
-            btn_fel_run = st.button(T("启动 Playwright 重新访问解析入库"), type="primary", use_container_width=True)
+        with st.form("fetch_empty_links_form", clear_on_submit=False):
+            site_filter = st.text_input("站点域名过滤 (如 seju.life，留空表示全部站点)", value="seju.life")
+            
+            b1, b2 = st.columns([1, 1])
+            with b1:
+                btn_fel_prev = st.form_submit_button(T("扫描空链接记录清单"), use_container_width=True)
+            with b2:
+                btn_fel_run = st.form_submit_button(T("启动 Playwright 重新访问解析入库"), type="primary", use_container_width=True)
             
         if btn_fel_prev or btn_fel_run:
             from fixes.data_cleaner import run_fetch_empty_links
@@ -717,38 +723,45 @@ def render_tab_record_filter():
     # ---------------- 1. 数据库多维记录查重 ----------------
     if sub_tool.startswith("1."):
         st.markdown(T("#### 数据库记录多维查重、独立 DB 导出与批量去重 (强制级联删除 PDF)"))
-        st.info(T("检测数据库重复记录，支持导出为独立 SQLite `.db` 库。**去重判定条件**：① 优先在含物理 PDF 记录中筛选（防误删丢失文件）；② 再按 ID 最大 (最新) 或 ID 最小 (最旧) 保留唯一一条；③ 对多余副本**强制同步级联删除关联的物理 PDF 文件**。"))
+        st.info(T("检测数据库重复记录，支持导出为独立 SQLite .db 库。**去重判定条件**：① 默认优先在含物理 PDF 记录中筛选（防误删丢失文件）并按 ID 最大/最小保留唯一一条且强制级联删除多余副本关联的 PDF；② 若勾选【仅删除无 PDF 的重复链接】，则严格保护已有 PDF 记录，仅清理未关联 PDF 的多余链接副本。"))
         
-        c1, c2, c3 = st.columns([1.1, 1.4, 0.9])
-        with c1:
-            field_choice = st.selectbox(
-                T("查重维度 (Field)"),
-                ["url (URL 地址重复)", "resource_link (磁力链接重复)", "title_link (标题 + 磁力链接联合重复)", "all (全维度综合查重)"],
-                key="dup_field_sel",
-                format_func=T
-            )
-            field_val = field_choice.split(" ")[0]
-        with c2:
-            keep_choice = st.selectbox(
-                T("去重保留策略"),
-                [
-                    "newest (优先含PDF记录 > 最新入库: ID 最大)",
-                    "oldest (优先含PDF记录 > 最旧入库: ID 最小)"
-                ],
-                key="dup_keep_choice",
-                help="【去重保留判定完整条件链】\n1. PDF 优先判定：若组内存在已生成 PDF 的记录 (pdf_path 非空)，优先在含 PDF 的候选集中筛选（防止误删导致 PDF 孤立丢失）；\n2. ID 时序排序：在候选集中按 ID 最大 (最新入库) 或 ID 最小 (最早入库) 确定唯一保留记录；\n3. 物理级联清理：对其余冗余副本强制从数据库删除，并同步物理级联删除关联的本地 PDF 文件。",
-                format_func=T
-            )
-            keep_val = keep_choice.split(" ")[0]
-        with c3:
-            export_db_opt = st.checkbox("默认导出为独立 SQLite .db", value=True)
-            export_csv_opt = st.checkbox("同时导出为 CSV 审计表", value=False)
-            
-        b1, b2, b3 = st.columns([1, 1, 2])
-        with b1:
-            btn_dup_prev = st.button(T("扫描并预览重复记录 (Dry Run)"), type="primary", use_container_width=True)
-        with b2:
-            btn_dup_run = st.button(T("批量去重并级联删除 PDF"), use_container_width=True)
+        with st.form("record_duplicates_form", clear_on_submit=False):
+            c1, c2, c3 = st.columns([1.1, 1.3, 1.1])
+            with c1:
+                field_choice = st.selectbox(
+                    T("查重维度 (Field)"),
+                    ["url (URL 地址重复)", "resource_link (磁力链接重复)", "title_link (标题 + 磁力链接联合重复)", "all (全维度综合查重)"],
+                    key="dup_field_sel",
+                    format_func=T
+                )
+                field_val = field_choice.split(" ")[0]
+            with c2:
+                keep_choice = st.selectbox(
+                    T("去重保留策略"),
+                    [
+                        "newest (优先含PDF记录 > 最新入库: ID 最大)",
+                        "oldest (优先含PDF记录 > 最旧入库: ID 最小)"
+                    ],
+                    key="dup_keep_choice",
+                    help="【去重保留判定完整条件链】\n1. PDF 优先判定：若组内存在已生成 PDF 的记录 (pdf_path 非空)，优先在含 PDF 的候选集中筛选（防止误删导致 PDF 孤立丢失）；\n2. ID 时序排序：在候选集中按 ID 最大 (最新入库) 或 ID 最小 (最早入库) 确定唯一保留记录；\n3. 物理级联清理：对其余冗余副本从数据库删除（若未勾选“仅删除无PDF”则同步物理级联删除关联的本地 PDF 文件）。",
+                    format_func=T
+                )
+                keep_val = keep_choice.split(" ")[0]
+            with c3:
+                only_no_pdf_opt = st.checkbox(
+                    T("仅删除无 PDF 的重复链接"),
+                    value=False,
+                    key="dup_only_no_pdf",
+                    help=T("【安全保护模式】勾选后仅清理未生成/未关联 PDF 的冗余链接副本；凡已关联 PDF 文件的记录均受严格保护绝不删除，也不会删除任何物理 PDF 文件。")
+                )
+                export_db_opt = st.checkbox(T("默认导出为独立 SQLite .db"), value=True, key="dup_export_db")
+                export_csv_opt = st.checkbox(T("同时导出为 CSV 审计表"), value=False, key="dup_export_csv")
+                
+            b1, b2, b3 = st.columns([1, 1, 2])
+            with b1:
+                btn_dup_prev = st.form_submit_button(T("扫描并预览重复记录 (Dry Run)"), type="primary", use_container_width=True)
+            with b2:
+                btn_dup_run = st.form_submit_button(T("正式执行批量去重/清理 (Run)"), use_container_width=True)
             
         if btn_dup_prev or btn_dup_run:
             from fixes.record_filter import run_duplicates_cli
@@ -756,18 +769,21 @@ def render_tab_record_filter():
             args = argparse.Namespace(
                 field=field_val,
                 keep=keep_val,
+                only_no_pdf=only_no_pdf_opt,
                 run=btn_dup_run,
                 export_db=export_db_opt,
                 export_csv=export_csv_opt,
                 db=db_path
             )
-            with st.status(T("正在扫描重复记录..." if btn_dup_prev else "正在执行批量去重与物理 PDF 级联删除..."), expanded=True) as status:
+            status_text = "正在扫描重复记录..." if btn_dup_prev else ("正在清理无 PDF 重复链接..." if only_no_pdf_opt else "正在执行批量去重与物理 PDF 级联删除...")
+            complete_text = "查重完成" if btn_dup_prev else ("无 PDF 重复链接清理完成！" if only_no_pdf_opt else "去重与级联删除完成！")
+            with st.status(T(status_text), expanded=True) as status:
                 with LogCapture() as log:
                     try:
                         run_duplicates_cli(args)
                     except SystemExit:
                         pass
-                status.update(label=T("去重与级联删除完成！" if btn_dup_run else "查重完成"), state="complete", expanded=True)
+                status.update(label=T(complete_text), state="complete", expanded=True)
                 st.code(log.get_text(), language="text")
 
     # ---------------- 2. 严格日本番号识别 ----------------
@@ -828,7 +844,7 @@ def render_tab_system_and_cache():
     # ---------------- 1. PDF 缩略图全量并发预热 ----------------
     if sub_tool.startswith("1."):
         st.markdown(T("#### PDF 缩略图全量并发预热 (PDF Thumbnail Cache Warmup)"))
-        st.info(T("批量/离线并发将数据库中所有 PDF 文件的第一页光栅化渲染为高质 JPEG 写入 `cache/pdf_thumbs`，浏览时 100% 命中缓存，实现 0 毫秒秒开。"))
+        st.info(T("批量/离线并发将数据库中所有 PDF 文件的第一页光栅化渲染为高质 JPEG 写入 cache/pdf_thumbs，浏览时 100% 命中缓存，实现 0 毫秒秒开。"))
         
         # 统计当前缓存状态
         os.makedirs(PDF_THUMB_CACHE_DIR, exist_ok=True)
@@ -844,15 +860,18 @@ def render_tab_system_and_cache():
         m2.metric(T("已生成预热缓存数"), f"{len(cached_flags):,}")
         m3.metric(T("预热覆盖率"), f"{(len(cached_flags) / total_pdf_recs * 100):.1f}%" if total_pdf_recs > 0 else "0%")
         
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            workers = st.slider("并发渲染线程数", min_value=1, max_value=32, value=min(16, (os.cpu_count() or 4) * 2))
-        with c2:
-            dpi_val = st.selectbox("渲染分辨率 (DPI)", [90, 105, 120, 150], index=1)
-        with c3:
-            quality_val = st.slider("JPEG 压缩质量", min_value=50, max_value=95, value=75)
+        with st.form("warmup_cache_form", clear_on_submit=False):
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                workers = st.slider("并发渲染线程数", min_value=1, max_value=32, value=min(16, (os.cpu_count() or 4) * 2))
+            with c2:
+                dpi_val = st.selectbox("渲染分辨率 (DPI)", [90, 105, 120, 150], index=1)
+            with c3:
+                quality_val = st.slider("JPEG 压缩质量", min_value=50, max_value=95, value=75)
+                
+            btn_warmup_run = st.form_submit_button(T("启动全量并发缓存预热"), type="primary", use_container_width=True)
             
-        if st.button(T("启动全量并发缓存预热"), type="primary", use_container_width=True):
+        if btn_warmup_run:
             from fixes.warmup_pdf_cache import resolve_pdf_path
             
             with sqlite3.connect(db_path) as conn:
@@ -920,7 +939,7 @@ def render_tab_system_and_cache():
     # ---------------- 2. 数据库一键备份与管理 ----------------
     elif sub_tool.startswith("2."):
         st.markdown(T("#### 数据库一键备份与历史备份管理 (backup_db)"))
-        st.info(T("在执行任何维护操作前创建带精确时间戳的 `.bak` 备份文件，确保数据绝对安全。"))
+        st.info(T("在执行任何维护操作前创建带精确时间戳的 .bak 备份文件，确保数据绝对安全。"))
         
         db_size = os.path.getsize(db_path) if os.path.exists(db_path) else 0
         st.write(T(f"**当前数据库文件**：`{db_path}` ({format_size(db_size)})"))
@@ -949,7 +968,7 @@ def render_tab_system_and_cache():
     # ---------------- 3. 数据库碎片整理与压缩 ----------------
     elif sub_tool.startswith("3."):
         st.markdown(T("#### 数据库碎片整理与空间压缩 (vacuum_db)"))
-        st.info(T("批量删除记录或更新数据后，SQLite 不会自动缩小文件体积。执行 `VACUUM` 可彻底清理碎片、重建索引并释放磁盘物理空间。"))
+        st.info(T("批量删除记录或更新数据后，SQLite 不会自动缩小文件体积。执行 VACUUM 可彻底清理碎片、重建索引并释放磁盘物理空间。"))
         
         size_before = os.path.getsize(db_path) if os.path.exists(db_path) else 0
         st.metric(T("当前数据库物理体积"), format_size(size_before))
@@ -971,29 +990,6 @@ def render_tab_system_and_cache():
 
 def render_maintenance_hub():
     """在 Streamlit 中渲染完整的 5 大维护面板"""
-    st.markdown(f"""
-    <div class="fixes-hub-header-banner">
-        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-            <div>
-                <h2 class="fixes-hub-banner-title">
-                    {T('福利资源库与 PDF 运维控制台 (Fixes Hub)')}
-                </h2>
-                <p class="fixes-hub-banner-desc">
-                    已全量集成 <code>fixes/</code> 目录下的 5 大核心维护模块、20+ 项自动化修复、去重、清洗与系统运维功能。
-                </p>
-            </div>
-            <div style="display: flex; gap: 8px;">
-                <span class="fixes-hub-badge-blue">
-                    {T('安全沙盒 / 支持 Dry Run')}
-                </span>
-                <span class="fixes-hub-badge-green">
-                    {T('自动 BAK 备份')}
-                </span>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         T("1. PDF 维护与重建"),
         T("2. PDF 多维查重去重"),
