@@ -265,6 +265,17 @@ def plan_duplicate_deletions(
             ids_sorted = sorted(int(r.get("id", 0) or 0) for r in candidates)
             keep_id = ids_sorted[-1] if keep_newest else ids_sorted[0]
 
+            # 提取保留记录所引用的 PDF 文件路径（严格保护不被加入待删除物理文件列表）
+            keep_rec = next((r for r in group_sorted if int(r.get("id", 0) or 0) == keep_id), None)
+            keep_pdf_key = ""
+            if keep_rec:
+                p_keep = (keep_rec.get("pdf_path") or "").strip()
+                if p_keep:
+                    abs_keep = resolve_pdf_path(p_keep, PROJECT_ROOT)
+                    if abs_keep:
+                        keep_pdf_key = abs_keep.lower().replace("\\", "/")
+                        seen_pdfs.add(keep_pdf_key)
+
             for rec in group_sorted:
                 rid = int(rec.get("id", 0) or 0)
                 if rid != keep_id:
@@ -272,10 +283,12 @@ def plan_duplicate_deletions(
                     p = (rec.get("pdf_path") or "").strip()
                     if p:
                         abs_p = resolve_pdf_path(p, PROJECT_ROOT)
-                        key_p = abs_p.lower().replace("\\", "/")
-                        if key_p not in seen_pdfs and os.path.exists(abs_p):
-                            seen_pdfs.add(key_p)
-                            pdf_paths.append(abs_p)
+                        if abs_p:
+                            key_p = abs_p.lower().replace("\\", "/")
+                            # 只有当该 PDF 不是保留记录正在引用的文件，且未被加入过删除列表时，才加入级联物理删除
+                            if key_p != keep_pdf_key and key_p not in seen_pdfs and os.path.exists(abs_p):
+                                seen_pdfs.add(key_p)
+                                pdf_paths.append(abs_p)
 
     return ids_to_delete, pdf_paths
 

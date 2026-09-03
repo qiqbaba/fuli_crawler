@@ -318,7 +318,7 @@ def delete_records_cascade_pdf(
     table_name: str = "resources",
     project_root: Optional[str] = None,
 ) -> Tuple[int, int, int, int]:
-    """批量删除数据库记录，并【强制同步级联删除】对应的物理 PDF 文件
+    """批量删除数据库记录，并在无其他活跃记录引用时安全级联删除对应的物理 PDF 文件（共享 PDF 安全保护）
 
     Args:
         conn: 数据库连接
@@ -336,10 +336,14 @@ def delete_records_cascade_pdf(
     table_name = _safe_table_name(table_name)
     cursor = conn.cursor()
 
-    # 1. 查询这些记录对应的 pdf_path
     id_list = [str(i) for i in record_ids]
-    pdf_paths_to_delete: List[str] = []
-    seen_pdf_keys = set()
+    id_set = set(id_list)
+    id_int_set = set(int(i) for i in record_ids if str(i).isdigit())
+
+    # 1. 查询待删除记录对应的 pdf_path 及其物理文件
+    norm_to_abs: Dict[str, str] = {}
+    norm_to_raws: Dict[str, set] = {}
+    all_raw_paths = set()
 
     batch_size = 500
     for i in range(0, len(id_list), batch_size):
@@ -352,14 +356,32 @@ def delete_records_cascade_pdf(
         for (p,) in cursor.fetchall():
             if not p:
                 continue
+            all_raw_paths.add(p)
             abs_p = resolve_pdf_path(p, root)
-            norm_key = abs_p.lower().replace("\\", "/")
-            if norm_key not in seen_pdf_keys:
-                seen_pdf_keys.add(norm_key)
-                if os.path.exists(abs_p):
-                    pdf_paths_to_delete.append(abs_p)
+            if abs_p and os.path.exists(abs_p):
+                norm_key = abs_p.lower().replace("\\", "/")
+                norm_to_abs[norm_key] = abs_p
+                norm_to_raws.setdefault(norm_key, set()).add(p)
 
-    # 2. 物理删除 PDF 文件
+    # 2. 检查是否有不在待删除列表中的记录依然引用这些 PDF（共享引用保护）
+    safe_to_delete_pdf_keys = set(norm_to_abs.keys())
+    raw_path_list = list(all_raw_paths)
+    for i in range(0, len(raw_path_list), batch_size):
+        raw_batch = raw_path_list[i : i + batch_size]
+        placeholders = ",".join("?" for _ in raw_batch)
+        cursor.execute(
+            f"SELECT id, pdf_path FROM {table_name} WHERE pdf_path IN ({placeholders})",
+            raw_batch,
+        )
+        for rid, p_val in cursor.fetchall():
+            if str(rid) not in id_set and int(rid) not in id_int_set:
+                for norm_key, raws in norm_to_raws.items():
+                    if p_val in raws:
+                        safe_to_delete_pdf_keys.discard(norm_key)
+
+    pdf_paths_to_delete = [norm_to_abs[k] for k in safe_to_delete_pdf_keys if k in norm_to_abs]
+
+    # 3. 物理删除无其他引用的 PDF 文件
     deleted_pdfs = 0
     failed_pdfs = 0
     freed_bytes = 0
@@ -374,7 +396,7 @@ def delete_records_cascade_pdf(
             failed_pdfs += 1
             print(f"  [-] 级联删除物理 PDF 失败 {pdf_path}: {e}")
 
-    # 3. 批量删除数据库记录
+    # 4. 批量删除数据库记录
     total_deleted_records = 0
     for i in range(0, len(id_list), batch_size):
         batch = id_list[i : i + batch_size]

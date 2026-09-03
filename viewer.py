@@ -441,42 +441,176 @@ st.markdown("""
         z-index: 99999999 !important;
     }
 
-    /* 顶部右上角深浅色模式切换圆形图标按钮：精确固定在桌面右上角 Deploy 按钮前 */
-    #header-theme-icon-btn,
-    .header-theme-icon-btn {
+    /* 顶部右上角视图与主题设置 Popover 按钮：精确固定在 Header 最右侧，绝不误伤卡片删除按钮 */
+    .header-settings-fixed-popover,
+    div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) {
         position: fixed !important;
-        top: 7px !important;
-        right: 92px !important;
-        z-index: 9999999 !important;
-        background: rgba(255, 255, 255, 0.12) !important;
-        border: 1px solid rgba(255, 255, 255, 0.25) !important;
-        color: #e2e8f0 !important;
+        top: 6px !important;
+        right: 14px !important;
+        z-index: 100002 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 30px !important;
+        height: 30px !important;
+        min-width: 30px !important;
+        max-width: 30px !important;
+    }
+    .header-settings-fixed-popover > button,
+    div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button {
+        height: 30px !important;
+        width: 30px !important;
+        min-height: 30px !important;
+        max-height: 30px !important;
+        min-width: 30px !important;
+        max-width: 30px !important;
+        padding: 0 !important;
         border-radius: 50% !important;
-        width: 29px !important;
-        height: 29px !important;
-        min-width: 29px !important;
-        min-height: 29px !important;
-        max-width: 29px !important;
-        max-height: 29px !important;
-        font-size: 14px !important;
-        cursor: pointer !important;
-        transition: all 0.2s ease !important;
+        font-size: 15px !important;
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        color: #e2e8f0 !important;
         display: flex !important;
         align-items: center !important;
         justify-content: center !important;
-        padding: 0 !important;
-        line-height: 1 !important;
-        box-sizing: border-box !important;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25) !important;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        cursor: pointer !important;
         outline: none !important;
-        user-select: none !important;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+        overflow: hidden !important;
     }
-    #header-theme-icon-btn:hover,
-    .header-theme-icon-btn:hover {
-        background: rgba(56, 189, 248, 0.3) !important;
+    .header-settings-fixed-popover > button:hover,
+    div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button:hover {
+        background: rgba(56, 189, 248, 0.25) !important;
         border-color: #38bdf8 !important;
-        transform: scale(1.1) !important;
+        color: #38bdf8 !important;
         box-shadow: 0 0 12px rgba(56, 189, 248, 0.5) !important;
+        transform: rotate(45deg) scale(1.08) !important;
+    }
+    /* 隐藏所有 Popover 按钮（右上角设置按钮与卡片删除按钮）内的默认下拉倒三角箭头 */
+    button[data-testid="stPopoverButton"] div[aria-hidden="true"],
+    button[data-testid="stPopoverButton"] [data-testid="stIconMaterial"],
+    button[data-testid="stPopoverButton"] > div > div:last-child:not(:first-child),
+    div[data-testid="stPopover"] button div[aria-hidden="true"],
+    div[data-testid="stPopover"] button [data-testid="stIconMaterial"],
+    div[data-testid="stPopover"] button > div > div:last-child:not(:first-child),
+    .header-settings-fixed-popover button div[aria-hidden="true"],
+    .header-settings-fixed-popover button [data-testid="stIconMaterial"],
+    .header-settings-fixed-popover button > div > div:last-child:not(:first-child) {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+        max-width: 0 !important;
+        max-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        font-size: 0 !important;
+        line-height: 0 !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        overflow: hidden !important;
+    }
+
+    /* Popover 按钮内容强制居中对齐 */
+    button[data-testid="stPopoverButton"] > div,
+    div[data-testid="stPopover"] button > div {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+        text-align: center !important;
+    }
+    button[data-testid="stPopoverButton"] > div > div:first-child,
+    div[data-testid="stPopover"] button > div > div:first-child,
+    button[data-testid="stPopoverButton"] [data-testid="stMarkdownContainer"],
+    div[data-testid="stPopover"] button [data-testid="stMarkdownContainer"] {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+        text-align: center !important;
+        width: auto !important;
+    }
+
+    /* 设置面板 Popover 浮层容器与内部组件 */
+    div[data-testid="stPopoverBody"]:has(.settings-popover-panel) {
+        min-width: 280px !important;
+        max-width: 320px !important;
+        padding: 14px 16px !important;
+        border-radius: 12px !important;
+        background: rgba(15, 23, 42, 0.96) !important;
+        backdrop-filter: blur(16px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 1px rgba(255, 255, 255, 0.2) !important;
+    }
+    .settings-panel-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13.5px;
+        font-weight: 700;
+        color: #38bdf8;
+        margin-bottom: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .settings-section-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #94a3b8;
+        margin-bottom: 6px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .settings-theme-btn-group {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+    .settings-theme-btn {
+        flex: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 7px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(30, 41, 59, 0.8);
+        color: #cbd5e1;
+    }
+    .settings-theme-btn:hover {
+        border-color: #38bdf8;
+        color: #38bdf8;
+        background: rgba(56, 189, 248, 0.15);
+    }
+    .settings-theme-btn.is-active {
+        background: linear-gradient(135deg, #0284c7, #2563eb) !important;
+        border-color: #38bdf8 !important;
+        color: #ffffff !important;
+        box-shadow: 0 0 10px rgba(56, 189, 248, 0.4) !important;
+    }
+    .settings-divider {
+        height: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        margin: 10px 0;
+    }
+
+    #header-theme-icon-btn,
+    .header-theme-icon-btn {
+        display: none !important;
     }
     
     /* 顶部元数据与 Tab 同行样式：默认向右偏移以容纳左侧主 Tab */
@@ -1030,6 +1164,23 @@ st.markdown("""
         align-items: center !important;
         margin: 0 !important;
         padding: 0 !important;
+        position: static !important;
+        top: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        left: auto !important;
+        z-index: auto !important;
+        transform: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] > button,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button {
+        position: static !important;
+        top: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        left: auto !important;
+        z-index: auto !important;
+        transform: none !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] > button:hover,
     div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button:hover {
@@ -1037,6 +1188,36 @@ st.markdown("""
         border-color: #f87171 !important;
         color: #f87171 !important;
         box-shadow: 0 0 8px rgba(248, 113, 113, 0.3) !important;
+        transform: none !important;
+    }
+    /* 隐藏卡片操作栏内删除按钮上的默认下拉倒三角箭头（SVG 及 Material Icon 容器） */
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button > div > div:last-child:not(:only-child),
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] [data-testid="stIconMaterial"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] [class*="el0gnfx2"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] [class*="ewh6kot2"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] svg {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+        max-width: 0 !important;
+        max-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        font-size: 0 !important;
+        line-height: 0 !important;
+        visibility: hidden !important;
+        overflow: hidden !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button > div,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button > div > div:first-child,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button [data-testid="stMarkdownContainer"] {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        text-align: center !important;
     }
     div[data-testid="stHorizontalBlock"]:has(.card-meta-row) button p,
     div[data-testid="stHorizontalBlock"]:has(.card-meta-row) a p,
@@ -1047,10 +1228,15 @@ st.markdown("""
         font-size: 11px !important;
         line-height: 20px !important;
         margin: 0 !important;
+        padding: 0 !important;
         font-weight: 500 !important;
         white-space: nowrap !important;
         word-break: keep-all !important;
         color: inherit !important;
+        text-align: center !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
 
     /* Popover 弹窗内部样式 */
@@ -1148,6 +1334,93 @@ st.markdown("""
     .pdf-empty-placeholder .empty-desc {
         font-size: 12px;
         color: #607d8b;
+    }
+
+    /* 卡片底部信息展示（两行：第一行 PDF 文件名，第二行资源链接，超出一行动态省略，鼠标悬停查看完整内容） */
+    .card-bottom-info {
+        margin-top: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    .card-bottom-line {
+        display: flex;
+        align-items: center;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        white-space: nowrap !important;
+        text-overflow: ellipsis !important;
+        font-size: 11px;
+        line-height: 17px;
+        min-height: 17px;
+        max-height: 17px;
+        color: #94a3b8;
+    }
+    .card-bottom-label {
+        flex: 0 0 auto;
+        font-weight: 600;
+        color: #64748b;
+        margin-right: 4px;
+        font-size: 11px;
+        user-select: none;
+    }
+    .card-bottom-value {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden !important;
+        white-space: nowrap !important;
+        text-overflow: ellipsis !important;
+        color: #cbd5e1;
+        font-size: 11px;
+    }
+    .card-bottom-link {
+        color: #38bdf8 !important;
+        text-decoration: none !important;
+    }
+    .card-bottom-link:hover {
+        text-decoration: underline !important;
+        color: #7dd3fc !important;
+    }
+    .card-bottom-empty {
+        color: #64748b;
+    }
+    /* 重置底部信息链接：防止被卡片操作按钮的全局胶囊样式（深色背景、22px 固定高度）污染，选择器优先级必须高于按钮覆盖规则 */
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) .card-bottom-info a.card-bottom-link {
+        min-height: 0 !important;
+        height: auto !important;
+        max-height: none !important;
+        width: auto !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        display: inline !important;
+        font-size: 11px !important;
+        font-weight: 400 !important;
+        line-height: 17px !important;
+        overflow: hidden !important;
+        white-space: nowrap !important;
+        text-overflow: ellipsis !important;
+        color: #38bdf8 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) .card-bottom-info a.card-bottom-link:hover {
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        text-decoration: underline !important;
+        color: #7dd3fc !important;
     }
 
     /* 底部分页控制栏：所有元素（文字、下拉框、上一页、数字输入框、下一页）尺寸高度严格统一为 38px，垂直基线完美居中对齐 */
@@ -1314,6 +1587,72 @@ def open_in_system(file_path: str):
         st.error(f"打开系统文件管理器失败: {e}")
 
 
+def count_other_pdf_references(
+    db_path: str,
+    record_id: Union[int, str],
+    raw_pdf_path: str = "",
+    abs_path: str = ""
+) -> int:
+    """
+    检查数据库中除了当前 record_id 外，是否还有其他活跃记录引用了相同的 PDF 文件。
+    返回其他引用该 PDF 的记录数量。
+    """
+    if not os.path.exists(db_path) or (not raw_pdf_path and not abs_path):
+        return 0
+
+    possible_paths = set()
+    if raw_pdf_path:
+        possible_paths.add(raw_pdf_path)
+        possible_paths.add(raw_pdf_path.replace("/", "\\"))
+        possible_paths.add(raw_pdf_path.replace("\\", "/"))
+        clean_p = raw_pdf_path.replace("\\", "/").lstrip("/")
+        possible_paths.add(clean_p)
+        if clean_p.startswith("pdf/"):
+            possible_paths.add(clean_p[4:])
+            possible_paths.add("pdf/" + clean_p[4:])
+            possible_paths.add("pdf\\" + clean_p[4:].replace("/", "\\"))
+    if abs_path:
+        possible_paths.add(abs_path)
+        possible_paths.add(abs_path.replace("/", "\\"))
+        possible_paths.add(abs_path.replace("\\", "/"))
+        try:
+            rel = os.path.relpath(abs_path, PROJECT_ROOT)
+            possible_paths.add(rel)
+            possible_paths.add(rel.replace("/", "\\"))
+            possible_paths.add(rel.replace("\\", "/"))
+            clean_rel = rel.replace("\\", "/").lstrip("/")
+            if clean_rel.startswith("pdf/"):
+                possible_paths.add(clean_rel[4:])
+                possible_paths.add("pdf/" + clean_rel[4:])
+                possible_paths.add("pdf\\" + clean_rel[4:].replace("/", "\\"))
+        except Exception:
+            pass
+
+    valid_paths = [p for p in possible_paths if p]
+    if not valid_paths:
+        return 0
+
+    str_id = str(record_id)
+    try:
+        with sqlite3.connect(db_path, timeout=10.0) as conn:
+            cursor = conn.cursor()
+            placeholders = ",".join("?" for _ in valid_paths)
+            if str_id.startswith("ORPHAN-"):
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM resources WHERE pdf_path IN ({placeholders})",
+                    valid_paths
+                )
+            else:
+                cursor.execute(
+                    f"SELECT COUNT(*) FROM resources WHERE id != ? AND pdf_path IN ({placeholders})",
+                    [record_id] + valid_paths
+                )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
 def delete_single_record(
     db_path: str,
     record_id: Union[int, str],
@@ -1321,7 +1660,7 @@ def delete_single_record(
     abs_path: str = ""
 ) -> Tuple[bool, bool, str]:
     """
-    删除单条记录及其对应的本地 PDF 文件
+    删除单条记录，并在无其他记录引用时安全级联删除对应的本地 PDF 文件（共享 PDF 安全保护）
     
     Returns:
         (db_deleted, pdf_deleted, message)
@@ -1330,28 +1669,42 @@ def delete_single_record(
     pdf_deleted = False
     messages = []
     
-    # 1. 尝试物理删除 PDF 文件
+    # 1. 尝试解析目标 PDF 文件
     target_pdf = ""
     if abs_path and os.path.exists(abs_path):
         target_pdf = abs_path
     elif raw_pdf_path:
         target_pdf = resolve_pdf_path(raw_pdf_path)
         
+    # 2. 检查多重引用保护（是否有其他记录仍在使用此 PDF 文件）
+    other_refs = 0
+    if target_pdf or raw_pdf_path or abs_path:
+        other_refs = count_other_pdf_references(
+            db_path=db_path,
+            record_id=record_id,
+            raw_pdf_path=raw_pdf_path,
+            abs_path=abs_path or target_pdf
+        )
+
     if target_pdf and os.path.exists(target_pdf) and os.path.isfile(target_pdf):
-        try:
-            os.remove(target_pdf)
-            pdf_deleted = True
-            messages.append("PDF 文件已删除")
-            # 清空 resolve_pdf_path 的路径缓存，避免后续查询返回已删除的失效路径
-            resolve_pdf_path.cache_clear()
-        except Exception as e:
-            messages.append(f"PDF 删除失败: {e}")
+        if other_refs > 0:
+            # 存在其他数据库记录共享引用该 PDF，严禁物理删除本地文件！
+            messages.append(f"本地 PDF 仍被其他 {other_refs} 条记录引用，已安全保留物理文件")
+        else:
+            try:
+                os.remove(target_pdf)
+                pdf_deleted = True
+                messages.append("PDF 文件已删除（无其他引用）")
+                # 清空 resolve_pdf_path 的路径缓存，避免后续查询返回已删除的失效路径
+                resolve_pdf_path.cache_clear()
+            except Exception as e:
+                messages.append(f"PDF 删除失败: {e}")
     elif raw_pdf_path or abs_path:
         messages.append("本地 PDF 物理文件不存在")
     else:
         messages.append("无关联 PDF")
         
-    # 2. 如果是数据库记录（非孤儿虚拟记录），从 SQLite 数据库中删除
+    # 3. 如果是数据库记录（非孤儿虚拟记录），从 SQLite 数据库中删除
     str_id = str(record_id)
     if not str_id.startswith("ORPHAN-"):
         try:
@@ -1368,6 +1721,10 @@ def delete_single_record(
             messages.append(f"数据库删除失败: {e}")
     else:
         messages.append("磁盘孤儿已清理")
+        try:
+            get_orphan_pdf_records.clear()
+        except Exception:
+            pass
         
     return db_deleted, pdf_deleted, "，".join(messages)
 
@@ -2297,20 +2654,93 @@ function applyAppTheme(themeId) {
                 .header-db-meta-bar .meta-val-warn { color: #d97706 !important; }
                 .header-db-meta-bar .meta-divider { background: #cbd5e1 !important; }
 
-                /* 顶部右上角切换按钮 (浅色模式状态)
-                   同样需要 html[data-theme="light"] 前缀提升特异性，
-                   否则会被基础样式表中同名的深色规则(位于 body 中、文档顺序更靠后)覆盖 */
-                html[data-theme="light"] #header-theme-icon-btn, html[data-theme="light"] .header-theme-icon-btn {
-                    background: #f1f5f9 !important;
+                /* 顶部右上角视图与主题设置 Popover 按钮 (浅色模式状态) */
+                html[data-theme="light"] .header-settings-fixed-popover > button,
+                html[data-theme="light"] div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button,
+                body.theme-light .header-settings-fixed-popover > button,
+                body.theme-light div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button {
+                    background: #ffffff !important;
                     border: 1px solid #cbd5e1 !important;
-                    color: #0f172a !important;
-                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+                    color: #1e293b !important;
+                    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08) !important;
                 }
-                html[data-theme="light"] #header-theme-icon-btn:hover, html[data-theme="light"] .header-theme-icon-btn:hover {
-                    background: #e2e8f0 !important;
+                html[data-theme="light"] .header-settings-fixed-popover > button:hover,
+                html[data-theme="light"] div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button:hover,
+                body.theme-light .header-settings-fixed-popover > button:hover,
+                body.theme-light div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button:hover {
+                    background: #f0f9ff !important;
                     border-color: #0284c7 !important;
-                    box-shadow: 0 0 10px rgba(2, 132, 199, 0.3) !important;
-                    transform: scale(1.1) !important;
+                    color: #0284c7 !important;
+                    box-shadow: 0 2px 10px rgba(2, 132, 199, 0.25) !important;
+                    transform: rotate(45deg) scale(1.08) !important;
+                }
+                html[data-theme="light"] .header-settings-fixed-popover > button p,
+                html[data-theme="light"] div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button p,
+                body.theme-light .header-settings-fixed-popover > button p,
+                body.theme-light div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button p {
+                    color: #334155 !important;
+                }
+
+                /* 浅色模式彻底隐藏所有 Popover 按钮倒三角并强制居中 */
+                button[data-testid="stPopoverButton"] div[aria-hidden="true"],
+                button[data-testid="stPopoverButton"] [data-testid="stIconMaterial"],
+                button[data-testid="stPopoverButton"] > div > div:last-child:not(:first-child),
+                div[data-testid="stPopover"] button div[aria-hidden="true"],
+                div[data-testid="stPopover"] button [data-testid="stIconMaterial"],
+                div[data-testid="stPopover"] button > div > div:last-child:not(:first-child) {
+                    display: none !important;
+                    width: 0 !important;
+                    height: 0 !important;
+                    visibility: hidden !important;
+                    opacity: 0 !important;
+                }
+                button[data-testid="stPopoverButton"] > div,
+                div[data-testid="stPopover"] button > div {
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    width: 100% !important;
+                    height: 100% !important;
+                    margin: 0 auto !important;
+                    text-align: center !important;
+                }
+                html[data-theme="light"] div[data-testid="stPopoverBody"]:has(.settings-popover-panel),
+                body.theme-light div[data-testid="stPopoverBody"]:has(.settings-popover-panel) {
+                    background: #ffffff !important;
+                    border: 1px solid #cbd5e1 !important;
+                    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.04) !important;
+                }
+                html[data-theme="light"] .settings-panel-header,
+                body.theme-light .settings-panel-header {
+                    color: #0284c7 !important;
+                    border-bottom: 1px solid #e2e8f0 !important;
+                }
+                html[data-theme="light"] .settings-section-title,
+                body.theme-light .settings-section-title {
+                    color: #475569 !important;
+                }
+                html[data-theme="light"] .settings-theme-btn,
+                body.theme-light .settings-theme-btn {
+                    background: #f8fafc !important;
+                    border: 1px solid #cbd5e1 !important;
+                    color: #334155 !important;
+                }
+                html[data-theme="light"] .settings-theme-btn:hover,
+                body.theme-light .settings-theme-btn:hover {
+                    border-color: #0284c7 !important;
+                    color: #0284c7 !important;
+                    background: #f0f9ff !important;
+                }
+                html[data-theme="light"] .settings-theme-btn.is-active,
+                body.theme-light .settings-theme-btn.is-active {
+                    background: linear-gradient(135deg, #0284c7, #0369a1) !important;
+                    border-color: #0284c7 !important;
+                    color: #ffffff !important;
+                    box-shadow: 0 2px 8px rgba(2, 132, 199, 0.3) !important;
+                }
+                html[data-theme="light"] .settings-divider,
+                body.theme-light .settings-divider {
+                    background: #e2e8f0 !important;
                 }
 
                 /* 顶层主 Tab 导航 ── 浅色模式（Header 胶囊条）
@@ -2770,7 +3200,17 @@ function applyAppTheme(themeId) {
                 .stLinkButton a p,
                 div[data-testid="stPopover"] button p,
                 .stPopover button p,
-                div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button p,
+                div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"],
+                div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] > button,
+                div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button {
+                    position: static !important;
+                    top: auto !important;
+                    right: auto !important;
+                    bottom: auto !important;
+                    left: auto !important;
+                    z-index: auto !important;
+                    transform: none !important;
+                }
                 div[data-testid="stHorizontalBlock"]:has(.card-meta-row) button p,
                 div[data-testid="stHorizontalBlock"]:has(.card-meta-row) a p,
                 div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stButton"] button p,
@@ -2868,6 +3308,33 @@ function applyAppTheme(themeId) {
                 .pdf-empty-placeholder code {
                     background: #e2e8f0 !important;
                     color: #0f172a !important;
+                }
+
+                /* 浅色模式卡片底部两行信息 */
+                .card-bottom-line {
+                    color: #64748b !important;
+                }
+                .card-bottom-label {
+                    color: #94a3b8 !important;
+                }
+                .card-bottom-value {
+                    color: #334155 !important;
+                }
+                .card-bottom-link {
+                    color: #0284c7 !important;
+                }
+                .card-bottom-link:hover {
+                    color: #0369a1 !important;
+                }
+                /* 浅色模式底部链接颜色（优先级需高于深色重置规则与按钮胶囊覆盖规则） */
+                div[data-testid="stHorizontalBlock"]:has(.card-meta-row) .card-bottom-info a.card-bottom-link {
+                    color: #0284c7 !important;
+                }
+                div[data-testid="stHorizontalBlock"]:has(.card-meta-row) .card-bottom-info a.card-bottom-link:hover {
+                    color: #0369a1 !important;
+                }
+                .card-bottom-empty {
+                    color: #94a3b8 !important;
                 }
 
                 /* 运维面板与组件 (Tab 2) */
@@ -3113,18 +3580,25 @@ function applyAppTheme(themeId) {
                 .header-db-meta-bar .meta-val-warn { color: #ffb74d !important; }
                 .header-db-meta-bar .meta-divider { background: rgba(255, 255, 255, 0.18) !important; }
 
-                /* 顶部右上角切换按钮 (深色模式状态) */
-                #header-theme-icon-btn, .header-theme-icon-btn {
-                    background: rgba(255, 255, 255, 0.12) !important;
-                    border: 1px solid rgba(255, 255, 255, 0.25) !important;
+                /* 顶部右上角视图与主题设置 Popover 按钮 (深色模式状态) */
+                .header-settings-fixed-popover > button,
+                div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button {
+                    background: rgba(255, 255, 255, 0.08) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.15) !important;
                     color: #e2e8f0 !important;
-                    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+                    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25) !important;
                 }
-                #header-theme-icon-btn:hover, .header-theme-icon-btn:hover {
-                    background: rgba(56, 189, 248, 0.3) !important;
+                .header-settings-fixed-popover > button:hover,
+                div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button:hover {
+                    background: rgba(56, 189, 248, 0.25) !important;
                     border-color: #38bdf8 !important;
+                    color: #38bdf8 !important;
                     box-shadow: 0 0 12px rgba(56, 189, 248, 0.5) !important;
-                    transform: scale(1.1) !important;
+                    transform: rotate(45deg) scale(1.08) !important;
+                }
+                div[data-testid="stPopoverBody"]:has(.settings-popover-panel) {
+                    background: rgba(15, 23, 42, 0.96) !important;
+                    border: 1px solid rgba(255, 255, 255, 0.14) !important;
                 }
 
                 /* 顶层主 Tab 导航 ── 深色模式（Header 胶囊条） */
@@ -3519,6 +3993,30 @@ function applyAppTheme(themeId) {
                     animation: hudPulseGlowDark 2.2s infinite ease-in-out !important;
                 }
 
+                /* 彻底隐藏所有 Popover 按钮内的倒三角图标容器并居中文字 */
+                button[data-testid="stPopoverButton"] div[aria-hidden="true"],
+                button[data-testid="stPopoverButton"] [data-testid="stIconMaterial"],
+                button[data-testid="stPopoverButton"] > div > div:last-child:not(:first-child),
+                div[data-testid="stPopover"] button div[aria-hidden="true"],
+                div[data-testid="stPopover"] button [data-testid="stIconMaterial"],
+                div[data-testid="stPopover"] button > div > div:last-child:not(:first-child) {
+                    display: none !important;
+                    width: 0 !important;
+                    height: 0 !important;
+                    visibility: hidden !important;
+                    opacity: 0 !important;
+                }
+                button[data-testid="stPopoverButton"] > div,
+                div[data-testid="stPopover"] button > div {
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    width: 100% !important;
+                    height: 100% !important;
+                    margin: 0 auto !important;
+                    text-align: center !important;
+                }
+
                 /* 深色模式页面过渡动画 */
                 html, body, .stApp {
                     transition: background-color 0.25s ease, color 0.25s ease !important;
@@ -3526,20 +4024,83 @@ function applyAppTheme(themeId) {
             `;
         }
 
+        // 同步设置面板中的深浅色模式按钮激活态
+        pDoc.querySelectorAll('.settings-theme-btn').forEach(function(btn) {
+            if (btn.classList.contains('theme-btn-dark')) {
+                btn.classList.toggle('is-active', currentTheme !== 'light');
+            } else if (btn.classList.contains('theme-btn-light')) {
+                btn.classList.toggle('is-active', currentTheme === 'light');
+            }
+        });
+
         const btn = pDoc.getElementById('header-theme-icon-btn');
         if (btn) {
-            btn.textContent = (currentTheme === 'light') ? '☾' : '☼';
-            btn.title = (currentTheme === 'light') ? '切换为深色模式' : '切换为浅色模式';
+            btn.style.display = 'none';
         }
     } catch (e) {}
 }
 
+// 动态高频清除 Popover 按钮倒三角并居中文字
+function cleanAllPopoverButtons() {
+    try {
+        const pDoc = (window.parent && window.parent.document) || document;
+        pDoc.querySelectorAll('button[data-testid="stPopoverButton"], div[data-testid="stPopover"] button').forEach(function(btn) {
+            // 隐藏倒三角容器
+            const arrowDiv = btn.querySelector('div[aria-hidden="true"]') || btn.querySelector('[data-testid="stIconMaterial"]') || (btn.firstElementChild && btn.firstElementChild.children && btn.firstElementChild.children[1]);
+            if (arrowDiv) {
+                arrowDiv.style.setProperty('display', 'none', 'important');
+                arrowDiv.style.setProperty('width', '0px', 'important');
+                arrowDiv.style.setProperty('height', '0px', 'important');
+                arrowDiv.style.setProperty('visibility', 'hidden', 'important');
+                arrowDiv.style.setProperty('opacity', '0', 'important');
+            }
+            if (btn.firstElementChild) {
+                btn.firstElementChild.style.setProperty('display', 'flex', 'important');
+                btn.firstElementChild.style.setProperty('align-items', 'center', 'important');
+                btn.firstElementChild.style.setProperty('justify-content', 'center', 'important');
+                btn.firstElementChild.style.setProperty('width', '100%', 'important');
+                btn.firstElementChild.style.setProperty('height', '100%', 'important');
+                btn.firstElementChild.style.setProperty('margin', '0 auto', 'important');
+            }
+            const markdownDiv = btn.querySelector('div[data-testid="stMarkdownContainer"]') || (btn.firstElementChild && btn.firstElementChild.children && btn.firstElementChild.children[0]);
+            if (markdownDiv) {
+                markdownDiv.style.setProperty('display', 'flex', 'important');
+                markdownDiv.style.setProperty('align-items', 'center', 'important');
+                markdownDiv.style.setProperty('justify-content', 'center', 'important');
+                markdownDiv.style.setProperty('margin', '0 auto', 'important');
+                markdownDiv.style.setProperty('text-align', 'center', 'important');
+            }
+        });
+    } catch(e) {}
+}
+
+setInterval(cleanAllPopoverButtons, 100);
+
 try {
-    const pDocGlobal = (window.parent && window.parent.document) || document;
-    pDocGlobal._toggleTheme = function() {
+    const pWin = window.parent || window;
+    const pDoc = (window.parent && window.parent.document) || document;
+    pWin._setTheme = pDoc._setTheme = window._setTheme = document._setTheme = function(theme) {
+        applyAppTheme(theme);
+    };
+    pWin._toggleTheme = pDoc._toggleTheme = window._toggleTheme = document._toggleTheme = function() {
         const cur = localStorage.getItem('viewer_theme') || 'dark';
         applyAppTheme(cur === 'dark' ? 'light' : 'dark');
     };
+
+    if (!pDoc._themeEventsBound) {
+        pDoc._themeEventsBound = true;
+        pDoc.addEventListener('click', function(e) {
+            const btn = e.target.closest && e.target.closest('.settings-theme-btn');
+            if (!btn) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (btn.classList.contains('theme-btn-dark')) {
+                applyAppTheme('dark');
+            } else if (btn.classList.contains('theme-btn-light')) {
+                applyAppTheme('light');
+            }
+        }, true);
+    }
 } catch(e) {}
 
 function injectHeaderMetadata() {
@@ -3587,23 +4148,38 @@ function injectHeaderMetadata() {
             }
         }
 
-        // 2. 右上角：在 body 顶层创建并挂载固定在桌面右上角的切换图标按钮
-        let themeBtn = pDoc.getElementById('header-theme-icon-btn');
-        if (!themeBtn) {
-            themeBtn = pDoc.createElement('button');
-            themeBtn.id = 'header-theme-icon-btn';
-            themeBtn.className = 'header-theme-icon-btn';
-            themeBtn.onclick = function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                try {
-                    (pDoc._toggleTheme || window._toggleTheme || pDocGlobal._toggleTheme)();
-                } catch(e) {}
-            };
-            pDoc.body.appendChild(themeBtn);
+        // 隐藏旧的独立主题按钮
+        const oldThemeBtn = pDoc.getElementById('header-theme-icon-btn');
+        if (oldThemeBtn) {
+            oldThemeBtn.style.display = 'none';
         }
-        themeBtn.textContent = (curTheme === 'light') ? '☾' : '☼';
-        themeBtn.title = (curTheme === 'light') ? '切换为深色模式' : '切换为浅色模式';
+
+        // 标记右上角设置 Popover 专属 class，确保与卡片内删除 Popover 物理隔离
+        const marker = pDoc.querySelector('.header-settings-popover-marker');
+        if (marker) {
+            const container = marker.closest('[data-testid="stElementContainer"]');
+            if (container && container.nextElementSibling) {
+                const pop = container.nextElementSibling.querySelector('[data-testid="stPopover"]');
+                if (pop && !pop.classList.contains('header-settings-fixed-popover')) {
+                    pop.classList.add('header-settings-fixed-popover');
+                }
+            }
+        }
+
+        // 彻底隐藏所有 Popover 按钮内的倒三角 expand_more 图标，并居中按钮文字
+        pDoc.querySelectorAll('button[data-testid="stPopoverButton"], [data-testid="stPopover"] button').forEach(function(btn) {
+            btn.querySelectorAll('[data-testid="stIconMaterial"], div[aria-hidden="true"], [class*="el0gnfx2"], [class*="ewh6kot2"]').forEach(function(icon) {
+                icon.style.setProperty('display', 'none', 'important');
+                icon.style.setProperty('width', '0px', 'important');
+                icon.style.setProperty('height', '0px', 'important');
+                icon.style.setProperty('visibility', 'hidden', 'important');
+                icon.style.setProperty('opacity', '0', 'important');
+            });
+            if (btn.firstElementChild) {
+                btn.firstElementChild.style.setProperty('justify-content', 'center', 'important');
+                btn.firstElementChild.style.setProperty('width', '100%', 'important');
+            }
+        });
 
         // 每次 metadata 刷新时同步修正 Header 颜色（防止 Streamlit 重渲后恢复深色）
         if (pDoc._forceHeaderStyle) {
@@ -4022,6 +4598,8 @@ if "f_sort" not in st.session_state:
     st.session_state.f_sort = "最新入库 (ID)"
 if "f_layout" not in st.session_state:
     st.session_state.f_layout = "双列画廊 (推荐)"
+if "f_path_mode" not in st.session_state:
+    st.session_state.f_path_mode = "仅文件名"
 if "f_page_size" not in st.session_state:
     st.session_state.f_page_size = 10
 if "bottom_page_size" not in st.session_state:
@@ -4122,8 +4700,16 @@ layout_mode = st.session_state.f_layout
 # 当前查询完整签名（筛选 + 排序 + 每页条数 + 当前页码）
 current_query_sig = f"{current_filters_hash}_{st.session_state.current_page}"
 
-# 如果查询条件或页码发生变动，或内存无数据，则执行数据库真实分页查询
-if st.session_state.get("cached_query_sig") != current_query_sig or "cached_df" not in st.session_state:
+# 如果查询条件或页码发生变动，或内存无数据/当前页数据已被删空且仍有剩余数据，则执行数据库真实分页查询
+is_cache_empty = "cached_df" in st.session_state and (st.session_state.cached_df is None or st.session_state.cached_df.empty)
+has_remaining_records = st.session_state.get("cached_total_records", 0) > 0
+
+if (
+    st.session_state.get("cached_query_sig") != current_query_sig
+    or "cached_df" not in st.session_state
+    or st.session_state.cached_df is None
+    or (is_cache_empty and has_remaining_records)
+):
     st.session_state.cached_query_sig = current_query_sig
     total_records, df = db_reader.query_records(
         keyword=st.session_state.f_keyword,
@@ -4180,12 +4766,13 @@ else:
 
 total_pages = max(1, (total_records + page_size - 1) // page_size)
 
-# 如果页码超界，重查第 1 页
+# 如果页码超界（例如最后一页数据删完），自动回退到最新有效最大页码并重查
 if total_records > 0 and st.session_state.current_page > total_pages:
-    st.session_state.current_page = 1
-    st.session_state.top_jump = 1
-    st.session_state.bottom_jump = 1
+    st.session_state.current_page = max(1, total_pages)
+    st.session_state.top_jump = st.session_state.current_page
+    st.session_state.bottom_jump = st.session_state.current_page
     st.session_state.cached_query_sig = ""
+    st.session_state.pop("cached_df", None)
     st.rerun()
 
 # 确保输入框页码在 [1, total_pages] 范围内核准
@@ -4386,8 +4973,20 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
                 elif b_type == "delete":
                     with st.popover(b_label, key=f"del_pop_{item_id}", use_container_width=False):
                         st.markdown(f"**确认删除记录 #{item_id}？**")
-                        pdf_info = T("包含关联本地 PDF 物理文件") if resolved_pdf else T("无关联本地 PDF")
-                        st.caption(T(f"将永久删除数据库记录及对应文件（{pdf_info}），此操作不可撤销！"))
+                        other_refs = count_other_pdf_references(
+                            db_path=db_path,
+                            record_id=item_id,
+                            raw_pdf_path=raw_pdf_path,
+                            abs_path=row.get("_abs_path", "") or resolved_pdf
+                        ) if (resolved_pdf or raw_pdf_path) else 0
+
+                        if other_refs > 0:
+                            pdf_info = T(f"⚠️ 本地 PDF 仍被其他 {other_refs} 条记录共享引用，确认后仅删除本条数据库记录，本地物理文件将安全保留！")
+                        elif resolved_pdf:
+                            pdf_info = T("将永久删除本条数据库记录及对应的本地 PDF 文件（无其他引用），此操作不可撤销！")
+                        else:
+                            pdf_info = T("将删除本条数据库记录（无关联本地 PDF），此操作不可撤销！")
+                        st.caption(pdf_info)
                         if st.button(T("确认删除"), key=f"del_confirm_{item_id}_{card_index}", type="primary", use_container_width=True):
                             db_del, pdf_del, msg = delete_single_record(
                                 db_path=db_path,
@@ -4477,6 +5076,11 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
                                 if str(item_id).startswith("ORPHAN-"):
                                     st.session_state.cached_stats["orphan_count"] = max(0, st.session_state.cached_stats.get("orphan_count", 0) - 1)
                             
+                            # 4. 如果当前页数据已全部删除完毕（cached_df 为空），重置查询签名与缓存，以便自动加载后续数据
+                            if "cached_df" in st.session_state and st.session_state.cached_df.empty:
+                                st.session_state.cached_query_sig = ""
+                                st.session_state.pop("cached_df", None)
+
                             if auto_removed_ids:
                                 removed_labels = "、".join([f"#{rid}" for rid in auto_removed_ids])
                                 st.toast(T(f"#{item_id} 已删除，关联记录 {removed_labels} 已无重复并自动移出重复列表"))
@@ -4550,6 +5154,64 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
         '''
         st.markdown(placeholder_html, unsafe_allow_html=True)
 
+    # 6. 卡片底部信息展示（第一行：PDF 文件名称；第二行：资源链接；单行超出省略，鼠标悬停展示完整文本）
+    # 「路径显示」开关控制文件行显示内容：仅文件名 / 相对路径 / 绝对路径
+    path_mode = st.session_state.get("f_path_mode", "仅文件名")
+    if resolved_pdf:
+        abs_pdf = resolved_pdf
+        try:
+            rel_pdf = os.path.relpath(resolved_pdf, PROJECT_ROOT)
+        except ValueError:
+            rel_pdf = resolved_pdf
+        if path_mode == "绝对路径":
+            pdf_display = abs_pdf
+        elif path_mode == "相对路径":
+            pdf_display = rel_pdf
+        else:
+            pdf_display = os.path.basename(resolved_pdf)
+        pdf_tooltip = abs_pdf
+    elif raw_pdf_path:
+        raw_s = str(raw_pdf_path)
+        if path_mode == "绝对路径":
+            pdf_display = raw_s if os.path.isabs(raw_s) else os.path.join(PROJECT_ROOT, raw_s)
+        elif path_mode == "相对路径":
+            pdf_display = raw_s
+        else:
+            pdf_display = os.path.basename(raw_s.replace("\\", "/"))
+        pdf_tooltip = raw_s
+    else:
+        pdf_display = "-"
+        pdf_tooltip = "-"
+
+    pdf_display_esc = html.escape(str(pdf_display), quote=True)
+    pdf_tooltip_esc = html.escape(str(pdf_tooltip), quote=True)
+    res_link_raw = str(resource_link).strip() if resource_link else ""
+    res_link_esc = html.escape(res_link_raw, quote=True)
+
+    if res_link_raw:
+        res_link_content = f'<a href="{res_link_esc}" target="_blank" rel="noopener noreferrer" class="card-bottom-link">{res_link_esc}</a>'
+    else:
+        res_link_content = '<span class="card-bottom-empty">-</span>'
+
+    # 无关联 PDF 时不渲染「文件」行，避免无意义的 "文件: -" 占位
+    file_line_html = ""
+    if resolved_pdf or raw_pdf_path:
+        file_line_html = f'''
+        <div class="card-bottom-line" title="{pdf_tooltip_esc}">
+            <span class="card-bottom-label">文件:</span>
+            <span class="card-bottom-value" title="{pdf_tooltip_esc}">{pdf_display_esc}</span>
+        </div>'''
+
+    footer_info_html = f'''
+    <div class="card-bottom-info">{file_line_html}
+        <div class="card-bottom-line" title="{res_link_esc if res_link_raw else '-'}">
+            <span class="card-bottom-label">链接:</span>
+            <span class="card-bottom-value" title="{res_link_esc if res_link_raw else '-'}">{res_link_content}</span>
+        </div>
+    </div>
+    '''
+    st.markdown(footer_info_html, unsafe_allow_html=True)
+
 
 def render_pagination(key_prefix: str = "bottom"):
     """通用底部分页控制条"""
@@ -4586,12 +5248,60 @@ def render_pagination(key_prefix: str = "bottom"):
         st.button("›", key=f"{key_prefix}_next", help="下一页", disabled=(st.session_state.current_page >= total_pages), use_container_width=True, on_click=next_page)
 
 
+# ==================== 顶部右上角外观与视图设置 Popover ====================
+
+with st.container():
+    st.markdown('<div class="header-settings-popover-marker"></div>', unsafe_allow_html=True)
+    with st.popover("⚙️", help="设置 (外观与排版偏好)", use_container_width=False):
+        st.markdown(
+            """
+            <div class="settings-popover-panel">
+                <div class="settings-panel-header">
+                    <span class="settings-header-title">界面外观与排版设置</span>
+                </div>
+                <div class="settings-section">
+                    <div class="settings-section-title">主题外观</div>
+                    <div class="settings-theme-btn-group">
+                        <button type="button" class="settings-theme-btn theme-btn-dark" onclick="try{(window._setTheme||document._setTheme||(window.parent&&window.parent._setTheme)||(window.parent&&window.parent.document&&window.parent.document._setTheme))('dark')}catch(e){};">
+                            深色模式
+                        </button>
+                        <button type="button" class="settings-theme-btn theme-btn-light" onclick="try{(window._setTheme||document._setTheme||(window.parent&&window.parent._setTheme)||(window.parent&&window.parent.document&&window.parent.document._setTheme))('light')}catch(e){};">
+                            浅色模式
+                        </button>
+                    </div>
+                </div>
+                <div class="settings-divider"></div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+        st.markdown('<div class="settings-section-title">画廊排版模式</div>', unsafe_allow_html=True)
+        st.selectbox(
+            "排版模式",
+            ["双列画廊 (推荐)", "单列大图", "三列紧凑", "纯表格视图"],
+            key="f_layout",
+            format_func=T,
+            label_visibility="collapsed"
+        )
+        st.markdown('<div class="settings-section-title" style="margin-top:10px;">路径显示格式</div>', unsafe_allow_html=True)
+        path_mode_opts = ["仅文件名", "相对路径", "绝对路径"]
+        cur_path_idx = path_mode_opts.index(st.session_state.f_path_mode) if st.session_state.f_path_mode in path_mode_opts else 0
+        st.selectbox(
+            "路径显示",
+            path_mode_opts,
+            index=cur_path_idx,
+            key="f_path_mode",
+            format_func=T,
+            label_visibility="collapsed"
+        )
+
+
 # ==================== 顶部主导航 Tab 与多维筛选工具栏 ====================
 
 main_tab_gallery, main_tab_maintenance = st.tabs([T("资源画廊浏览"), T("数据与系统维护中心")])
 
 with main_tab_gallery:
-    f_cols = st.columns([1.4, 0.6, 0.6, 0.85, 0.85, 1.0, 1.1, 0.72, 0.84, 0.18, 0.28, 0.18], vertical_alignment="bottom")
+    f_cols = st.columns([1.6, 0.75, 0.75, 0.95, 0.95, 1.15, 0.78, 0.92, 0.18, 0.32, 0.18], vertical_alignment="bottom")
     with f_cols[0]:
         st.text_input(T("关键词搜索"), placeholder="输入标题 / 链接 / 磁力...", key="f_keyword", on_change=reset_page)
     with f_cols[1]:
@@ -4609,8 +5319,6 @@ with main_tab_gallery:
     with f_cols[5]:
         st.selectbox(T("排序方式"), sort_options, key="f_sort", on_change=reset_page, format_func=T)
     with f_cols[6]:
-        st.selectbox(T("排版模式"), ["双列画廊 (推荐)", "单列大图", "三列紧凑", "纯表格视图"], key="f_layout", format_func=T)
-    with f_cols[7]:
         page_size_opts = [10, 20, 30, 40, 50]
         cur_idx = page_size_opts.index(st.session_state.f_page_size) if st.session_state.f_page_size in page_size_opts else 0
         st.selectbox(
@@ -4621,7 +5329,7 @@ with main_tab_gallery:
             format_func=lambda x: f"{x} 条/页",
             on_change=on_top_page_size_change
         )
-    with f_cols[8]:
+    with f_cols[7]:
         st.markdown(
             f"""
             <div class="toolbar-stat-badge" title="共 {total_records:,} 条数据 (第 {st.session_state.current_page} / {total_pages} 页)">
@@ -4630,9 +5338,9 @@ with main_tab_gallery:
             """,
             unsafe_allow_html=True
         )
-    with f_cols[9]:
+    with f_cols[8]:
         st.button("‹", key="top_prev", help="上一页", disabled=(st.session_state.current_page <= 1), use_container_width=True, on_click=prev_page)
-    with f_cols[10]:
+    with f_cols[9]:
         st.number_input(
             "跳转页码",
             min_value=1,
@@ -4641,7 +5349,7 @@ with main_tab_gallery:
             label_visibility="collapsed",
             on_change=on_top_jump_change
         )
-    with f_cols[11]:
+    with f_cols[10]:
         st.button("›", key="top_next", help="下一页", disabled=(st.session_state.current_page >= total_pages), use_container_width=True, on_click=next_page)
 
     if df.empty:
