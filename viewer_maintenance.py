@@ -94,13 +94,165 @@ class LogCapture:
 
 
 # ===================================================================
+# 终端日志精简清洗与结构化指标渲染引擎
+# ===================================================================
+
+def clean_log_text(raw_text: str) -> str:
+    """过滤掉终端/CLI中的冗余调试信息与噪音：
+    - ASCII 装饰线 (===, ---, ───)
+    - 系统标题 Banner (如 'PDF 重复去重管理系统')
+    - 数据库路径、PDF根目录等内部路径打印
+    - 运行模式、重复维度等用户已在界面选择的参数回显
+    - 命令行参数提示 (如 --run、Dry-Run 模式警告)
+    - 过渡性进度标题与重复的模式说明
+    """
+    if not raw_text:
+        return ""
+    
+    noise_star_patterns = [
+        r'^\s*\[\*\]\s*(?:运行模式|执行模式|查重维度|重复维度|保留策略|查重字段|保留规则|当前为|操作模式|清理作用域|清理范围|并发线程|保留选项|处理方式)\s*[:：]',
+        r'^\s*\[\*\]\s*(?:数据库路径|数据库文件|PDF 根目录|导出目标路径|未知年份 PDF 目录|扫描目录|输出目录|域名匹配过滤|清理目录|目标路径)\s*[:：]',
+        r'^\s*\[\*\]\s*正在(?:全量)?扫描.*',
+        r'^\s*\[\*\]\s*当前为.*(?:Dry[- ]Run|预览模式|预定模式|正式).*',
+        r'^\s*\[\*\]\s*若确认.*(?:--run|参数).*',
+        r'^\s*\[\*\]\s*请在命令.*(?:--run|参数).*',
+        r'^\s*\[\*\]\s*如需正式.*',
+    ]
+    compiled_noise_star = [re.compile(p, re.I) for p in noise_star_patterns]
+    compiled_divider = re.compile(r'^[=\-─—*#]{4,}$')
+    compiled_phase_header = re.compile(r'^\s*\[?(?:模式|阶段)\s*\d+.*\]?$')
+
+    cleaned_lines = []
+    for line in raw_text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        # 过滤分割线
+        if compiled_divider.match(s):
+            continue
+        # 过滤阶段/模式过渡标题
+        if compiled_phase_header.match(s):
+            continue
+        # 过滤配置回显、路径及命令行参数提示
+        if any(c.match(s) for c in compiled_noise_star):
+            continue
+        # 过滤不含前缀标记且无冒号的单纯 Banner 居中标题行
+        if not re.match(r'^[\[\(\+*\!\-\d]', s) and not (':' in s or '：' in s):
+            continue
+        cleaned_lines.append(s)
+        
+    return '\n'.join(cleaned_lines)
+
+
+def extract_metrics_from_log(text: str) -> Dict[str, str]:
+    """从日志输出中智能抽取核心业务数值指标"""
+    metrics = {}
+    
+    # 待清理冗余文件数 / 待处理文件
+    m = re.search(r'待清理冗余文件数\s*[:：]\s*(\d+)', text)
+    if m:
+        metrics['待清理冗余文件'] = f"{int(m.group(1)):,} 个"
+    elif re.search(r'待清理死链记录总数\s*[:：]\s*(\d+)', text):
+        m2 = re.search(r'待清理死链记录总数\s*[:：]\s*(\d+)', text)
+        metrics['待清理死链'] = f"{int(m2.group(1)):,} 条"
+    elif re.search(r'待清理记录数\s*[:：]\s*(\d+)', text):
+        m2 = re.search(r'待清理记录数\s*[:：]\s*(\d+)', text)
+        metrics['待清理记录'] = f"{int(m2.group(1)):,} 条"
+
+    # 预估可释放磁盘空间 / 冗余空间
+    m = re.search(r'预估可释放磁盘空间\s*[:：]\s*([^\n\r]+)', text)
+    if m:
+        metrics['预估释放空间'] = m.group(1).strip()
+    elif re.search(r'冗余空间\s*[:：]\s*([^\n\r,，)]+)', text):
+        m2 = re.search(r'冗余空间\s*[:：]\s*([^\n\r,，)]+)', text)
+        metrics['冗余空间'] = m2.group(1).strip()
+
+    # 待去重组数 / 重复组数
+    m = re.search(r'待(?:处理|归类)去重组数\s*[:：]\s*(\d+)', text)
+    if m:
+        metrics['待去重组数'] = f"{int(m.group(1)):,} 组"
+    elif re.search(r'共发现\s*(\d+)\s*组完全重复', text):
+        m2 = re.search(r'共发现\s*(\d+)\s*组完全重复', text)
+        metrics['完全重复组'] = f"{int(m2.group(1)):,} 组"
+    elif re.search(r'发现\s*(\d+)\s*组同名/标题变体', text):
+        m2 = re.search(r'发现\s*(\d+)\s*组同名/标题变体', text)
+        metrics['同名变体组'] = f"{int(m2.group(1)):,} 组"
+    elif re.search(r'发现\s*(\d+)\s*组重复记录', text):
+        m2 = re.search(r'发现\s*(\d+)\s*组重复记录', text)
+        metrics['重复组数'] = f"{int(m2.group(1)):,} 组"
+
+    # 物理丢失死链
+    m = re.search(r'物理文件丢失的数据库死[链标记]*记录数\s*[:：]\s*(\d+)', text)
+    if m:
+        metrics['物理丢失死链'] = f"{int(m.group(1)):,} 条"
+    elif re.search(r'发现\s*(\d+)\s*条记录引用的 PDF 文件在本地磁盘不存在', text):
+        m2 = re.search(r'发现\s*(\d+)\s*条记录引用的 PDF 文件在本地磁盘不存在', text)
+        metrics['物理丢失死链'] = f"{int(m.group(1)):,} 条"
+
+    # 物理扫描文件数 (如果指标还少于4个)
+    if len(metrics) < 4:
+        m = re.search(r'物理文件扫描完成.*发现\s*(\d+)\s*个\s*PDF', text)
+        if m:
+            metrics['物理扫描文件'] = f"{int(m.group(1)):,} 个"
+
+    # 待处理 / 缺失 / 孤儿等通用指标
+    if len(metrics) < 4:
+        m = re.search(r'共找到\s*(\d+)\s*个孤立', text) or re.search(r'扫描到\s*(\d+)\s*个孤立', text)
+        if m:
+            metrics['孤立文件'] = f"{int(m.group(1)):,} 个"
+    if len(metrics) < 4:
+        m = re.search(r'待关联\s*(\d+)\s*个', text) or re.search(r'成功关联\s*(\d+)\s*个', text)
+        if m:
+            metrics['关联文件'] = f"{int(m.group(1)):,} 个"
+    if len(metrics) < 4:
+        m = re.search(r'识别出\s*(\d+)\s*条.*?番号', text) or re.search(r'共找到\s*(\d+)\s*条番号', text)
+        if m:
+            metrics['番号记录'] = f"{int(m.group(1)):,} 条"
+
+    return metrics
+
+
+def render_operation_result(
+    raw_text: str,
+    default_label: str = "执行完成",
+    is_run: bool = False,
+    custom_metrics: Optional[Dict[str, str]] = None
+):
+    """优雅渲染运维操作结果：
+    1. 提取并高亮关键指标卡片 (st.metric)
+    2. 彻底过滤终端/CLI噪音（ASCII分割线、Banner、系统路径、--run提示等）
+    3. 展示精炼、高价值的核心业务结果
+    4. 将底层完整技术日志置于默认收起的折叠栏中 (st.expander)，保持界面极简清爽
+    """
+    if not raw_text or not raw_text.strip():
+        st.info(T(f"{default_label}，无日志输出。"))
+        return
+
+    # 1. 抽取核心指标并卡片化展示
+    metrics = custom_metrics or extract_metrics_from_log(raw_text)
+    if metrics:
+        num_cols = min(len(metrics), 5)
+        m_cols = st.columns(num_cols)
+        for idx, (lbl, val) in enumerate(metrics.items()):
+            m_cols[idx % num_cols].metric(T(lbl), val)
+            
+    # 2. 清洗噪音并展示精炼结果
+    cleaned_text = clean_log_text(raw_text)
+    if cleaned_text:
+        st.code(cleaned_text, language="text")
+    else:
+        st.info(T(f"{default_label}，无异常或无数据变更。"))
+
+    # 3. 原始完整日志（默认折叠）
+    with st.expander(T("查看原始完整日志 (含内部路径与耗时详情)"), expanded=False):
+        st.code(raw_text, language="text")
+
+
+# ===================================================================
 # 1. 面板一： PDF 生命周期维护 (fixes/pdf_maintenance.py)
 # ===================================================================
 
 def render_tab_pdf_maintenance():
-    st.markdown(T("### PDF 物理文件全生命周期维护与数据库同步"))
-    st.caption(T("对应 `fixes/pdf_maintenance.py`：提供日期比对审计、路径纠偏、微小损坏重抓、缺失重建、孤儿隔离还原及断链关联功能。"))
-    
     db_path = get_db_path()
     
     tool_choice = st.radio(
@@ -116,7 +268,8 @@ def render_tab_pdf_maintenance():
         ],
         horizontal=True,
         key="pdf_maint_subtool",
-        format_func=T
+        format_func=T,
+        label_visibility="collapsed"
     )
     
     st.markdown("---")
@@ -255,12 +408,7 @@ def render_tab_pdf_maintenance():
                     except SystemExit:
                         pass
                 
-                output = log.get_text()
-                if btn_run_fix:
-                    st.success(T("纠偏执行完成！请查看下方日志："))
-                else:
-                    st.info(T("预览扫描完成："))
-                st.code(output, language="text")
+                render_operation_result(log.get_text(), default_label=T("纠偏执行完成" if btn_run_fix else "预览扫描完成"), is_run=btn_run_fix)
 
     # ---------------- 3. 微小/损坏 PDF 重抓 ----------------
     elif tool_choice.startswith("3."):
@@ -286,14 +434,13 @@ def render_tab_pdf_maintenance():
                 verbose=False,
                 db=db_path
             )
-            with st.status(T("正在拉起 Playwright 重新渲染损坏 PDF..."), expanded=True) as status:
+            with st.spinner(T("正在拉起 Playwright 重新渲染损坏 PDF...")):
                 with LogCapture() as log:
                     try:
                         run_redownload_small_pdfs(args)
                     except SystemExit:
                         pass
-                status.update(label=T("重抓渲染完成！"), state="complete", expanded=True)
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("重抓渲染完成！"), is_run=True)
 
     # ---------------- 4. 缺失 PDF 并发重建 ----------------
     elif tool_choice.startswith("4."):
@@ -322,14 +469,13 @@ def render_tab_pdf_maintenance():
                 skip_download=skip_dl,
                 db=db_path
             )
-            with st.status(T("正在扫描与重建..." if btn_rebuild_run else "正在扫描缺失情况..."), expanded=True) as status:
+            with st.spinner(T("正在扫描与重建..." if btn_rebuild_run else "正在扫描缺失情况...")):
                 with LogCapture() as log:
                     try:
                         run_rebuild(args)
                     except SystemExit:
                         pass
-                status.update(label=T("操作完成！" if btn_rebuild_run else "预览扫描完成"), state="complete", expanded=True)
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("操作完成！" if btn_rebuild_run else "预览扫描完成"), is_run=btn_rebuild_run)
 
     # ---------------- 5. 孤立 PDF 隔离与还原 ----------------
     elif tool_choice.startswith("5."):
@@ -366,7 +512,7 @@ def render_tab_pdf_maintenance():
                         pass
                     finally:
                         builtins.input = _orig_input
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("隔离/归位操作完成" if btn_orphan_run else "孤立文件分析完成"), is_run=btn_orphan_run)
 
     # ---------------- 6. 磁盘未关联 PDF 智能回填 ----------------
     elif tool_choice.startswith("6."):
@@ -392,7 +538,7 @@ def render_tab_pdf_maintenance():
                         run_associate(args)
                     except SystemExit:
                         pass
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("关联入库完成" if btn_assoc_run else "关联计划预览完成"), is_run=btn_assoc_run)
 
     # ---------------- 7. 清理失效 PDF 记录 ----------------
     elif tool_choice.startswith("7."):
@@ -422,7 +568,7 @@ def render_tab_pdf_maintenance():
                         run_clean_missing_records(args)
                     except SystemExit:
                         pass
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("批量删除完成" if btn_cm_run else "待清理记录预览完成"), is_run=btn_cm_run)
 
 
 # ===================================================================
@@ -430,9 +576,6 @@ def render_tab_pdf_maintenance():
 # ===================================================================
 
 def render_tab_pdf_dedup():
-    st.markdown(T("### PDF 物理文件多维查重、智能去重与数据库自动重定向纠偏"))
-    st.caption(T("对应 `fixes/pdf_dedup.py`：支持 MD5 三阶段快速哈希查重、文件名变体查重、数据库引用共享查重与全量去重。"))
-    
     db_path = get_db_path()
     
     with st.form("pdf_dedup_form", clear_on_submit=False):
@@ -440,7 +583,7 @@ def render_tab_pdf_dedup():
         with col1:
             mode = st.selectbox(
                 T("查重维度 (Mode)"),
-                ["hash (MD5 内容完全一致)", "name (文件名变体如 _1.pdf)", "db (数据库路径共享与无效引用)", "all (全量多维综合查重)"],
+                ["hash (MD5 内容完全一致)", "name (文件名变体如 _1.pdf)", "db (数据库无效引用死链)", "all (全量多维综合查重)"],
                 key="dedup_mode_sel",
                 format_func=T
             )
@@ -474,7 +617,7 @@ def render_tab_pdf_dedup():
         
     if btn_preview or btn_run_dedup:
         from fixes.pdf_dedup import run_pdf_dedup
-        with st.status(T("正在进行全量多维 PDF 查重扫描..." if btn_preview else "正在执行安全去重与数据库重定向..."), expanded=True) as status:
+        with st.spinner(T("正在进行全量多维 PDF 查重扫描..." if btn_preview else "正在执行安全去重与数据库重定向...")):
             with LogCapture() as log:
                 try:
                     run_pdf_dedup(
@@ -488,8 +631,7 @@ def render_tab_pdf_dedup():
                     )
                 except SystemExit:
                     pass
-            status.update(label=T("去重纠偏完成！" if btn_run_dedup else "查重预览完成"), state="complete", expanded=True)
-            st.code(log.get_text(), language="text")
+        render_operation_result(log.get_text(), default_label=T("去重纠偏完成！" if btn_run_dedup else "查重预览完成"), is_run=btn_run_dedup)
 
 
 # ===================================================================
@@ -497,9 +639,6 @@ def render_tab_pdf_dedup():
 # ===================================================================
 
 def render_tab_data_cleaner():
-    st.markdown(T("### 数据清洗、域名替换与元数据修复工具箱"))
-    st.caption(T("对应 `fixes/data_cleaner.py`：提供广告标签清洗、多云同步、域名替换、表结构升级、磁力大小补全与空链接回填。"))
-    
     db_path = get_db_path()
     
     sub_tool = st.radio(
@@ -513,7 +652,8 @@ def render_tab_data_cleaner():
         ],
         horizontal=True,
         key="cleaner_subtool",
-        format_func=T
+        format_func=T,
+        label_visibility="collapsed"
     )
     
     st.markdown("---")
@@ -551,7 +691,7 @@ def render_tab_data_cleaner():
                         run_clean_noise(args)
                     except SystemExit:
                         pass
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("噪声清洗完成" if btn_run else "噪声预览完成"), is_run=btn_run)
 
     # ---------------- 2. 域名/镜像批量替换 ----------------
     elif sub_tool.startswith("2."):
@@ -597,7 +737,7 @@ def render_tab_data_cleaner():
                         run_replace_domain(args)
                     except SystemExit:
                         pass
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("域名替换完成" if btn_rep_run else "匹配预览完成"), is_run=btn_rep_run)
 
     # ---------------- 3. 表结构升级与元数据提取 ----------------
     elif sub_tool.startswith("3."):
@@ -624,7 +764,7 @@ def render_tab_data_cleaner():
                         run_upgrade_db(args)
                     except SystemExit:
                         pass
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("表结构升级完成" if btn_up_run else "表结构检查完成"), is_run=btn_up_run)
 
     # ---------------- 4. Darklyn 磁力大小并发补全 ----------------
     elif sub_tool.startswith("4."):
@@ -655,14 +795,13 @@ def render_tab_data_cleaner():
                 watch=False,
                 db=db_path
             )
-            with st.status(T("正在并发请求 Darklyn API 查询磁力大小..."), expanded=True) as status:
+            with st.spinner(T("正在并发请求 Darklyn API 查询磁力大小...")):
                 with LogCapture() as log:
                     try:
                         run_fetch_sizes(args)
                     except SystemExit:
                         pass
-                status.update(label=T("磁力大小补全完成！" if btn_fs_run else "扫描完成"), state="complete", expanded=True)
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("磁力大小补全完成！" if btn_fs_run else "扫描完成"), is_run=btn_fs_run)
 
     # ---------------- 5. 空资源链接 Playwright 重抓 ----------------
     elif sub_tool.startswith("5."):
@@ -687,14 +826,13 @@ def render_tab_data_cleaner():
                 yes=btn_fel_run,
                 db=db_path
             )
-            with st.status(T("正在拉起 Playwright 重新抓取空链接..."), expanded=True) as status:
+            with st.spinner(T("正在拉起 Playwright 重新抓取空链接...")):
                 with LogCapture() as log:
                     try:
                         run_fetch_empty_links(args)
                     except SystemExit:
                         pass
-                status.update(label=T("重抓完成！" if btn_fel_run else "扫描完成"), state="complete", expanded=True)
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("重抓完成！" if btn_fel_run else "扫描完成"), is_run=btn_fel_run)
 
 
 # ===================================================================
@@ -702,9 +840,6 @@ def render_tab_data_cleaner():
 # ===================================================================
 
 def render_tab_record_filter():
-    st.markdown(T("### 记录多维查重、番号分离与级联安全清理"))
-    st.caption(T("对应 `fixes/record_filter.py`：支持 URL/磁力/标题组合多维查重、独立 DB 导出、批量去重（级联删除 PDF）以及日本番号识别提取。"))
-    
     db_path = get_db_path()
     
     sub_tool = st.radio(
@@ -715,7 +850,8 @@ def render_tab_record_filter():
         ],
         horizontal=True,
         key="record_filter_subtool",
-        format_func=T
+        format_func=T,
+        label_visibility="collapsed"
     )
     
     st.markdown("---")
@@ -723,14 +859,20 @@ def render_tab_record_filter():
     # ---------------- 1. 数据库多维记录查重 ----------------
     if sub_tool.startswith("1."):
         st.markdown(T("#### 数据库记录多维查重、独立 DB 导出与批量去重 (强制级联删除 PDF)"))
-        st.info(T("检测数据库重复记录，支持导出为独立 SQLite .db 库。**去重判定条件**：① 默认优先在含物理 PDF 记录中筛选（防误删丢失文件）并按 ID 最大/最小保留唯一一条且强制级联删除多余副本关联的 PDF；② 若勾选【仅删除无 PDF 的重复链接】，则严格保护已有 PDF 记录，仅清理未关联 PDF 的多余链接副本。"))
+        st.info(T("检测数据库重复记录，支持导出为独立 SQLite .db 库。**去重判定条件**：① 默认优先在优质非 HTTP 链接（如 magnet 磁力）与含物理 PDF 记录中筛选并按 ID 保留唯一一条；② 若勾选【仅删除链接包含 http】，则严格保护磁力链等非 HTTP 记录，仅清理含 http 的网页/中转链接副本；③ 若勾选【仅删除无 PDF】，则仅清理未关联 PDF 的多余链接副本。"))
         
         with st.form("record_duplicates_form", clear_on_submit=False):
             c1, c2, c3 = st.columns([1.1, 1.3, 1.1])
             with c1:
                 field_choice = st.selectbox(
                     T("查重维度 (Field)"),
-                    ["url (URL 地址重复)", "resource_link (磁力链接重复)", "title_link (标题 + 磁力链接联合重复)", "all (全维度综合查重)"],
+                    [
+                        "pdf_path (PDF 路径重复)",
+                        "url (URL 地址重复)",
+                        "resource_link (磁力链接重复)",
+                        "title_link (标题 + 磁力链接联合重复)",
+                        "all (全维度综合查重)",
+                    ],
                     key="dup_field_sel",
                     format_func=T
                 )
@@ -739,15 +881,21 @@ def render_tab_record_filter():
                 keep_choice = st.selectbox(
                     T("去重保留策略"),
                     [
-                        "newest (优先含PDF记录 > 最新入库: ID 最大)",
-                        "oldest (优先含PDF记录 > 最旧入库: ID 最小)"
+                        "newest (优先非HTTP/含PDF > 最新入库: ID 最大)",
+                        "oldest (优先非HTTP/含PDF > 最旧入库: ID 最小)",
                     ],
                     key="dup_keep_choice",
-                    help="【去重保留判定完整条件链】\n1. PDF 优先判定：若组内存在已生成 PDF 的记录 (pdf_path 非空)，优先在含 PDF 的候选集中筛选（防止误删导致 PDF 孤立丢失）；\n2. ID 时序排序：在候选集中按 ID 最大 (最新入库) 或 ID 最小 (最早入库) 确定唯一保留记录；\n3. 物理级联清理：对其余冗余副本从数据库删除（若未勾选“仅删除无PDF”则同步物理级联删除关联的本地 PDF 文件）。",
+                    help="【去重保留判定完整条件链】\n1. 优质链接优先：优先保留不含 http 的优质资源（如 magnet 磁力链）；\n2. PDF 优先判定：若组内存在已生成 PDF 的记录 (pdf_path 非空)，优先在含 PDF 的候选集中筛选（防止误删导致 PDF 孤立丢失）；\n3. ID 时序排序：在候选集中按 ID 最大 (最新入库) 或 ID 最小 (最早入库) 确定唯一保留记录；\n4. 物理级联清理：对其余冗余副本从数据库删除（若未勾选保护模式则同步物理级联删除关联的本地 PDF 文件）。",
                     format_func=T
                 )
                 keep_val = keep_choice.split(" ")[0]
             with c3:
+                only_http_opt = st.checkbox(
+                    T("仅删除链接中包含 http 的重复记录"),
+                    value=False,
+                    key="dup_only_http",
+                    help=T("【保护磁力链接】勾选后仅清理 resource_link 中包含 http/https 的网页/中转链接副本；优先保护 magnet 磁力等非 HTTP 优质资源不被误删。")
+                )
                 only_no_pdf_opt = st.checkbox(
                     T("仅删除无 PDF 的重复链接"),
                     value=False,
@@ -770,21 +918,32 @@ def render_tab_record_filter():
                 field=field_val,
                 keep=keep_val,
                 only_no_pdf=only_no_pdf_opt,
+                only_http=only_http_opt,
                 run=btn_dup_run,
                 export_db=export_db_opt,
                 export_csv=export_csv_opt,
                 db=db_path
             )
-            status_text = "正在扫描重复记录..." if btn_dup_prev else ("正在清理无 PDF 重复链接..." if only_no_pdf_opt else "正在执行批量去重与物理 PDF 级联删除...")
-            complete_text = "查重完成" if btn_dup_prev else ("无 PDF 重复链接清理完成！" if only_no_pdf_opt else "去重与级联删除完成！")
-            with st.status(T(status_text), expanded=True) as status:
+            if btn_dup_prev:
+                status_text = "正在扫描重复记录..."
+                complete_text = "查重完成"
+            elif only_http_opt:
+                status_text = "正在清理含 HTTP 重复链接..."
+                complete_text = "含 HTTP 重复链接清理完成！"
+            elif only_no_pdf_opt:
+                status_text = "正在清理无 PDF 重复链接..."
+                complete_text = "无 PDF 重复链接清理完成！"
+            else:
+                status_text = "正在执行批量去重与物理 PDF 级联删除..."
+                complete_text = "去重与级联删除完成！"
+
+            with st.spinner(T(status_text)):
                 with LogCapture() as log:
                     try:
                         run_duplicates_cli(args)
                     except SystemExit:
                         pass
-                status.update(label=T(complete_text), state="complete", expanded=True)
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T(complete_text), is_run=btn_dup_run)
 
     # ---------------- 2. 严格日本番号识别 ----------------
     elif sub_tool.startswith("2."):
@@ -807,14 +966,13 @@ def render_tab_record_filter():
                 yes=True,
                 db=db_path
             )
-            with st.status(T("正在执行日本番号识别与处理..."), expanded=True) as status:
+            with st.spinner(T("正在执行日本番号识别与处理...")):
                 with LogCapture() as log:
                     try:
                         run_fanhao_cli(args)
                     except SystemExit:
                         pass
-                status.update(label=T("番号处理完成！"), state="complete", expanded=True)
-                st.code(log.get_text(), language="text")
+            render_operation_result(log.get_text(), default_label=T("番号处理完成！"), is_run=True)
 
 
 # ===================================================================
@@ -822,9 +980,6 @@ def render_tab_record_filter():
 # ===================================================================
 
 def render_tab_system_and_cache():
-    st.markdown(T("### PDF 缩略图全量并发预热与数据库运维"))
-    st.caption(T("对应 `fixes/warmup_pdf_cache.py` 与 `fixes/db_utils.py`：提供 100% 缓存命中秒开预热、一键数据库备份与 VACUUM 碎片压缩。"))
-    
     db_path = get_db_path()
     
     sub_tool = st.radio(
@@ -836,7 +991,8 @@ def render_tab_system_and_cache():
         ],
         horizontal=True,
         key="sys_subtool",
-        format_func=T
+        format_func=T,
+        label_visibility="collapsed"
     )
     
     st.markdown("---")
@@ -855,10 +1011,34 @@ def render_tab_system_and_cache():
             cursor.execute("SELECT COUNT(*) FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
             total_pdf_recs = cursor.fetchone()[0]
             
-        m1, m2, m3 = st.columns(3)
-        m1.metric(T("数据库含 PDF 记录数"), f"{total_pdf_recs:,}")
-        m2.metric(T("已生成预热缓存数"), f"{len(cached_flags):,}")
-        m3.metric(T("预热覆盖率"), f"{(len(cached_flags) / total_pdf_recs * 100):.1f}%" if total_pdf_recs > 0 else "0%")
+        cached_cnt = len(cached_flags)
+        warmup_pct = round((cached_cnt / total_pdf_recs * 100), 1) if total_pdf_recs > 0 else 0.0
+        st.markdown(
+            f"""
+            <div class="kpi-scorecard-grid" style="margin-bottom: 20px;">
+                <div class="kpi-card">
+                    <div class="kpi-label">含 PDF 资源记录</div>
+                    <div class="kpi-value">{total_pdf_recs:,}</div>
+                    <div class="kpi-meta">本地有效 PDF 实体文件</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">已生成缩略缓存</div>
+                    <div class="kpi-value">{cached_cnt:,}</div>
+                    <div class="kpi-meta">0 毫秒高质 JPEG 渲染缓存</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-label">预热覆盖率</div>
+                    <div class="kpi-value">{warmup_pct}%</div>
+                    <div class="kpi-meta" style="margin-top: 6px;">
+                        <div style="background: rgba(255,255,255,0.08); border-radius: 4px; height: 6px; overflow: hidden;">
+                            <div style="background: #38bdf8; width: {warmup_pct}%; height: 100%;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         
         with st.form("warmup_cache_form", clear_on_submit=False):
             c1, c2, c3 = st.columns(3)

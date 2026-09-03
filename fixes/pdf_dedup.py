@@ -5,7 +5,7 @@
 1. 查重维度：
    - hash : 基于文件内容完全一致的 MD5 多阶段快速查重（17万+文件秒级完成）
    - name : 基于标题与文件名变体（如 _1.pdf, _2.pdf 及 Unknown_Date/正式日期）查重
-   - db   : 基于 SQLite 数据库内 pdf_path 共享与物理文件关联一致性查重
+   - db   : 检测 SQLite 数据库内 pdf_path 无效引用死链 (库有记录但物理文件已丢失)
    - all  : 全量多维综合查重并汇总
 
 2. 智能保留策略：
@@ -26,7 +26,7 @@
   python fixes/pdf_dedup.py --mode hash                             # 预览基于 MD5 的内容重复文件
   python fixes/pdf_dedup.py --mode hash --run                       # 正式执行 MD5 去重并同步更新 DB
   python fixes/pdf_dedup.py --mode name                             # 预览 _1.pdf 等文件名变体重复
-  python fixes/pdf_dedup.py --mode db                               # 检查数据库 pdf_path 共享与无效引用
+  python fixes/pdf_dedup.py --mode db                               # 检查数据库 pdf_path 无效引用死链
   python fixes/pdf_dedup.py --mode all --export-csv                 # 全量综合查重并导出 CSV
   python fixes/pdf_dedup.py --mode all --run --keep larger          # 全量去重并优先保留体积最大版本
 """
@@ -286,17 +286,17 @@ def find_name_variant_duplicates(pdf_files: List[PDFFileInfo]) -> Dict[str, List
 
 
 # ===================================================================
-# 3. 数据库引用查重与一致性检测 (Database PDF Reference Deduplication)
+# 3. 数据库无效引用死链检测 (Database PDF Invalid Reference Check)
 # ===================================================================
 
 def find_db_pdf_duplicates(conn: sqlite3.Connection, pdf_files: Optional[List[PDFFileInfo]] = None) -> Dict[str, Any]:
-    """检测数据库中关于 pdf_path 的多重共享引用、无效死链及一致性状态
-    
+    """检测数据库中 pdf_path 的无效引用死链 (库有记录但物理文件已丢失)
+
     Returns:
-        Dict 包含 shared_paths (多记录共享同一 pdf_path), missing_phys_paths (有库无物理文件), etc.
+        Dict 包含 missing_phys_paths (有库无物理文件), total_records, total_with_pdf etc.
     """
     print("\n" + "=" * 60)
-    print("        [模式 3: 数据库 PDF 引用与一致性检测 (Database DB)]")
+    print("        [模式 3: 数据库 pdf_path 无效引用死链检测 (Database DB)]")
     print("=" * 60)
     cursor = conn.cursor()
 
@@ -304,34 +304,13 @@ def find_db_pdf_duplicates(conn: sqlite3.Connection, pdf_files: Optional[List[PD
     cursor.execute("SELECT COUNT(*) FROM resources")
     total_records = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(pdf_path), COUNT(DISTINCT pdf_path) FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
-    row = cursor.fetchone()
-    total_with_pdf, distinct_pdfs = row[0], row[1]
+    cursor.execute("SELECT COUNT(pdf_path) FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
+    total_with_pdf = cursor.fetchone()[0]
 
     print(f"[*] 数据库总记录数: {total_records}")
     print(f"[*] 包含 pdf_path 记录数: {total_with_pdf}")
-    print(f"[*] 独立不重复 pdf_path 数: {distinct_pdfs}")
-    print(f"[*] 存在共享引用的超额记录数: {total_with_pdf - distinct_pdfs}")
 
-    # 2. 查询共享 pdf_path 的分组
-    cursor.execute("""
-        SELECT pdf_path, COUNT(*) as cnt, GROUP_CONCAT(id) as id_list
-        FROM resources
-        WHERE pdf_path IS NOT NULL AND pdf_path != ''
-        GROUP BY pdf_path
-        HAVING cnt > 1
-    """)
-    shared_rows = cursor.fetchall()
-    shared_pdf_map = {}
-    for path, cnt, ids in shared_rows:
-        shared_pdf_map[path] = {
-            "count": cnt,
-            "ids": [int(x) for x in ids.split(",")] if ids else []
-        }
-
-    print(f"[+] 发现 {len(shared_pdf_map)} 个被多条数据库记录共享引用的 pdf_path。")
-
-    # 3. 物理存在性核验 (若传入了 pdf_files)
+    # 2. 物理存在性核验 (若传入了 pdf_files)，逐条比对找出死链记录
     missing_phys_records = []
     if pdf_files:
         existing_rel_paths = {fi.rel_path.lower(): fi for fi in pdf_files}
@@ -346,8 +325,6 @@ def find_db_pdf_duplicates(conn: sqlite3.Connection, pdf_files: Optional[List[PD
     return {
         "total_records": total_records,
         "total_with_pdf": total_with_pdf,
-        "distinct_pdfs": distinct_pdfs,
-        "shared_pdf_map": shared_pdf_map,
         "missing_phys_records": missing_phys_records,
     }
 
@@ -817,7 +794,7 @@ def interactive_menu():
         print("    1. [预览] 全量综合查重 (MD5哈希 + 文件名变体 + 数据库引用，默认导出 .db)")
         print("    2. [预览] 仅基于内容 MD5 哈希查重")
         print("    3. [预览] 仅基于文件名/标题变体 (_1.pdf) 查重")
-        print("    4. [预览] 仅检查数据库 pdf_path 共享与一致性")
+        print("    4. [预览] 仅检查数据库 pdf_path 无效引用死链")
         print("    5. [执行] 全量安全去重 (备份DB + 删除多余副本 + 自动重定向DB引用)")
         print("    6. [执行] 全量隔离去重 (移入 cache/pdf_trash 隔离区 + 重定向DB)")
         print()
@@ -866,7 +843,7 @@ def main():
         "--mode", "-m",
         choices=["all", "hash", "name", "title", "db"],
         default="all",
-        help="查重维度: hash (内容MD5), name/title (文件名与标题变体), db (数据库关联), all (全量综合，默认)"
+        help="查重维度: hash (内容MD5), name/title (文件名与标题变体), db (数据库无效引用死链), all (全量综合，默认)"
     )
     parser.add_argument(
         "--keep", "-k",

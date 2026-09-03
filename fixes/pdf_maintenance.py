@@ -33,7 +33,7 @@
    - 清理机制: 批量删除物理文件已不存在的数据库记录，并在删除后自动执行 VACUUM 回收数据库物理空间。
 
 8. dedup: PDF 物理文件多维查重、去重与数据库引用纠偏
-   - 功能用途: 支持基于内容 MD5 哈希查重、文件名/标题变体 (_1.pdf) 查重及数据库 pdf_path 共享检测。
+   - 功能用途: 支持基于内容 MD5 哈希查重、文件名/标题变体 (_1.pdf) 查重及数据库 pdf_path 无效引用死链检测。
    - 智能处理: 优先保留规范命名与大文件版本，清理多余物理副本时自动将数据库指向重定向至保留的主文件，杜绝断链。
 
 用法与命令示例:
@@ -2536,7 +2536,7 @@ def main():
     # dedup
     p_dedup = subparsers.add_parser("dedup", help="PDF 文件多维查重、去重与数据库引用纠偏")
     p_dedup.add_argument("--mode", "-m", choices=["all", "hash", "name", "title", "db"], default="all",
-                         help="查重模式: hash (内容MD5), name/title (文件名与标题变体), db (数据库关联), all (全量综合，默认)")
+                         help="查重模式: hash (内容MD5), name/title (文件名与标题变体), db (数据库无效引用死链), all (全量综合，默认)")
     p_dedup.add_argument("--keep", "-k", choices=["primary", "larger", "newest", "oldest"], default="primary",
                          help="保留策略: primary (规范性得分 > 体积 > 最新, 默认), larger (体积 > 规范性 > 最新), newest (最新 > 规范性 > 体积), oldest (最早 > 规范性 > 体积)")
     p_dedup.add_argument("--run", action="store_true", default=False,

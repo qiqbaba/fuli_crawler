@@ -76,6 +76,7 @@ from utils.fanhao_filter import extract_fanhao  # noqa: E402
 
 ColumnSpec = Union[str, Tuple[str, str]]
 DUPLICATE_FIELDS: List[Tuple[ColumnSpec, str, str]] = [
+    ("pdf_path", "PDF 存储路径", "pdf_path"),
     ("url", "URL 地址", "url"),
     ("resource_link", "磁力/资源链接", "resource_link"),
     (("title", "resource_link"), "标题+磁力链接", "title_link"),
@@ -119,25 +120,20 @@ def get_all_duplicates(conn: sqlite3.Connection, column: ColumnSpec, columns: Li
         return result
 
     else:
+        r_col_list = ", ".join(f"r.{c}" for c in columns)
         cursor.execute(f"""
-            SELECT {column}
-            FROM resources
-            WHERE {column} IS NOT NULL AND {column} != ''
-            GROUP BY {column}
-            HAVING COUNT(*) > 1
+            SELECT {r_col_list}
+            FROM resources r
+            INNER JOIN (
+                SELECT {column}
+                FROM resources
+                WHERE {column} IS NOT NULL AND {column} != ''
+                GROUP BY {column}
+                HAVING COUNT(*) > 1
+            ) d
+                ON r.{column} = d.{column}
+            ORDER BY r.{column}, r.id
         """)
-        dup_values = [row[0] for row in cursor.fetchall()]
-        if not dup_values:
-            return []
-
-        placeholders = ",".join("?" for _ in dup_values)
-        col_list = ", ".join(columns)
-        cursor.execute(f"""
-            SELECT {col_list}
-            FROM resources
-            WHERE {column} IN ({placeholders})
-            ORDER BY {column}, id
-        """, dup_values)
         rows = cursor.fetchall()
 
         result = []
@@ -217,6 +213,7 @@ def plan_duplicate_deletions(
     records: List[Dict[str, Any]],
     keep_newest: bool = True,
     only_no_pdf: bool = False,
+    only_http: bool = False,
 ) -> Tuple[List[int], List[str]]:
     """根据保留策略与模式，计算需要删除的记录 ID 列表以及关联需要删除的物理 PDF 路径列表
 
@@ -224,6 +221,7 @@ def plan_duplicate_deletions(
         records: 重复记录列表
         keep_newest: True 保留最新 (ID 最大)，False 保留最旧 (ID 最小)
         only_no_pdf: 若为 True，仅删除没有关联 PDF 的重复记录，绝对不删除任何已包含 PDF 的记录与文件
+        only_http: 若为 True，仅删除 resource_link 中包含 http 的重复记录，优先保护保留磁力链等优质非 HTTP 记录
 
     Returns:
         (ids_to_delete, pdf_paths_to_delete)
@@ -239,17 +237,26 @@ def plan_duplicate_deletions(
     pdf_paths: List[str] = []
     seen_pdfs: set = set()
 
+    def is_http_link(rec: Dict[str, Any]) -> bool:
+        link = (rec.get("resource_link") or "").strip().lower()
+        return "http://" in link or "https://" in link or link.startswith("http")
+
     for group in groups.values():
         group_sorted = sorted(group, key=lambda r: int(r.get("id", 0) or 0))
         with_pdf = [r for r in group_sorted if (r.get("pdf_path") or "").strip()]
         without_pdf = [r for r in group_sorted if not (r.get("pdf_path") or "").strip()]
+
+        with_http = [r for r in group_sorted if is_http_link(r)]
+        without_http = [r for r in group_sorted if not is_http_link(r)]
+
+        group_del_ids: List[int] = []
 
         if only_no_pdf:
             # 仅删除无 PDF 的重复链接模式
             if with_pdf:
                 # 组内存在有 PDF 的记录：所有无 PDF 的多余链接副本加入待删除列表，含 PDF 记录全量保留
                 for rec in without_pdf:
-                    ids_to_delete.append(int(rec.get("id", 0) or 0))
+                    group_del_ids.append(int(rec.get("id", 0) or 0))
             else:
                 # 组内所有记录均无 PDF：按照保留策略保留 1 条（最新或最旧），其余无 PDF 副本加入待删除列表
                 ids_sorted = sorted(int(r.get("id", 0) or 0) for r in without_pdf)
@@ -257,47 +264,81 @@ def plan_duplicate_deletions(
                 for rec in without_pdf:
                     rid = int(rec.get("id", 0) or 0)
                     if rid != keep_id:
-                        ids_to_delete.append(rid)
-            # 仅删无 PDF 模式下，绝不删除任何 PDF 文件
+                        group_del_ids.append(rid)
+        elif only_http:
+            # 仅删除链接中包含 http 的重复记录模式
+            # 核心目标：保护保留优质非 HTTP 记录（如 magnet: 磁力链），清理网页或中转的 http 副本
+            if without_http:
+                # 组内存在非 HTTP 记录（例如磁力链接）：
+                # 所有含 HTTP 的重复记录均加入待删除列表；非 HTTP 优质记录全量保留
+                for rec in with_http:
+                    group_del_ids.append(int(rec.get("id", 0) or 0))
+            else:
+                # 组内所有记录均为 HTTP 链接：
+                # 为防止整组删除导致资源丢失，按保留策略保留 1 条，仅将其余冗余的 HTTP 副本加入待删除列表
+                ids_sorted = sorted(int(r.get("id", 0) or 0) for r in with_http)
+                keep_id = ids_sorted[-1] if keep_newest else ids_sorted[0]
+                for rec in with_http:
+                    rid = int(rec.get("id", 0) or 0)
+                    if rid != keep_id:
+                        group_del_ids.append(rid)
         else:
-            # 默认完整去重模式：每组只保留唯一一条记录（优先在含 PDF 的候选集中按最新/最旧保留），其余所有副本级联删除
+            # 默认完整去重模式：每组只保留唯一一条记录
+            # 优先级打分：优先含 PDF 记录 > 优先非 HTTP 链接 (如磁力) > 按最新/最旧 ID
             candidates = with_pdf if with_pdf else group_sorted
+            non_http_candidates = [r for r in candidates if not is_http_link(r)]
+            if non_http_candidates:
+                candidates = non_http_candidates
             ids_sorted = sorted(int(r.get("id", 0) or 0) for r in candidates)
             keep_id = ids_sorted[-1] if keep_newest else ids_sorted[0]
-
-            # 提取保留记录所引用的 PDF 文件路径（严格保护不被加入待删除物理文件列表）
-            keep_rec = next((r for r in group_sorted if int(r.get("id", 0) or 0) == keep_id), None)
-            keep_pdf_key = ""
-            if keep_rec:
-                p_keep = (keep_rec.get("pdf_path") or "").strip()
-                if p_keep:
-                    abs_keep = resolve_pdf_path(p_keep, PROJECT_ROOT)
-                    if abs_keep:
-                        keep_pdf_key = abs_keep.lower().replace("\\", "/")
-                        seen_pdfs.add(keep_pdf_key)
 
             for rec in group_sorted:
                 rid = int(rec.get("id", 0) or 0)
                 if rid != keep_id:
-                    ids_to_delete.append(rid)
-                    p = (rec.get("pdf_path") or "").strip()
-                    if p:
-                        abs_p = resolve_pdf_path(p, PROJECT_ROOT)
-                        if abs_p:
-                            key_p = abs_p.lower().replace("\\", "/")
-                            # 只有当该 PDF 不是保留记录正在引用的文件，且未被加入过删除列表时，才加入级联物理删除
-                            if key_p != keep_pdf_key and key_p not in seen_pdfs and os.path.exists(abs_p):
-                                seen_pdfs.add(key_p)
-                                pdf_paths.append(abs_p)
+                    group_del_ids.append(rid)
+
+        # 汇总本组待删除 ID
+        group_del_set = set(group_del_ids)
+        ids_to_delete.extend(group_del_ids)
+
+        # 提取本组中被保留的所有记录引用的 PDF 路径（严格保护不被加入待删除物理文件列表）
+        for rec in group_sorted:
+            rid = int(rec.get("id", 0) or 0)
+            if rid not in group_del_set:
+                p_keep = (rec.get("pdf_path") or "").strip()
+                if p_keep:
+                    abs_keep = resolve_pdf_path(p_keep, PROJECT_ROOT)
+                    if abs_keep:
+                        seen_pdfs.add(abs_keep.lower().replace("\\", "/"))
+
+        # 对于待删除记录关联的 PDF，只有当未被任何保留记录引用且未被加入过删除列表时，才级联物理删除
+        for rec in group_sorted:
+            rid = int(rec.get("id", 0) or 0)
+            if rid in group_del_set:
+                p = (rec.get("pdf_path") or "").strip()
+                if p:
+                    abs_p = resolve_pdf_path(p, PROJECT_ROOT)
+                    if abs_p:
+                        key_p = abs_p.lower().replace("\\", "/")
+                        if key_p not in seen_pdfs and os.path.exists(abs_p):
+                            seen_pdfs.add(key_p)
+                            pdf_paths.append(abs_p)
 
     return ids_to_delete, pdf_paths
 
 
-def collect_pdf_stats(records: List[Dict[str, Any]], keep_oldest: bool = False, only_no_pdf: bool = False) -> Tuple[int, int]:
+def collect_pdf_stats(
+    records: List[Dict[str, Any]],
+    keep_oldest: bool = False,
+    only_no_pdf: bool = False,
+    only_http: bool = False,
+) -> Tuple[int, int]:
     """统计删除重复记录时会被级联清理的 PDF 文件数量与字节数"""
     if only_no_pdf or not records:
         return 0, 0
-    _, pdf_files = plan_duplicate_deletions(records, keep_newest=not keep_oldest, only_no_pdf=False)
+    _, pdf_files = plan_duplicate_deletions(
+        records, keep_newest=not keep_oldest, only_no_pdf=only_no_pdf, only_http=only_http
+    )
     total_bytes = sum(os.path.getsize(f) for f in pdf_files if os.path.exists(f))
     return len(pdf_files), total_bytes
 
@@ -307,8 +348,9 @@ def delete_duplicates_batch(
     records: List[Dict[str, Any]],
     keep_newest: bool = True,
     only_no_pdf: bool = False,
+    only_http: bool = False,
 ) -> Tuple[int, int, int, int]:
-    """批量删除重复记录并【强制级联删除对应物理 PDF】（若开启 only_no_pdf 则仅删除未关联 PDF 的重复记录）
+    """批量删除重复记录并【强制级联删除对应物理 PDF】（支持 only_no_pdf 与 only_http 过滤模式）
 
     Returns:
         (deleted_records, deleted_pdfs, failed_pdfs, deleted_pdf_bytes)
@@ -316,11 +358,13 @@ def delete_duplicates_batch(
     if not records:
         return 0, 0, 0, 0
 
-    ids_to_delete, _ = plan_duplicate_deletions(records, keep_newest=keep_newest, only_no_pdf=only_no_pdf)
+    ids_to_delete, _ = plan_duplicate_deletions(
+        records, keep_newest=keep_newest, only_no_pdf=only_no_pdf, only_http=only_http
+    )
     if not ids_to_delete:
         return 0, 0, 0, 0
 
-    # 级联物理删除 PDF 与数据库记录（在 only_no_pdf 模式下待删记录无 PDF，仅清理 DB 记录）
+    # 级联物理删除 PDF 与数据库记录（底层具备活跃引用保护，共享 PDF 绝不误删）
     return delete_records_cascade_pdf(conn, ids_to_delete, project_root=PROJECT_ROOT)
 
 
@@ -465,10 +509,12 @@ def run_duplicates_menu(args=None) -> None:
                 continue
 
             print("\n  请选择去重模式：")
-            print("    1 - 默认完整去重 (优先保留含PDF记录 > 保留唯一1条，强制级联删除其余副本的 PDF)")
+            print("    1 - 默认完整去重 (优先保留非HTTP/含PDF记录 > 保留唯一1条，强制级联删除其余副本的 PDF)")
             print("    2 - 仅删除无 PDF 的重复链接 (安全保护模式：仅清理无PDF链接副本，保护已有PDF记录与文件)")
-            mode_input = input("  请选择 [1/2] (默认 1): ").strip()
+            print("    3 - 仅删除链接中包含 http 的重复记录 (保护磁力链接模式：清理含 http 网页/中转副本，保护非 HTTP 链接)")
+            mode_input = input("  请选择 [1/2/3] (默认 1): ").strip()
             only_no_pdf = (mode_input == "2")
+            only_http = (mode_input == "3")
 
             grand_records = 0
             grand_pdfs_k, grand_bytes_k = 0, 0
@@ -479,13 +525,17 @@ def run_duplicates_menu(args=None) -> None:
                 recs = all_dup_data[key_tag]
                 if not recs:
                     continue
-                ids_del, _ = plan_duplicate_deletions(recs, keep_newest=True, only_no_pdf=only_no_pdf)
+                ids_del, _ = plan_duplicate_deletions(recs, keep_newest=True, only_no_pdf=only_no_pdf, only_http=only_http)
                 n_groups = len({r["_group_key"] for r in recs})
-                pdfs_k, bytes_k = collect_pdf_stats(recs, keep_oldest=False, only_no_pdf=only_no_pdf)
-                pdfs_o, bytes_o = collect_pdf_stats(recs, keep_oldest=True, only_no_pdf=only_no_pdf)
+                pdfs_k, bytes_k = collect_pdf_stats(recs, keep_oldest=False, only_no_pdf=only_no_pdf, only_http=only_http)
+                pdfs_o, bytes_o = collect_pdf_stats(recs, keep_oldest=True, only_no_pdf=only_no_pdf, only_http=only_http)
                 if only_no_pdf:
                     overview_lines.append(
                         f"  - {col_label}: {n_groups} 组重复, {len(recs)} 条记录, 预计仅删除无 PDF 副本 {len(ids_del)} 条 (保护已有 PDF)"
+                    )
+                elif only_http:
+                    overview_lines.append(
+                        f"  - {col_label}: {n_groups} 组重复, {len(recs)} 条记录, 预计仅删除含 HTTP 副本 {len(ids_del)} 条 (保护非 HTTP 优质链接)"
                     )
                 else:
                     overview_lines.append(
@@ -504,13 +554,18 @@ def run_duplicates_menu(args=None) -> None:
                 pause_for_user()
                 continue
 
-            banner_title = "【去重前预估概况 (仅清理无 PDF 链接)】" if only_no_pdf else "【去重前预估概况 (强制级联清理关联 PDF)】"
+            if only_http:
+                banner_title = "【去重前预估概况 (仅清理含 HTTP 链接)】"
+            elif only_no_pdf:
+                banner_title = "【去重前预估概况 (仅清理无 PDF 链接)】"
+            else:
+                banner_title = "【去重前预估概况 (强制级联清理关联 PDF)】"
             print_section(banner_title)
             for line in overview_lines:
                 print(line)
             print("  " + "─" * 56)
             print(f"  合计预计删除数据库记录: {grand_records} 条")
-            if not only_no_pdf:
+            if not only_no_pdf and not only_http:
                 print(f"  保留最新策略: 级联删除 PDF {grand_pdfs_k} 个, 释放空间 {format_size(grand_bytes_k)}")
                 print(f"  保留最旧策略: 级联删除 PDF {grand_pdfs_o} 个, 释放空间 {format_size(grand_bytes_o)}")
 
@@ -520,8 +575,8 @@ def run_duplicates_menu(args=None) -> None:
                 continue
 
             print("\n  请选择保留策略：")
-            print("    k - 优先保留有 PDF 记录 > 最新入库 (ID 最大)，删除其余副本 (默认)")
-            print("    o - 优先保留有 PDF 记录 > 最旧入库 (ID 最小)，删除其余副本")
+            print("    k - 优先保留优质/含 PDF 记录 > 最新入库 (ID 最大)，删除其余副本 (默认)")
+            print("    o - 优先保留优质/含 PDF 记录 > 最旧入库 (ID 最小)，删除其余副本")
             keep_input = input("  请选择 [k/o] (默认 k): ").strip().lower()
             keep_newest = (keep_input != "o")
 
@@ -538,7 +593,7 @@ def run_duplicates_menu(args=None) -> None:
                 if not recs:
                     continue
                 d_rec, d_pdf, f_pdf, d_bytes = delete_duplicates_batch(
-                    conn, recs, keep_newest=keep_newest, only_no_pdf=only_no_pdf
+                    conn, recs, keep_newest=keep_newest, only_no_pdf=only_no_pdf, only_http=only_http
                 )
                 print_success(f"{col_label}: 成功删除 {d_rec} 条数据库记录，级联删除 PDF {d_pdf} 个 (释放 {format_size(d_bytes)})")
                 total_del_rec += d_rec
@@ -552,7 +607,9 @@ def run_duplicates_menu(args=None) -> None:
                 vacuum_db(conn)
                 print_banner("去重完成汇总")
                 print(f"  删除重复记录数:        {total_del_rec} 条")
-                if only_no_pdf:
+                if only_http:
+                    print(f"  模式说明:              仅删除链接含 HTTP 重复记录 (优质非 HTTP 链接受保护)")
+                elif only_no_pdf:
                     print(f"  模式说明:              仅删除无 PDF 重复链接 (已有 PDF 记录已受保护)")
                 else:
                     print(f"  级联删除 PDF 文件数:   {total_del_pdf} 个 (失败: {total_fail_pdf} 个)")
@@ -586,6 +643,7 @@ def run_duplicates_cli(args) -> None:
     export_csv_flag = getattr(args, "export_csv", False)
     keep_strategy = getattr(args, "keep", "newest")
     only_no_pdf = getattr(args, "only_no_pdf", False)
+    only_http = getattr(args, "only_http", False)
 
     conn = get_connection(db_path)
     columns = get_columns(conn.cursor())
@@ -608,7 +666,12 @@ def run_duplicates_cli(args) -> None:
     print(f"[*] 数据库: {db_path}")
     print(f"[*] 查重字段: {target_field}")
     print(f"[*] 保留策略: {keep_strategy}")
-    print(f"[*] 仅删无PDF: {'【开启 (仅清理无PDF链接，保护已有PDF)】' if only_no_pdf else '【关闭 (级联清理所有冗余副本及PDF)】'}")
+    if only_http:
+        print("[*] 过滤模式: 【开启 (仅删除链接含 HTTP 的重复记录，保护非 HTTP 优质链接)】")
+    elif only_no_pdf:
+        print("[*] 过滤模式: 【开启 (仅删除无 PDF 的重复链接，保护已有 PDF 记录与文件)】")
+    else:
+        print("[*] 过滤模式: 【关闭 (全量去重，级联清理所有冗余副本及多余 PDF)】")
     print("=" * 60)
 
     total_pred_del = 0
@@ -616,7 +679,9 @@ def run_duplicates_cli(args) -> None:
         recs = get_all_duplicates(conn, col_key, columns)
         print_dup_summary(recs, col_key, col_label)
         if recs:
-            ids_del, _ = plan_duplicate_deletions(recs, keep_newest=(keep_strategy == "newest"), only_no_pdf=only_no_pdf)
+            ids_del, _ = plan_duplicate_deletions(
+                recs, keep_newest=(keep_strategy == "newest"), only_no_pdf=only_no_pdf, only_http=only_http
+            )
             total_pred_del += len(ids_del)
         if export_db_flag:
             export_duplicates(recs, tag=key_tag, as_csv=False)
@@ -625,7 +690,9 @@ def run_duplicates_cli(args) -> None:
 
     if not is_run:
         print_step("当前为预览模式，未对数据库或 PDF 进行任何修改。")
-        if only_no_pdf:
+        if only_http:
+            print_step(f"已开启【仅删除链接含 HTTP 重复记录】模式：预计将清理 {total_pred_del} 条含 HTTP 冗余记录，保护非 HTTP 优质链接。")
+        elif only_no_pdf:
             print_step(f"已开启【仅删除无 PDF 重复链接】模式：预计将清理 {total_pred_del} 条无 PDF 冗余记录，保护已有 PDF 记录不受影响。")
         else:
             print_step(f"默认去重模式：预计将删除 {total_pred_del} 条冗余记录并同步级联清理多余 PDF。")
@@ -642,7 +709,7 @@ def run_duplicates_cli(args) -> None:
         if not recs:
             continue
         d_rec, d_pdf, f_pdf, d_bytes = delete_duplicates_batch(
-            conn, recs, keep_newest=(keep_strategy == "newest"), only_no_pdf=only_no_pdf
+            conn, recs, keep_newest=(keep_strategy == "newest"), only_no_pdf=only_no_pdf, only_http=only_http
         )
         total_del_rec += d_rec
         total_del_pdf += d_pdf
@@ -654,7 +721,9 @@ def run_duplicates_cli(args) -> None:
 
     print_banner("CLI 去重执行结果")
     print(f"  删除记录总数:          {total_del_rec} 条")
-    if only_no_pdf:
+    if only_http:
+        print(f"  模式说明:              仅删除链接含 HTTP 重复记录 (优质非 HTTP 链接受保护)")
+    elif only_no_pdf:
         print(f"  模式说明:              仅删除无 PDF 重复链接 (已有 PDF 记录 100% 安全保护)")
     else:
         print(f"  级联删除 PDF 文件数:   {total_del_pdf} 个 (失败: {total_fail})")
@@ -864,9 +933,10 @@ def main():
 
     # duplicates
     p_dup = subparsers.add_parser("duplicates", help="数据库查重、默认 DB 导出、批量去重并级联清理 PDF")
-    p_dup.add_argument("--field", choices=["url", "resource_link", "title_link", "all"], default="all", help="查重字段维度")
-    p_dup.add_argument("--keep", choices=["newest", "oldest"], default="newest", help="保留策略: newest (优先保留有PDF记录 > 最新ID, 默认), oldest (优先保留有PDF记录 > 最旧ID)")
+    p_dup.add_argument("--field", choices=["pdf_path", "url", "resource_link", "title_link", "all"], default="all", help="查重字段维度: pdf_path(PDF路径), url(URL), resource_link(磁力链接), title_link(标题+磁力), all(全部)")
+    p_dup.add_argument("--keep", choices=["newest", "oldest"], default="newest", help="保留策略: newest (优先保留非HTTP/有PDF记录 > 最新ID, 默认), oldest (优先保留非HTTP/有PDF记录 > 最旧ID)")
     p_dup.add_argument("--only-no-pdf", action="store_true", default=False, help="仅删除无 PDF 的重复记录/链接（安全保护已有 PDF 记录，不删除任何 PDF 文件）")
+    p_dup.add_argument("--only-http", action="store_true", default=False, help="仅删除链接中包含 http 的重复记录 (优先保护保留磁力等优质非 http 链接)")
     p_dup.add_argument("--run", action="store_true", default=False, help="正式执行去重（默认仅预览）")
     p_dup.add_argument("--dry-run", action="store_true", default=False, help="显式指定预览模式")
     p_dup.add_argument("--export-db", action="store_true", default=False, help="导出重复记录为独立 .db 数据库")
