@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import json
 import sqlite3
 import base64
@@ -1703,18 +1704,15 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
     else:
         # 空状态占位：高度严格与 iframe_height 统一（无论是否有本地 PDF）
         if raw_pdf_path:
-            status_title = "PDF 路径未找到"
-            placeholder_html = f'''
-            <div class="pdf-empty-placeholder" style="height: {iframe_height}px;">
-                <div class="empty-title">{status_title}</div>
-            </div>
-            '''
+            status_title = T("本地 PDF 文件缺失")
         else:
-            placeholder_html = f'''
-            <div class="pdf-empty-placeholder" style="height: {iframe_height}px;">
-                <div class="empty-title">未关联本地 PDF 快照</div>
-            </div>
-            '''
+            status_title = T("未关联本地 PDF 快照")
+
+        placeholder_html = f'''
+        <div class="pdf-empty-placeholder" style="height: {iframe_height}px;">
+            <div class="empty-title">{status_title}</div>
+        </div>
+        '''
         st.markdown(placeholder_html, unsafe_allow_html=True)
 
     # 6. 卡片底部信息展示（第一行：PDF 文件名称；第二行：资源链接；单行超出省略，鼠标悬停展示完整文本）
@@ -1752,7 +1750,19 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
     res_link_esc = html.escape(res_link_raw, quote=True)
 
     if res_link_raw:
-        res_link_content = f'<a href="{res_link_esc}" target="_blank" rel="noopener noreferrer" class="card-bottom-link">{res_link_esc}</a>'
+        if res_link_raw.startswith("magnet:?"):
+            xt_match = re.search(r'xt=urn:btih:([a-zA-Z0-9]+)', res_link_raw, re.IGNORECASE)
+            if xt_match:
+                h = xt_match.group(1)
+                short_disp = f"magnet:?xt=urn:btih:{h[:8]}...{h[-6:]}"
+            else:
+                short_disp = res_link_raw[:36] + "..."
+        elif len(res_link_raw) > 50:
+            short_disp = res_link_raw[:45] + "..."
+        else:
+            short_disp = res_link_raw
+        short_disp_esc = html.escape(short_disp, quote=True)
+        res_link_content = f'<a href="{res_link_esc}" target="_blank" rel="noopener noreferrer" class="card-bottom-link" title="{res_link_esc}">{short_disp_esc}</a>'
     else:
         res_link_content = '<span class="card-bottom-empty">-</span>'
 
@@ -1830,9 +1840,6 @@ with st.container():
         st.markdown(
             """
             <div class="settings-popover-panel">
-                <div class="settings-panel-header">
-                    <span class="settings-header-title">设置</span>
-                </div>
                 <div class="settings-section">
                     <div class="settings-section-title">主题外观</div>
                     <div class="settings-theme-btn-group">

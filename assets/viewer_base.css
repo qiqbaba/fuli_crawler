@@ -356,9 +356,9 @@
         transition: all 0.2s ease !important;
     }
     .stApp[data-test-script-state="running"] [data-testid="stStatusWidget"] {
-        background: rgba(33, 150, 243, 0.35) !important;
-        border-color: #42a5f5 !important;
-        box-shadow: 0 0 14px rgba(33, 150, 243, 0.65) !important;
+        background: rgba(30, 41, 59, 0.6) !important;
+        border-color: rgba(56, 189, 248, 0.5) !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
     }
 
     /* 强制主容器 100% 满宽展开，彻底消除宽屏/高分屏下页面偏左与右侧大面积空白 */
@@ -1521,86 +1521,52 @@
         flex-direction: column !important;
         align-items: center !important;
         justify-content: center !important;
-        background: rgba(255, 255, 255, 0.018) !important;
-        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        background: rgba(255, 255, 255, 0.015) !important;
+        border: 1px dashed rgba(255, 255, 255, 0.1) !important;
         border-radius: 6px !important;
         color: #64748b !important;
         text-align: center !important;
         padding: 0 !important;
         box-sizing: border-box !important;
-        transition: border-color 0.2s ease !important;
+        transition: all 0.2s ease !important;
     }
     .pdf-empty-placeholder:hover {
-        border-color: rgba(56, 189, 248, 0.25) !important;
-    }
-    .online-tag-pill {
-        display: inline-block !important;
-        font-size: 11px !important;
-        font-weight: 600 !important;
-        color: #94a3b8 !important;
-        background: rgba(255, 255, 255, 0.05) !important;
-        border: 1px solid rgba(255, 255, 255, 0.08) !important;
-        border-radius: 4px !important;
-        padding: 2px 10px !important;
-        letter-spacing: 0.3px !important;
-    }
-    .online-tag-pill.warn-pill {
-        color: #f59e0b !important;
-        background: rgba(245, 158, 11, 0.1) !important;
-        border-color: rgba(245, 158, 11, 0.25) !important;
-    }
-    .pdf-empty-placeholder .empty-icon {
-        display: none !important;
+        border-color: rgba(56, 189, 248, 0.3) !important;
+        background: rgba(255, 255, 255, 0.025) !important;
     }
     .pdf-empty-placeholder .empty-title {
-        font-size: 13.5px !important;
-        font-weight: 600 !important;
-        color: #cbd5e1 !important;
-        margin-bottom: 4px !important;
-        letter-spacing: 0.2px !important;
-    }
-    .pdf-empty-placeholder .empty-desc {
-        font-size: 11.5px !important;
-        color: #64748b !important;
-        line-height: 1.5 !important;
-        max-width: 85% !important;
-    }
-    .empty-dossier-box {
-        display: grid !important;
-        grid-template-columns: 1fr 1fr !important;
-        gap: 8px 16px !important;
-        background: rgba(255, 255, 255, 0.025) !important;
-        border: 1px solid rgba(255, 255, 255, 0.06) !important;
-        border-radius: 6px !important;
-        padding: 12px 18px !important;
-        width: 80% !important;
-        max-width: 320px !important;
-        margin: 14px 0 !important;
-        box-sizing: border-box !important;
-    }
-    .dossier-item {
-        display: flex !important;
-        justify-content: space-between !important;
-        align-items: center !important;
-        font-size: 11.5px !important;
-    }
-    .dossier-label {
-        color: #64748b !important;
-    }
-    .dossier-val {
-        color: #cbd5e1 !important;
+        font-size: 13px !important;
         font-weight: 500 !important;
+        color: #64748b !important;
+        letter-spacing: 0.3px !important;
+        user-select: none !important;
     }
-    .empty-action-hint {
-        font-size: 11px !important;
-        color: #475569 !important;
+
+    /* 全局 Alert / Info 统一为低饱和哑光 Callout 风格 */
+    div[data-testid="stAlert"] {
+        background: rgba(30, 41, 59, 0.45) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-left: 3px solid #0284c7 !important;
+        border-radius: 6px !important;
+        padding: 10px 14px !important;
     }
-    .pdf-empty-placeholder code {
-        background: rgba(255, 255, 255, 0.05);
-        color: #cbd5e1;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-size: 11px;
+    div[data-testid="stAlert"] svg {
+        color: #38bdf8 !important;
+    }
+    div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] p {
+        font-size: 13px !important;
+        line-height: 1.5 !important;
+        color: #cbd5e1 !important;
+    }
+    html[data-theme="light"] div[data-testid="stAlert"],
+    body.theme-light div[data-testid="stAlert"] {
+        background: #f8fafc !important;
+        border: 1px solid #e2e8f0 !important;
+        border-left: 3px solid #0284c7 !important;
+    }
+    html[data-theme="light"] div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] p,
+    body.theme-light div[data-testid="stAlert"] [data-testid="stMarkdownContainer"] p {
+        color: #334155 !important;
     }
 
     /* 商业级数据大盘与 KPI 卡片样式 */
@@ -1669,33 +1635,19 @@
     body.theme-light .kpi-value { color: #0f172a !important; }
     body.theme-light .kpi-meta { color: #94a3b8 !important; }
     body.theme-light .analytics-divider { background: #e2e8f0 !important; }
-    body.theme-light .pdf-empty-placeholder {
+    body.theme-light .pdf-empty-placeholder,
+    html[data-theme="light"] .pdf-empty-placeholder {
         background: #f8fafc !important;
-        border-color: #e2e8f0 !important;
+        border: 1px dashed #cbd5e1 !important;
     }
-    body.theme-light .pdf-empty-placeholder .empty-title {
-        color: #1e293b !important;
+    body.theme-light .pdf-empty-placeholder:hover,
+    html[data-theme="light"] .pdf-empty-placeholder:hover {
+        border-color: #0284c7 !important;
+        background: #f1f5f9 !important;
     }
-    body.theme-light .pdf-empty-placeholder .empty-desc {
+    body.theme-light .pdf-empty-placeholder .empty-title,
+    html[data-theme="light"] .pdf-empty-placeholder .empty-title {
         color: #64748b !important;
-    }
-    body.theme-light .empty-dossier-box {
-        background: #ffffff !important;
-        border-color: #e2e8f0 !important;
-    }
-    body.theme-light .dossier-label {
-        color: #64748b !important;
-    }
-    body.theme-light .dossier-val {
-        color: #0f172a !important;
-    }
-    body.theme-light .empty-action-hint {
-        color: #94a3b8 !important;
-    }
-    body.theme-light .online-tag-pill {
-        color: #475569 !important;
-        background: #e2e8f0 !important;
-        border-color: #cbd5e1 !important;
     }
 
     /* 卡片底部信息展示（两行：第一行 PDF 文件名，第二行资源链接，超出一行动态省略，鼠标悬停查看完整内容） */
@@ -2093,11 +2045,11 @@
         cursor: not-allowed !important;
     }
     button[data-testid="stBaseButton-primary"] {
-        background: linear-gradient(135deg, #0284c7, #2563eb) !important;
-        border: 1px solid #38bdf8 !important;
+        background: #0284c7 !important;
+        border: 1px solid #0369a1 !important;
         color: #ffffff !important;
         border-radius: 6px !important;
-        box-shadow: 0 2px 10px rgba(56, 189, 248, 0.25) !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12) !important;
         transition: all 0.15s ease !important;
         height: 30px !important;
         min-height: 30px !important;
@@ -2111,8 +2063,9 @@
         box-sizing: border-box !important;
     }
     button[data-testid="stBaseButton-primary"]:hover {
-        background: linear-gradient(135deg, #0369a1, #1d4ed8) !important;
-        box-shadow: 0 0 16px rgba(56, 189, 248, 0.45) !important;
+        background: #0369a1 !important;
+        border-color: #0284c7 !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
     }
     /* 全局按钮内 p 标签压实——防止 Streamlit 默认 margin 撑高 */
     button[data-testid="stBaseButton-secondary"] p,
@@ -2128,32 +2081,95 @@
 
 /* ==================== 批量管理面板 现代运维功能卡片栅格 ==================== */
 
+/* 一体化卡片触控覆盖层：让背后的 Streamlit 按钮全覆盖透明化，实现整卡点击无缝切换 */
+div[data-testid="stColumn"]:has(.maint-card-container) {
+    position: relative !important;
+}
+
+div[data-testid="stColumn"]:has(.maint-card-container) > div[data-testid="stVerticalBlock"] {
+    position: relative !important;
+    gap: 0 !important;
+}
+
+div[data-testid="stColumn"]:has(.maint-card-container) div[data-testid="element-container"]:has(div[data-testid="stButton"]),
+div[data-testid="stColumn"]:has(.maint-card-container) div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]) {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    z-index: 10 !important;
+    pointer-events: auto !important;
+}
+
+div[data-testid="stColumn"]:has(.maint-card-container) div[data-testid="stButton"] {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    z-index: 10 !important;
+}
+
+div[data-testid="stColumn"]:has(.maint-card-container) div[data-testid="stButton"] > button,
+div[data-testid="stColumn"]:has(.maint-card-container) button[data-testid="stBaseButton-secondary"] {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 100% !important;
+    max-height: none !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    border: none !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+    outline: none !important;
+    color: transparent !important;
+    opacity: 0 !important;
+    cursor: pointer !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
 .maint-card-container {
-    background: rgba(30, 41, 59, 0.35);
+    background: rgba(30, 41, 59, 0.45);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
+    border-radius: 10px;
     padding: 16px 18px 14px 18px;
-    margin-bottom: 12px;
+    margin-bottom: 0px !important;
     transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     position: relative;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    min-height: 136px;
+    min-height: 122px;
     box-sizing: border-box;
+    cursor: pointer;
 }
 
-.maint-card-container:hover {
+div[data-testid="stColumn"]:has(.maint-card-container):hover .maint-card-container {
     border-color: rgba(56, 189, 248, 0.4);
-    background: rgba(30, 41, 59, 0.55);
+    background: rgba(30, 41, 59, 0.65);
     transform: translateY(-2px);
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
 .maint-card-container.is-selected {
-    border-color: #38bdf8;
-    background: rgba(56, 189, 248, 0.08);
-    box-shadow: 0 0 0 1px #38bdf8, 0 6px 20px rgba(56, 189, 248, 0.15);
+    border-color: rgba(56, 189, 248, 0.7);
+    background: rgba(56, 189, 248, 0.05);
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.4), 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .maint-card-header {
@@ -2175,8 +2191,8 @@
 }
 
 .maint-card-container.is-selected .maint-card-badge {
-    background: #38bdf8;
-    color: #0f172a;
+    background: #0284c7;
+    color: #ffffff;
     border-color: #38bdf8;
 }
 
@@ -2196,12 +2212,19 @@
 }
 
 .maint-card-tag.tag-sys {
-    color: #38bdf8;
-    border-color: rgba(56, 189, 248, 0.3);
+    color: #94a3b8;
+    border-color: rgba(255, 255, 255, 0.15);
+}
+
+.maint-card-tag.tag-active {
+    background: rgba(56, 189, 248, 0.15) !important;
+    color: #38bdf8 !important;
+    border-color: rgba(56, 189, 248, 0.4) !important;
+    font-weight: 600 !important;
 }
 
 .maint-card-title {
-    font-size: 14px;
+    font-size: 13.5px;
     font-weight: 600;
     color: #f1f5f9;
     margin-bottom: 6px;
@@ -2213,7 +2236,6 @@
     color: #94a3b8;
     line-height: 1.45;
     flex-grow: 1;
-    margin-bottom: 12px;
 }
 
 /* 浅色主题适配 */
@@ -2224,18 +2246,25 @@ body.theme-light .maint-card-container {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-html[data-theme="light"] .maint-card-container:hover,
-body.theme-light .maint-card-container:hover {
+html[data-theme="light"] div[data-testid="stColumn"]:has(.maint-card-container):hover .maint-card-container,
+body.theme-light div[data-testid="stColumn"]:has(.maint-card-container):hover .maint-card-container {
     border-color: #0284c7;
     background: #f8fafc;
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
 }
 
 html[data-theme="light"] .maint-card-container.is-selected,
 body.theme-light .maint-card-container.is-selected {
     border-color: #0284c7;
     background: rgba(2, 132, 199, 0.04);
-    box-shadow: 0 0 0 1px #0284c7, 0 6px 18px rgba(2, 132, 199, 0.1);
+    box-shadow: 0 0 0 1px #0284c7, 0 2px 8px rgba(2, 132, 199, 0.1);
+}
+
+html[data-theme="light"] .maint-card-tag.tag-active,
+body.theme-light .maint-card-tag.tag-active {
+    background: rgba(2, 132, 199, 0.1) !important;
+    color: #0284c7 !important;
+    border-color: rgba(2, 132, 199, 0.3) !important;
 }
 
 html[data-theme="light"] .maint-card-title,

@@ -289,13 +289,18 @@ def render_maint_card_selector(
                     is_active = (opt["key"] == current_val)
                     active_cls = "is-selected" if is_active else ""
                     tag_type = opt.get("tag_type", "default")
+                    tag_html = (
+                        '<span class="maint-card-tag tag-active">● 当前工作区</span>'
+                        if is_active
+                        else f'<span class="maint-card-tag tag-{tag_type}">{T(opt["tag"])}</span>'
+                    )
 
                     st.markdown(
                         f"""
                         <div class="maint-card-container {active_cls}">
                             <div class="maint-card-header">
                                 <span class="maint-card-badge">{opt['badge']}</span>
-                                <span class="maint-card-tag tag-{tag_type}">{T(opt['tag'])}</span>
+                                {tag_html}
                             </div>
                             <div class="maint-card-title">{T(opt['title'])}</div>
                             <div class="maint-card-desc">{T(opt['desc'])}</div>
@@ -303,9 +308,7 @@ def render_maint_card_selector(
                         """,
                         unsafe_allow_html=True
                     )
-                    btn_label = T("✓ 当前工作台") if is_active else T("切换此功能")
-                    btn_type = "primary" if is_active else "secondary"
-                    if st.button(btn_label, key=f"mgrid_{state_key}_{opt['key']}", type=btn_type, use_container_width=True):
+                    if st.button("", key=f"mgrid_{state_key}_{opt['key']}", help=T(f"切换至：{opt['title']}"), use_container_width=True):
                         st.session_state[state_key] = opt["key"]
                         st.rerun()
                 else:
@@ -919,14 +922,14 @@ def render_tab_record_filter():
         {"key": "duplicates", "badge": "01", "title": "数据库多维查重与级联清理", "desc": "按 URL、PDF路径、资源链接与标题联合查重，支持导出独立 DB 并安全级联删除", "tag": "多维去重", "tag_type": "default"},
         {"key": "fanhao", "badge": "02", "title": "日本番号识别与独立库分离", "desc": "严格识别日本正规番号、展示全库番号渠道分布热度，并支持一键分离归档为独立库", "tag": "专项分离", "tag_type": "sys"},
     ]
-    filter_tool = render_maint_card_selector(tab4_options, "record_filter_subtool", cols_per_row=2)
+    filter_tool = render_maint_card_selector(tab4_options, "record_filter_subtool", cols_per_row=3)
     
     st.markdown("---")
     
     # ---------------- 1. 数据库多维记录查重 ----------------
     if filter_tool in ("duplicates", "1.") or filter_tool.startswith("1."):
         st.markdown(T("#### 数据库记录多维查重、独立 DB 导出与批量去重 (强制级联删除 PDF)"))
-        st.info(T("检测数据库重复记录，支持导出为独立 SQLite .db 库。**去重判定条件**：① 默认优先在优质非 HTTP 链接（如 magnet 磁力）与含物理 PDF 记录中筛选并按 ID 保留唯一一条；② 若勾选【仅删除链接包含 http】，则严格保护磁力链等非 HTTP 记录，仅清理含 http 的网页/中转链接副本；③ 若勾选【仅删除无 PDF】，则仅清理未关联 PDF 的多余链接副本。"))
+        st.info(T("多维检测与批量去重，支持安全级联删除关联 PDF 文件并自动导出独立 .db 备份。可在下方勾选参数调整保留与过滤策略。"))
         
         with st.form("record_duplicates_form", clear_on_submit=False):
             c1, c2, c3 = st.columns([1.1, 1.3, 1.1])
@@ -1050,8 +1053,8 @@ def render_tab_system_and_cache():
     db_path = get_db_path()
     
     tab5_options = [
-        {"key": "warmup", "badge": "01", "title": "PDF 缩略图全量并发预热", "desc": "离线将全库 PDF 首页渲染为高质量 JPEG 写入缓存，保障画廊浏览 0 毫秒秒开", "tag": "性能加速", "tag_type": "sys"},
-        {"key": "backup", "badge": "02", "title": "数据库一键热备份与管理", "desc": "基于 SQLite 在线热备份 API 创建带时间戳的安全副本，保障数据零丢失", "tag": "容灾备份", "tag_type": "default"},
+        {"key": "warmup", "badge": "01", "title": "PDF 缩略图全量并发预热", "desc": "离线并发将全库 PDF 首页光栅化渲染为 JPEG 写入高速缓存，加速画廊浏览", "tag": "性能加速", "tag_type": "sys"},
+        {"key": "backup", "badge": "02", "title": "数据库一键热备份与管理", "desc": "基于 SQLite 在线热备份 API 创建带时间戳的安全副本，保障数据完整性", "tag": "容灾备份", "tag_type": "default"},
         {"key": "vacuum", "badge": "03", "title": "数据库碎片整理与压缩", "desc": "执行 VACUUM 重建数据库文件索引、释放删除产生的页空洞并缩减磁盘占用", "tag": "存储优化", "tag_type": "warn"},
     ]
     sys_tool = render_maint_card_selector(tab5_options, "sys_subtool", cols_per_row=3)
@@ -1061,7 +1064,7 @@ def render_tab_system_and_cache():
     # ---------------- 1. PDF 缩略图全量并发预热 ----------------
     if sys_tool in ("warmup", "1.") or sys_tool.startswith("1."):
         st.markdown(T("#### PDF 缩略图全量并发预热 (PDF Thumbnail Cache Warmup)"))
-        st.info(T("批量/离线并发将数据库中所有 PDF 文件的第一页光栅化渲染为高质 JPEG 写入 cache/pdf_thumbs，浏览时 100% 命中缓存，实现 0 毫秒秒开。"))
+        st.info(T("并发预生成全库 PDF 首页高质缩略图并写入本地高速缓存，大幅加速画廊浏览体验。可在下方调整渲染并发度与画质参数。"))
         
         # 统计当前缓存状态
         os.makedirs(PDF_THUMB_CACHE_DIR, exist_ok=True)
