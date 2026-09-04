@@ -252,30 +252,86 @@ def render_operation_result(
 # 1. 面板一： PDF 生命周期维护 (fixes/pdf_maintenance.py)
 # ===================================================================
 
+
+
+# ===================================================================
+# 现代运维功能卡片栅格选择矩阵 (Action Cards Grid Selector)
+# ===================================================================
+
+def render_maint_card_selector(
+    options: List[Dict[str, Any]],
+    state_key: str,
+    cols_per_row: int = 4
+) -> str:
+    """渲染现代化运维功能卡片栅格选择矩阵。"""
+    if state_key not in st.session_state:
+        st.session_state[state_key] = options[0]["key"]
+    current_val = st.session_state[state_key]
+
+    all_keys = [o["key"] for o in options]
+    if current_val not in all_keys:
+        matched = None
+        for o in options:
+            if str(current_val).startswith(o["badge"]) or str(current_val).startswith(o["key"]):
+                matched = o["key"]
+                break
+        current_val = matched or options[0]["key"]
+        st.session_state[state_key] = current_val
+
+    rows = [options[i:i + cols_per_row] for i in range(0, len(options), cols_per_row)]
+
+    for row_idx, row_opts in enumerate(rows):
+        cols = st.columns(cols_per_row)
+        for col_idx in range(cols_per_row):
+            with cols[col_idx]:
+                if col_idx < len(row_opts):
+                    opt = row_opts[col_idx]
+                    is_active = (opt["key"] == current_val)
+                    active_cls = "is-selected" if is_active else ""
+                    tag_type = opt.get("tag_type", "default")
+
+                    st.markdown(
+                        f"""
+                        <div class="maint-card-container {active_cls}">
+                            <div class="maint-card-header">
+                                <span class="maint-card-badge">{opt['badge']}</span>
+                                <span class="maint-card-tag tag-{tag_type}">{T(opt['tag'])}</span>
+                            </div>
+                            <div class="maint-card-title">{T(opt['title'])}</div>
+                            <div class="maint-card-desc">{T(opt['desc'])}</div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                    btn_label = T("✓ 当前工作台") if is_active else T("切换此功能")
+                    btn_type = "primary" if is_active else "secondary"
+                    if st.button(btn_label, key=f"mgrid_{state_key}_{opt['key']}", type=btn_type, use_container_width=True):
+                        st.session_state[state_key] = opt["key"]
+                        st.rerun()
+                else:
+                    st.empty()
+
+    st.markdown('<div class="analytics-divider" style="margin: 14px 0 20px 0;"></div>', unsafe_allow_html=True)
+    return current_val
+
 def render_tab_pdf_maintenance():
     db_path = get_db_path()
     
-    tool_choice = st.radio(
-        T("选择 PDF 维护子功能"),
-        [
-            "1. 日期比对审计 (check-dates)",
-            "2. 路径与文件名纠偏 (fix-paths)",
-            "3. 微小/损坏 PDF 重抓 (redownload <20KB)",
-            "4. 缺失 PDF 并发重建 (rebuild)",
-            "5. 孤立 PDF 隔离与还原 (orphan)",
-            "6. 磁盘未关联 PDF 智能回填 (associate)",
-            "7. 清理失效 PDF 记录 (clean-missing)",
-        ],
-        horizontal=True,
-        key="pdf_maint_subtool",
-        format_func=T,
-        label_visibility="collapsed"
-    )
+    tab1_options = [
+        {"key": "check-dates", "badge": "01", "title": "日期比对审计", "desc": "扫描物理 PDF，提取文件名日期比对数据库发布时间并生成报告", "tag": "常规审计", "tag_type": "default"},
+        {"key": "fix-paths", "badge": "02", "title": "路径文件名纠偏", "desc": "提取真实发布日期批量修正文件名，并按年份归档纠偏子目录", "tag": "路径纠偏", "tag_type": "default"},
+        {"key": "redownload", "badge": "03", "title": "损坏小文件重抓", "desc": "识别体积过小 (<20KB) 或损坏文件，重新调用爬虫发起无损重抓", "tag": "完整性", "tag_type": "warn"},
+        {"key": "rebuild", "badge": "04", "title": "缺失 PDF 重建", "desc": "全量扫描缺失 PDF 快照，从源站并发批量抓取生成并纠偏路径", "tag": "深度重建", "tag_type": "warn"},
+        {"key": "orphan", "badge": "05", "title": "孤立文件隔离还原", "desc": "扫描磁盘存在但数据库未登记的孤儿 PDF，支持安全隔离或回填", "tag": "资产管理", "tag_type": "sys"},
+        {"key": "associate", "badge": "06", "title": "磁盘未关联回填", "desc": "基于文件名与标题相似度，将断链或未关联的磁盘 PDF 回填数据库", "tag": "智能关联", "tag_type": "sys"},
+        {"key": "clean-missing", "badge": "07", "title": "清理失效死链记录", "desc": "检测数据库中对应物理 PDF 已丢失的死链，一键安全剔除悬空记录", "tag": "强力清理", "tag_type": "warn"},
+    ]
+    tool_choice = render_maint_card_selector(tab1_options, "pdf_maint_subtool", cols_per_row=4)
     
     st.markdown("---")
     
     # ---------------- 1. 日期比对审计 ----------------
-    if tool_choice.startswith("1."):
+    if tool_choice in ("check-dates", "1.") or tool_choice.startswith("1."):
         st.markdown(T("#### PDF 文件与数据库发布日期比对审计"))
         st.info(T("递归扫描 pdf/ 物理文件，提取文件名中的日期与标题，比对数据库中的 publish_time，并可一键生成 Markdown 审计报告。"))
         
@@ -383,7 +439,7 @@ def render_tab_pdf_maintenance():
                     st.dataframe(pd.DataFrame(res["db_not_found"]), use_container_width=True, hide_index=True)
 
     # ---------------- 2. 路径与文件名纠偏 ----------------
-    elif tool_choice.startswith("2."):
+    elif tool_choice in ("fix-paths", "2.") or tool_choice.startswith("2."):
         st.markdown(T("#### PDF 文件名日期修正与年份目录纠偏 (fix-paths)"))
         st.info(T("纠偏 Unknown_Year 下的 Unknown_Date 文件，根据数据库发布日期重命名并迁移至正确年份文件夹，同时同步更新数据库中的 pdf_path。"))
         
@@ -411,7 +467,7 @@ def render_tab_pdf_maintenance():
                 render_operation_result(log.get_text(), default_label=T("纠偏执行完成" if btn_run_fix else "预览扫描完成"), is_run=btn_run_fix)
 
     # ---------------- 3. 微小/损坏 PDF 重抓 ----------------
-    elif tool_choice.startswith("3."):
+    elif tool_choice in ("redownload", "3.") or tool_choice.startswith("3."):
         st.markdown(T("#### 重新抓取渲染体积过小 (<20KB) 的损坏 PDF (redownload)"))
         st.info(T("扫描物理目录中体积小于 20KB 的损坏/空白 PDF，拉起 Playwright 无头浏览器重新访问源 URL，渲染生成标准 A4 边距 PDF 并覆盖旧文件。"))
         
@@ -443,7 +499,7 @@ def render_tab_pdf_maintenance():
             render_operation_result(log.get_text(), default_label=T("重抓渲染完成！"), is_run=True)
 
     # ---------------- 4. 缺失 PDF 并发重建 ----------------
-    elif tool_choice.startswith("4."):
+    elif tool_choice in ("rebuild", "4.") or tool_choice.startswith("4."):
         st.markdown(T("#### 重建缺失 PDF 文件与路径相对化 (rebuild)"))
         st.info(T("扫描数据库中所有记录，将绝对路径统一转换为相对路径；对本地物理缺失的 PDF 支持多线程 Playwright 并发重新生成。"))
         
@@ -478,7 +534,7 @@ def render_tab_pdf_maintenance():
             render_operation_result(log.get_text(), default_label=T("操作完成！" if btn_rebuild_run else "预览扫描完成"), is_run=btn_rebuild_run)
 
     # ---------------- 5. 孤立 PDF 隔离与还原 ----------------
-    elif tool_choice.startswith("5."):
+    elif tool_choice in ("orphan", "5.") or tool_choice.startswith("5."):
         st.markdown(T("#### 多余/孤立 PDF 文件管理与还原 (orphan)"))
         st.info(T("将数据库中无记录的多余/废弃 PDF 隔离移至 /pdf 根目录；或从根目录智能分析归属还原归位回年份子目录。"))
         
@@ -515,7 +571,7 @@ def render_tab_pdf_maintenance():
             render_operation_result(log.get_text(), default_label=T("隔离/归位操作完成" if btn_orphan_run else "孤立文件分析完成"), is_run=btn_orphan_run)
 
     # ---------------- 6. 磁盘未关联 PDF 智能回填 ----------------
-    elif tool_choice.startswith("6."):
+    elif tool_choice in ("associate", "6.") or tool_choice.startswith("6."):
         st.markdown(T("#### 扫描磁盘未关联/断链 PDF 智能回填数据库 (associate)"))
         st.info(T("精准比对数据库，找出物理文件存在但数据库 pdf_path 为空或断链的记录，通过标题与站点来源自动关联回填。"))
         
@@ -541,7 +597,7 @@ def render_tab_pdf_maintenance():
             render_operation_result(log.get_text(), default_label=T("关联入库完成" if btn_assoc_run else "关联计划预览完成"), is_run=btn_assoc_run)
 
     # ---------------- 7. 清理失效 PDF 记录 ----------------
-    elif tool_choice.startswith("7."):
+    elif tool_choice in ("clean-missing", "7.") or tool_choice.startswith("7."):
         st.markdown(T("#### 清理数据库中对应物理 PDF 已丢失的残留脏记录 (clean-missing)"))
         st.info(T("反向扫描数据库，检测 pdf_path 指向的物理文件是否真实存在，批量删除物理文件已不存在的数据库脏记录，并自动 VACUUM 回收空间。"))
         
@@ -577,6 +633,29 @@ def render_tab_pdf_maintenance():
 
 def render_tab_pdf_dedup():
     db_path = get_db_path()
+    
+    st.markdown(
+        """
+        <div class="kpi-scorecard-grid" style="margin-bottom: 18px;">
+            <div class="kpi-card">
+                <div class="kpi-label">物理哈希去重 (hash)</div>
+                <div class="kpi-value" style="font-size: 18px;">MD5 严格一致</div>
+                <div class="kpi-meta">扫描物理文件 MD5 哈希，安全剔除冗余物理副本并重定向</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">同名变体识别 (name)</div>
+                <div class="kpi-value" style="font-size: 18px;">_1 / _2 后缀版本</div>
+                <div class="kpi-meta">智能识别重名或历史追加后缀，统一保留最高质量版本</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-label">跨记录重复清理 (db)</div>
+                <div class="kpi-value" style="font-size: 18px;">数据库多重绑定</div>
+                <div class="kpi-meta">清理不同记录指向同一 PDF 实体的死链与重复引用行</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     
     with st.form("pdf_dedup_form", clear_on_submit=False):
         col1, col2, col3, col4 = st.columns([1.1, 1.5, 0.9, 0.9])
@@ -641,25 +720,19 @@ def render_tab_pdf_dedup():
 def render_tab_data_cleaner():
     db_path = get_db_path()
     
-    sub_tool = st.radio(
-        T("选择数据清洗子功能"),
-        [
-            "1. 广告与推广噪声清洗 (clean-noise)",
-            "2. 域名/镜像批量替换 (replace-domain)",
-            "3. 表结构升级与元数据提取 (upgrade-db)",
-            "4. Darklyn 磁力大小并发补全 (fetch-sizes)",
-            "5. 空资源链接 Playwright 重抓 (fetch-empty-links)",
-        ],
-        horizontal=True,
-        key="cleaner_subtool",
-        format_func=T,
-        label_visibility="collapsed"
-    )
+    tab3_options = [
+        {"key": "clean-noise", "badge": "01", "title": "广告推广噪声清洗", "desc": "扫描 resource_link 剔除广告推广行、废弃说明与无效空行，支持同步云端", "tag": "推荐常规", "tag_type": "default"},
+        {"key": "replace-domain", "badge": "02", "title": "域名镜像批量替换", "desc": "采集站域名变更或镜像发布页失效时，批量替换 resources.url 中的旧域名", "tag": "链接重定向", "tag_type": "sys"},
+        {"key": "upgrade-db", "badge": "03", "title": "表结构与元数据提取", "desc": "自动补全缺失字段、迁移分类与格式标签、正则提取并索引标准番号", "tag": "架构维护", "tag_type": "sys"},
+        {"key": "fetch-sizes", "badge": "04", "title": "磁力大小并发补全", "desc": "针对缺少大小字段的 Darklyn 记录，异步并发嗅探磁力链接真实体积与格式", "tag": "元数据补全", "tag_type": "default"},
+        {"key": "fetch-empty-links", "badge": "05", "title": "空外链 Playwright 重抓", "desc": "启动 Playwright 无头浏览器渲染，穿透动态 JS 嗅探缺失的真实下载链接", "tag": "深度抓取", "tag_type": "warn"},
+    ]
+    clean_tool = render_maint_card_selector(tab3_options, "cleaner_subtool", cols_per_row=3)
     
     st.markdown("---")
     
     # ---------------- 1. 广告与推广噪声清洗 ----------------
-    if sub_tool.startswith("1."):
+    if clean_tool in ("clean-noise", "1.") or clean_tool.startswith("1."):
         st.markdown(T("#### 清理 resource_link 广告与标签噪声 (clean-noise)"))
         st.info(T("扫描 resource_link 剔除广告推广行、下载渠道废弃说明、多余标签以及无用空行。支持同步云端 Supabase 与 AWS DynamoDB。"))
         
@@ -694,7 +767,7 @@ def render_tab_data_cleaner():
             render_operation_result(log.get_text(), default_label=T("噪声清洗完成" if btn_run else "噪声预览完成"), is_run=btn_run)
 
     # ---------------- 2. 域名/镜像批量替换 ----------------
-    elif sub_tool.startswith("2."):
+    elif clean_tool in ("replace-domain", "2.") or clean_tool.startswith("2."):
         st.markdown(T("#### 批量替换 URL 中的域名或镜像子串 (replace-domain)"))
         st.info(T("当采集源网站域名变更或发布页镜像更新时，批量替换 resources.url 中的旧域名（如 dyh.393659.xyz 替换为 dtn.628563.xyz）。"))
         
@@ -740,7 +813,7 @@ def render_tab_data_cleaner():
             render_operation_result(log.get_text(), default_label=T("域名替换完成" if btn_rep_run else "匹配预览完成"), is_run=btn_rep_run)
 
     # ---------------- 3. 表结构升级与元数据提取 ----------------
-    elif sub_tool.startswith("3."):
+    elif clean_tool in ("upgrade-db", "3.") or clean_tool.startswith("3."):
         st.markdown(T("#### 数据库表结构升级与历史元数据提取 (upgrade-db)"))
         st.info(T("自动升级 resources 表对齐标准 12 字段并建立索引；从历史记录提取 size、resource_format、pikpak_link 并批量回填。"))
         
@@ -767,7 +840,7 @@ def render_tab_data_cleaner():
             render_operation_result(log.get_text(), default_label=T("表结构升级完成" if btn_up_run else "表结构检查完成"), is_run=btn_up_run)
 
     # ---------------- 4. Darklyn 磁力大小并发补全 ----------------
-    elif sub_tool.startswith("4."):
+    elif clean_tool in ("fetch-sizes", "4.") or clean_tool.startswith("4."):
         st.markdown(T("#### Darklyn API 磁力链接大小批量补全 (fetch-sizes)"))
         st.info(T("扫描数据库中缺失 size 的磁力链接，并发调用 Darklyn API 批量查询真实文件大小并回填数据库。"))
         
@@ -804,7 +877,7 @@ def render_tab_data_cleaner():
             render_operation_result(log.get_text(), default_label=T("磁力大小补全完成！" if btn_fs_run else "扫描完成"), is_run=btn_fs_run)
 
     # ---------------- 5. 空资源链接 Playwright 重抓 ----------------
-    elif sub_tool.startswith("5."):
+    elif clean_tool in ("fetch-empty-links", "5.") or clean_tool.startswith("5."):
         st.markdown(T("#### Playwright 重新访问页面抓取并回填空资源链接 (fetch-empty-links)"))
         st.info(T("针对数据库中 resource_link 为空的记录，拉起 Playwright 无头浏览器重新请求页面，解析正文回填资源链接。"))
         
@@ -842,22 +915,16 @@ def render_tab_data_cleaner():
 def render_tab_record_filter():
     db_path = get_db_path()
     
-    sub_tool = st.radio(
-        T("选择过滤与去重子功能"),
-        [
-            "1. 数据库多维记录查重与级联清理 (duplicates)",
-            "2. 严格日本番号识别、分布统计与独立库导出 (fanhao)",
-        ],
-        horizontal=True,
-        key="record_filter_subtool",
-        format_func=T,
-        label_visibility="collapsed"
-    )
+    tab4_options = [
+        {"key": "duplicates", "badge": "01", "title": "数据库多维查重与级联清理", "desc": "按 URL、PDF路径、资源链接与标题联合查重，支持导出独立 DB 并安全级联删除", "tag": "多维去重", "tag_type": "default"},
+        {"key": "fanhao", "badge": "02", "title": "日本番号识别与独立库分离", "desc": "严格识别日本正规番号、展示全库番号渠道分布热度，并支持一键分离归档为独立库", "tag": "专项分离", "tag_type": "sys"},
+    ]
+    filter_tool = render_maint_card_selector(tab4_options, "record_filter_subtool", cols_per_row=2)
     
     st.markdown("---")
     
     # ---------------- 1. 数据库多维记录查重 ----------------
-    if sub_tool.startswith("1."):
+    if filter_tool in ("duplicates", "1.") or filter_tool.startswith("1."):
         st.markdown(T("#### 数据库记录多维查重、独立 DB 导出与批量去重 (强制级联删除 PDF)"))
         st.info(T("检测数据库重复记录，支持导出为独立 SQLite .db 库。**去重判定条件**：① 默认优先在优质非 HTTP 链接（如 magnet 磁力）与含物理 PDF 记录中筛选并按 ID 保留唯一一条；② 若勾选【仅删除链接包含 http】，则严格保护磁力链等非 HTTP 记录，仅清理含 http 的网页/中转链接副本；③ 若勾选【仅删除无 PDF】，则仅清理未关联 PDF 的多余链接副本。"))
         
@@ -946,7 +1013,7 @@ def render_tab_record_filter():
             render_operation_result(log.get_text(), default_label=T(complete_text), is_run=btn_dup_run)
 
     # ---------------- 2. 严格日本番号识别 ----------------
-    elif sub_tool.startswith("2."):
+    elif filter_tool in ("fanhao", "2.") or filter_tool.startswith("2."):
         st.markdown(T("#### 严格日本番号识别、前缀分布统计与独立库导出 (fanhao)"))
         st.info(T("基于严格算法精准识别标题中的日本番号，统计 Top 20 厂商前缀分布；可一键将番号记录导出为独立 SQLite 库，或批量删除并级联清理对应 PDF。"))
         
@@ -982,23 +1049,17 @@ def render_tab_record_filter():
 def render_tab_system_and_cache():
     db_path = get_db_path()
     
-    sub_tool = st.radio(
-        T("选择运维子功能"),
-        [
-            "1. PDF 缩略图全量并发预热 (warmup_all_pdf_cache)",
-            "2. 数据库一键备份与备份管理 (backup_db)",
-            "3. 数据库碎片整理与压缩 (vacuum_db)",
-        ],
-        horizontal=True,
-        key="sys_subtool",
-        format_func=T,
-        label_visibility="collapsed"
-    )
+    tab5_options = [
+        {"key": "warmup", "badge": "01", "title": "PDF 缩略图全量并发预热", "desc": "离线将全库 PDF 首页渲染为高质量 JPEG 写入缓存，保障画廊浏览 0 毫秒秒开", "tag": "性能加速", "tag_type": "sys"},
+        {"key": "backup", "badge": "02", "title": "数据库一键热备份与管理", "desc": "基于 SQLite 在线热备份 API 创建带时间戳的安全副本，保障数据零丢失", "tag": "容灾备份", "tag_type": "default"},
+        {"key": "vacuum", "badge": "03", "title": "数据库碎片整理与压缩", "desc": "执行 VACUUM 重建数据库文件索引、释放删除产生的页空洞并缩减磁盘占用", "tag": "存储优化", "tag_type": "warn"},
+    ]
+    sys_tool = render_maint_card_selector(tab5_options, "sys_subtool", cols_per_row=3)
     
     st.markdown("---")
     
     # ---------------- 1. PDF 缩略图全量并发预热 ----------------
-    if sub_tool.startswith("1."):
+    if sys_tool in ("warmup", "1.") or sys_tool.startswith("1."):
         st.markdown(T("#### PDF 缩略图全量并发预热 (PDF Thumbnail Cache Warmup)"))
         st.info(T("批量/离线并发将数据库中所有 PDF 文件的第一页光栅化渲染为高质 JPEG 写入 cache/pdf_thumbs，浏览时 100% 命中缓存，实现 0 毫秒秒开。"))
         
@@ -1117,7 +1178,7 @@ def render_tab_system_and_cache():
                 st.success(T(f"全量预热完成！本次成功渲染 {success_count} 个 PDF，总耗时 {(time.perf_counter() - t0):.2f} 秒。"))
 
     # ---------------- 2. 数据库一键备份与管理 ----------------
-    elif sub_tool.startswith("2."):
+    elif sys_tool in ("backup", "2.") or sys_tool.startswith("2."):
         st.markdown(T("#### 数据库一键备份与历史备份管理 (backup_db)"))
         st.info(T("在执行任何维护操作前创建带精确时间戳的 .bak 备份文件，确保数据绝对安全。"))
         
@@ -1146,7 +1207,7 @@ def render_tab_system_and_cache():
             st.dataframe(pd.DataFrame(bak_data), use_container_width=True, hide_index=True)
 
     # ---------------- 3. 数据库碎片整理与压缩 ----------------
-    elif sub_tool.startswith("3."):
+    elif sys_tool in ("vacuum", "3.") or sys_tool.startswith("3."):
         st.markdown(T("#### 数据库碎片整理与空间压缩 (vacuum_db)"))
         st.info(T("批量删除记录或更新数据后，SQLite 不会自动缩小文件体积。执行 VACUUM 可彻底清理碎片、重建索引并释放磁盘物理空间。"))
         

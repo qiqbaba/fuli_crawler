@@ -1,0 +1,2280 @@
+    /* ==================== 全局主题与高能加载/计算状态视觉规范 ==================== */
+    
+    /* 默认 (深色主题) CSS 变量：极简克制与现代质感 */
+    :root {
+        --loading-mask-bg: rgba(9, 13, 22, 0.35);
+        --loading-mask-filter: blur(2px) brightness(0.9);
+        --loading-hud-bg: rgba(15, 23, 42, 0.94);
+        --loading-hud-border: rgba(255, 255, 255, 0.12);
+        --loading-hud-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+        --loading-hud-text: #f1f5f9;
+        --loading-spinner-track: rgba(255, 255, 255, 0.1);
+        --loading-spinner-top: #38bdf8;
+        --loading-spinner-right: rgba(56, 189, 248, 0.5);
+        --loading-glow-gradient: linear-gradient(90deg, rgba(56, 189, 248, 0.15), #38bdf8, rgba(56, 189, 248, 0.15));
+        --loading-glow-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+    }
+
+    /* 浅色主题 CSS 变量覆盖：纯净极简 */
+    :root[data-theme="light"],
+    html[data-theme="light"],
+    body[data-theme="light"],
+    body.theme-light,
+    .stApp[data-theme="light"],
+    .theme-light {
+        --loading-mask-bg: rgba(248, 250, 252, 0.45);
+        --loading-mask-filter: blur(2px) brightness(1.01);
+        --loading-hud-bg: rgba(255, 255, 255, 0.98);
+        --loading-hud-border: #e2e8f0;
+        --loading-hud-shadow: 0 12px 30px rgba(0, 0, 0, 0.08);
+        --loading-hud-text: #0f172a;
+        --loading-spinner-track: #f1f5f9;
+        --loading-spinner-top: #0284c7;
+        --loading-spinner-right: #38bdf8;
+        --loading-glow-gradient: linear-gradient(90deg, rgba(2, 132, 199, 0.15), #0284c7, rgba(2, 132, 199, 0.15));
+        --loading-glow-shadow: 0 0 8px rgba(2, 132, 199, 0.2);
+    }
+
+    /* 浅色模式复选框 (Checkbox) 静态兜底 */
+    html[data-theme="light"] div[data-testid="stCheckbox"] label,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label *,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label * {
+        color: #1e293b !important;
+    }
+    html[data-theme="light"] div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) > div:first-of-type,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) [class*="e1e6q2zh4"],
+    body[data-theme="light"] div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) > div:first-of-type,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label:not([data-selected="true"]):not([data-checked="true"]) [class*="e1e6q2zh4"] {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        border: 1.5px solid #cbd5e1 !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+    }
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] > div:first-of-type,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-checked="true"] > div:first-of-type,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] [class*="e1e6q2zh4"],
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] > div:first-of-type,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-checked="true"] > div:first-of-type,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] [class*="e1e6q2zh4"] {
+        background-color: #0284c7 !important;
+        background: #0284c7 !important;
+        border: 1.5px solid #0284c7 !important;
+    }
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] > div:first-of-type svg,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] [class*="e1e6q2zh4"] svg,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-checked="true"] > div:first-of-type svg,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] > div:first-of-type svg,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] [class*="e1e6q2zh4"] svg,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-checked="true"] > div:first-of-type svg,
+    html[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] svg polyline,
+    body[data-theme="light"] div[data-testid="stCheckbox"] label[data-selected="true"] svg polyline {
+        stroke: #ffffff !important;
+        fill: none !important;
+    }
+
+    /* 全局 Tooltip 提示图标基准重置 (彻底消除黑色/白色方框与边框，恢复极简圆形图标) */
+    div[data-testid="stTooltipIcon"],
+    div[data-testid="stTooltipIcon"] *,
+    div[data-testid="stTooltipIcon"] button,
+    div[data-testid="stTooltipIcon"] div[data-testid="stPopover"] button {
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        border-radius: 50% !important;
+        box-shadow: none !important;
+        outline: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        min-height: unset !important;
+        height: auto !important;
+        width: auto !important;
+        cursor: pointer !important;
+    }
+    div[data-testid="stTooltipIcon"] svg {
+        display: inline-block !important;
+        width: 16px !important;
+        height: 16px !important;
+        fill: currentColor !important;
+        stroke: none !important;
+        color: #94a3b8 !important;
+        opacity: 0.85 !important;
+        vertical-align: middle !important;
+    }
+    html[data-theme="light"] div[data-testid="stTooltipIcon"] svg,
+    body[data-theme="light"] div[data-testid="stTooltipIcon"] svg,
+    body.theme-light div[data-testid="stTooltipIcon"] svg {
+        color: #64748b !important;
+        fill: #64748b !important;
+        stroke: none !important;
+    }
+
+    /* 选项文字与 Label 容器背景保护：禁止任何背景突出框与边框 */
+    div[data-testid="stWidgetLabel"],
+    div[data-testid="stWidgetLabel"] *,
+    div[data-testid="stCheckbox"] [data-testid="stWidgetLabel"],
+    div[data-testid="stCheckbox"] [data-testid="stWidgetLabel"] *,
+    div[data-testid="stRadio"] [data-testid="stWidgetLabel"],
+    div[data-testid="stRadio"] [data-testid="stWidgetLabel"] *,
+    div[data-testid="stCheckbox"] [data-testid="stMarkdownContainer"],
+    div[data-testid="stCheckbox"] [data-testid="stMarkdownContainer"] *,
+    div[data-testid="stRadio"] [data-testid="stMarkdownContainer"],
+    div[data-testid="stRadio"] [data-testid="stMarkdownContainer"] * {
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+
+    /* 浅色模式单选框 (Radio) 静态兜底 */
+    html[data-theme="light"] div[data-testid="stRadio"] label,
+    html[data-theme="light"] div[data-testid="stRadio"] label *,
+    body[data-theme="light"] div[data-testid="stRadio"] label,
+    body[data-theme="light"] div[data-testid="stRadio"] label * {
+        color: #1e293b !important;
+    }
+    html[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9234"],
+    html[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child,
+    body[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9234"],
+    body[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+        border: 1.5px solid #cbd5e1 !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+    }
+    html[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9235"],
+    html[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child > div,
+    body[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) [class*="etak9235"],
+    body[data-theme="light"] div[data-testid="stRadioOption"]:not([data-selected="true"]) label > div > div > div:first-child > div {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+    }
+    html[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9234"],
+    html[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child,
+    body[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9234"],
+    body[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child {
+        background-color: #0284c7 !important;
+        background: #0284c7 !important;
+        border: 1.5px solid #0284c7 !important;
+    }
+    html[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9235"],
+    html[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child > div,
+    body[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] [class*="etak9235"],
+    body[data-theme="light"] div[data-testid="stRadioOption"][data-selected="true"] label > div > div > div:first-child > div {
+        background-color: #ffffff !important;
+        background: #ffffff !important;
+    }
+
+    /* 顶部极细加载进度扫描动效 */
+    @keyframes topGlowFlow {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+
+    /* 悬浮 HUD 深色模式呼吸微动效（克制平缓） */
+    @keyframes hudPulseGlowDark {
+        0%, 100% {
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+            border-color: rgba(255, 255, 255, 0.12);
+        }
+        50% {
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 12px rgba(56, 189, 248, 0.15);
+            border-color: rgba(56, 189, 248, 0.35);
+        }
+    }
+
+    /* 悬浮 HUD 浅色模式呼吸微动效（克制平缓） */
+    @keyframes hudPulseGlowLight {
+        0%, 100% {
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+            border-color: #e2e8f0;
+        }
+        50% {
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.09), 0 0 10px rgba(2, 132, 199, 0.1);
+            border-color: #cbd5e1;
+        }
+    }
+
+    /* 环形旋转加载动画 */
+    @keyframes spinLoadingRing {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    /* 悬浮弹窗平滑浮现 */
+    @keyframes hudModalFadeIn {
+        0% {
+            opacity: 0;
+            transform: translate(-50%, -44%) scale(0.95);
+        }
+        100% {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+        }
+    }
+
+    /* 彻底消除 Streamlit 默认对主容器粗暴降透明度导致的灰屏发暗问题 */
+    .stApp[data-test-script-state="running"] > .stAppViewContainer,
+    .stApp[data-test-script-state="running"] [data-testid="stMain"],
+    .stApp[data-test-script-state="running"] .stMain,
+    .stApp[data-test-script-state="running"] [data-testid="stAppViewBlockContainer"],
+    .stApp[data-test-script-state="running"] [data-testid="stMainBlockContainer"],
+    .stApp[data-test-script-state="running"] .stMainBlockContainer {
+        opacity: 1 !important;
+        filter: none !important;
+    }
+
+    /* 运行状态：彻底移除全屏磨砂遮罩，避免遮挡和模糊下方已流式渲染完成的卡片与控件 */
+    .stApp[data-test-script-state="running"]::after {
+        display: none !important;
+        content: none !important;
+    }
+
+    /* 运行状态：顶部极细加载光带（2px 极简线条，自适应单色微光） */
+    .stApp[data-test-script-state="running"]::before {
+        content: "" !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 2px !important;
+        background: var(--loading-glow-gradient, linear-gradient(90deg, rgba(56, 189, 248, 0.2), #38bdf8, rgba(56, 189, 248, 0.2))) !important;
+        background-size: 200% 100% !important;
+        animation: topGlowFlow 1.6s infinite linear !important;
+        box-shadow: var(--loading-glow-shadow, 0 0 8px rgba(56, 189, 248, 0.3)) !important;
+        z-index: 9999999 !important;
+        pointer-events: none !important;
+    }
+
+    /* 悬浮 HUD 加载器：轻量浮动胶囊（位于右下角，非侵入式，极简现代设计） */
+    #app-global-loading-hud {
+        position: fixed !important;
+        bottom: 24px !important;
+        right: 24px !important;
+        top: auto !important;
+        left: auto !important;
+        transform: translateY(16px) scale(0.96) !important;
+        z-index: 99999999 !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 9px !important;
+        background: var(--loading-hud-bg, rgba(15, 23, 42, 0.94)) !important;
+        backdrop-filter: blur(16px) !important;
+        -webkit-backdrop-filter: blur(16px) !important;
+        border: 1px solid var(--loading-hud-border, rgba(255, 255, 255, 0.12)) !important;
+        border-radius: 24px !important;
+        padding: 7px 14px !important;
+        box-shadow: var(--loading-hud-shadow, 0 12px 32px rgba(0, 0, 0, 0.5)) !important;
+        pointer-events: none !important;
+        user-select: none !important;
+        opacity: 0 !important;
+        visibility: hidden !important;
+        transition: opacity 0.2s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.2s, transform 0.2s, background-color 0.25s, border-color 0.25s, box-shadow 0.25s !important;
+    }
+
+    /* 仅当显式激活（长耗时/搜索按键）时优雅浮现，绝对不遮挡屏幕正中内容 */
+    #app-global-loading-hud.is-active {
+        opacity: 1 !important;
+        visibility: visible !important;
+        transform: translateY(0) scale(1) !important;
+        animation: hudPulseGlowDark 2.5s infinite ease-in-out !important;
+    }
+
+    /* 浅色主题激活状态下的 HUD 呼吸动画 */
+    html[data-theme="light"] #app-global-loading-hud.is-active,
+    body[data-theme="light"] #app-global-loading-hud.is-active,
+    body.theme-light #app-global-loading-hud.is-active,
+    #app-global-loading-hud.hud-theme-light.is-active,
+    #app-global-loading-hud[data-theme="light"].is-active {
+        animation: hudPulseGlowLight 2.5s infinite ease-in-out !important;
+    }
+
+    /* 浅色主题下的 HUD 属性 */
+    body.theme-light #app-global-loading-hud,
+    body[data-theme="light"] #app-global-loading-hud,
+    html[data-theme="light"] #app-global-loading-hud,
+    #app-global-loading-hud.hud-theme-light,
+    #app-global-loading-hud[data-theme="light"] {
+        background: rgba(255, 255, 255, 0.98) !important;
+        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.08) !important;
+    }
+    body.theme-light #app-global-loading-hud .hud-spinner-ring,
+    body[data-theme="light"] #app-global-loading-hud .hud-spinner-ring,
+    html[data-theme="light"] #app-global-loading-hud .hud-spinner-ring,
+    #app-global-loading-hud.hud-theme-light .hud-spinner-ring,
+    #app-global-loading-hud[data-theme="light"] .hud-spinner-ring {
+        border: 2px solid #f1f5f9 !important;
+        border-top-color: #0284c7 !important;
+        border-right-color: rgba(2, 132, 199, 0.5) !important;
+    }
+    body.theme-light #app-global-loading-hud .hud-sub-text,
+    body[data-theme="light"] #app-global-loading-hud .hud-sub-text,
+    html[data-theme="light"] #app-global-loading-hud .hud-sub-text,
+    #app-global-loading-hud.hud-theme-light .hud-sub-text,
+    #app-global-loading-hud[data-theme="light"] .hud-sub-text {
+        color: #0f172a !important;
+        font-weight: 500 !important;
+    }
+
+    /* 旋转环形 Spinner 图标（极简单色线条） */
+    .hud-spinner-ring {
+        width: 16px !important;
+        height: 16px !important;
+        flex-shrink: 0 !important;
+        border: 2px solid var(--loading-spinner-track, rgba(255, 255, 255, 0.1)) !important;
+        border-top-color: var(--loading-spinner-top, #38bdf8) !important;
+        border-right-color: var(--loading-spinner-right, rgba(56, 189, 248, 0.5)) !important;
+        border-radius: 50% !important;
+        animation: spinLoadingRing 0.75s linear infinite !important;
+    }
+
+    /* HUD 文字区域 */
+    .hud-text-box {
+        display: flex !important;
+        align-items: center !important;
+    }
+    .hud-sub-text {
+        font-size: 12px !important;
+        font-weight: 500 !important;
+        color: var(--loading-hud-text, #f1f5f9) !important;
+        letter-spacing: 0.2px !important;
+        white-space: nowrap !important;
+        margin: 0 !important;
+        line-height: normal !important;
+    }
+
+    /* 原生顶部状态微件 (stStatusWidget) 强化高亮 */
+    [data-testid="stStatusWidget"] {
+        visibility: visible !important;
+        display: flex !important;
+        background: rgba(33, 150, 243, 0.15) !important;
+        border: 1px solid rgba(33, 150, 243, 0.4) !important;
+        border-radius: 20px !important;
+        padding: 2px 8px !important;
+        transition: all 0.2s ease !important;
+    }
+    .stApp[data-test-script-state="running"] [data-testid="stStatusWidget"] {
+        background: rgba(33, 150, 243, 0.35) !important;
+        border-color: #42a5f5 !important;
+        box-shadow: 0 0 14px rgba(33, 150, 243, 0.65) !important;
+    }
+
+    /* 强制主容器 100% 满宽展开，彻底消除宽屏/高分屏下页面偏左与右侧大面积空白 */
+    html, body, .stApp,
+    [data-testid="stAppViewContainer"],
+    .stMain,
+    [data-testid="stMain"],
+    [data-testid="stAppViewBlockContainer"],
+    [data-testid="stMainBlockContainer"],
+    .stMainBlockContainer,
+    .block-container,
+    div[data-testid="stTabs"],
+    div[data-testid="stTabPanel"] {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    /* 优化全局间距与顶部留白：彻底覆盖 Streamlit 所有主内容容器选择器 */
+    .block-container,
+    .stMainBlockContainer,
+    div[data-testid="stMainBlockContainer"],
+    div[data-testid="stAppViewBlockContainer"] {
+        padding-top: 0.25rem !important;
+        padding-bottom: 2.0rem !important;
+        padding-left: 1.5rem !important;
+        padding-right: 1.5rem !important;
+    }
+    
+    /* 缩减 Streamlit 内部默认的垂直大间隙 */
+    div[data-testid="stVerticalBlock"] {
+        gap: 0.45rem !important;
+    }
+
+    /* Streamlit 原生顶部 Header：与 Deploy 按钮在同一行平铺 */
+    header[data-testid="stHeader"],
+    .stAppHeader {
+        position: relative !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        width: 100% !important;
+        height: 2.65rem !important;
+        min-height: 2.65rem !important;
+        background: rgba(14, 17, 23, 0.96);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 0 14px !important;
+        margin: 0 !important;
+        z-index: 9999 !important;
+        overflow: visible !important;
+    }
+    div[data-testid="stToolbar"] {
+        position: static !important;
+        display: flex !important;
+        align-items: center !important;
+        flex-shrink: 0 !important;
+        margin-left: auto !important;
+        gap: 8px !important;
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+        margin-right: 0 !important;
+        padding: 0 !important;
+        z-index: 10000 !important;
+    }
+    /* 彻底隐藏原生三点主菜单与 Deploy 部署按钮 */
+    #MainMenu,
+    [data-testid="stMainMenu"],
+    button[data-testid="stMainMenuButton"],
+    .stAppDeployButton,
+    div[data-testid="stAppDeployButton"],
+    button[data-testid="stAppDeployButton"],
+    [data-testid="stDeployButton"],
+    .stDeployButton {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        width: 0 !important;
+        height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        position: absolute !important;
+    }
+
+    /* 下拉菜单、设置弹窗与模态对话框层级置顶，绝不被遮挡 */
+    div[data-baseweb="popover"],
+    div[data-baseweb="menu"],
+    div[data-baseweb="layer"],
+    [data-testid="stDialog"],
+    [data-testid="stModal"] {
+        z-index: 99999999 !important;
+    }
+
+    /* 顶部右上角视图与主题设置 Popover 按钮：精确固定在 Header 最右侧，绝不误伤卡片删除按钮 */
+    .header-settings-fixed-popover,
+    div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) {
+        position: fixed !important;
+        top: 6px !important;
+        right: 14px !important;
+        z-index: 100002 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 30px !important;
+        height: 30px !important;
+        min-width: 30px !important;
+        max-width: 30px !important;
+    }
+    .header-settings-fixed-popover > button,
+    div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button {
+        height: 30px !important;
+        width: 30px !important;
+        min-height: 30px !important;
+        max-height: 30px !important;
+        min-width: 30px !important;
+        max-width: 30px !important;
+        padding: 0 !important;
+        border-radius: 50% !important;
+        font-size: 15px !important;
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        color: #e2e8f0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25) !important;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        cursor: pointer !important;
+        outline: none !important;
+        overflow: hidden !important;
+    }
+    .header-settings-fixed-popover > button:hover,
+    div[data-testid="stElementContainer"]:has(> div > .header-settings-popover-marker) + div[data-testid="stElementContainer"] > div[data-testid="stPopover"]:not(div[data-testid="stHorizontalBlock"] *) > button:hover {
+        background: rgba(255, 255, 255, 0.14) !important;
+        border-color: rgba(255, 255, 255, 0.25) !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
+        transform: none !important;
+    }
+    /* 隐藏所有 Popover 按钮（右上角设置按钮与卡片删除按钮）内的默认下拉倒三角箭头 */
+    button[data-testid="stPopoverButton"] div[aria-hidden="true"],
+    button[data-testid="stPopoverButton"] [data-testid="stIconMaterial"],
+    button[data-testid="stPopoverButton"] > div > div:last-child:not(:first-child),
+    div[data-testid="stPopover"]:not(div[data-testid="stTooltipIcon"] *) button div[aria-hidden="true"],
+    div[data-testid="stPopover"]:not(div[data-testid="stTooltipIcon"] *) button [data-testid="stIconMaterial"],
+    div[data-testid="stPopover"]:not(div[data-testid="stTooltipIcon"] *) button > div > div:last-child:not(:first-child),
+    .header-settings-fixed-popover button div[aria-hidden="true"],
+    .header-settings-fixed-popover button [data-testid="stIconMaterial"],
+    .header-settings-fixed-popover button > div > div:last-child:not(:first-child) {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+        max-width: 0 !important;
+        max-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        font-size: 0 !important;
+        line-height: 0 !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+        overflow: hidden !important;
+    }
+
+    /* Popover 按钮内容强制居中对齐 */
+    button[data-testid="stPopoverButton"] > div,
+    div[data-testid="stPopover"]:not(div[data-testid="stTooltipIcon"] *) button > div {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+        text-align: center !important;
+    }
+    button[data-testid="stPopoverButton"] > div > div:first-child,
+    div[data-testid="stPopover"]:not(div[data-testid="stTooltipIcon"] *) button > div > div:first-child,
+    button[data-testid="stPopoverButton"] [data-testid="stMarkdownContainer"],
+    div[data-testid="stPopover"]:not(div[data-testid="stTooltipIcon"] *) button [data-testid="stMarkdownContainer"] {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+        text-align: center !important;
+        width: auto !important;
+    }
+
+    /* 设置面板 Popover 浮层容器与内部组件 */
+    div[data-testid="stPopoverBody"]:has(.settings-popover-panel) {
+        min-width: 280px !important;
+        max-width: 320px !important;
+        padding: 16px !important;
+        border-radius: 12px !important;
+        background: rgba(15, 23, 42, 0.98) !important;
+        backdrop-filter: blur(16px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5) !important;
+    }
+    .settings-panel-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #f1f5f9;
+        margin-bottom: 14px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .settings-section-title {
+        font-size: 11px;
+        font-weight: 600;
+        color: #94a3b8;
+        letter-spacing: 0.3px;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+    }
+    .settings-theme-btn-group {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 14px;
+        background: rgba(255, 255, 255, 0.05);
+        padding: 3px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .settings-theme-btn {
+        flex: 1;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px 12px;
+        font-size: 12px;
+        font-weight: 500;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        border: none;
+        background: transparent;
+        color: #94a3b8;
+    }
+    .settings-theme-btn:hover {
+        color: #f1f5f9;
+        background: rgba(255, 255, 255, 0.06);
+    }
+    .settings-theme-btn.is-active,
+    html[data-theme="dark"] .settings-theme-btn.theme-btn-dark,
+    body[data-theme="dark"] .settings-theme-btn.theme-btn-dark,
+    .stApp[data-theme="dark"] .settings-theme-btn.theme-btn-dark,
+    html:not([data-theme="light"]) .settings-theme-btn.theme-btn-dark,
+    body:not(.theme-light) .settings-theme-btn.theme-btn-dark {
+        background: rgba(255, 255, 255, 0.14) !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25) !important;
+    }
+    .settings-divider {
+        height: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        margin: 12px 0;
+    }
+
+    #header-theme-icon-btn,
+    .header-theme-icon-btn {
+        display: none !important;
+    }
+    
+    /* 顶部元数据与 Tab 同行样式：极简克制排版 */
+    .header-db-meta-bar {
+        position: fixed !important;
+        top: 6px !important;
+        left: 250px !important;
+        height: 30px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        flex-wrap: nowrap !important;
+        gap: 6px 10px !important;
+        font-size: 11.5px !important;
+        color: #94a3b8 !important;
+        white-space: nowrap !important;
+        z-index: 100000 !important;
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 8px !important;
+        padding: 0 12px !important;
+        box-sizing: border-box !important;
+    }
+    .header-db-meta-bar .meta-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        color: #94a3b8;
+        font-size: 11.5px;
+    }
+    .header-db-meta-bar .meta-val {
+        color: #f1f5f9;
+        font-weight: 600;
+        font-size: 11.5px;
+    }
+    .header-db-meta-bar .meta-val-plain {
+        color: #cbd5e1;
+        font-weight: 500;
+        font-size: 11.5px;
+    }
+    .header-db-meta-bar .meta-val-warn {
+        color: #f1f5f9;
+        font-weight: 600;
+        font-size: 11.5px;
+    }
+    .header-db-meta-bar .meta-divider {
+        color: rgba(255, 255, 255, 0.2);
+        margin: 0 4px;
+        font-size: 11px;
+    }
+
+    /* 隐藏注入脚本的空组件容器与占位空元素 */
+    iframe[data-testid="stCustomComponentV1"],
+    div[data-testid="stCustomComponentV1"],
+    iframe[data-testid="stIFrame"],
+    div[data-testid="stElementContainer"]:has(iframe[data-testid="stIFrame"]),
+    div[data-testid="element-container"]:has(iframe[data-testid="stIFrame"]),
+    div[data-testid="stElementContainer"]:has(#app-global-loading-hud),
+    div[data-testid="element-container"]:has(#app-global-loading-hud) {
+        display: none !important;
+        height: 0 !important;
+        width: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        position: absolute !important;
+    }
+
+    /* 顶层主 Tab 内容面板顶部间距归零（因为顶层 TabList 已提升至顶部 Header，不占用内容区空间） */
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[data-testid="stTabPanel"],
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) div[data-testid="stTabPanel"],
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [role="tabpanel"] {
+        padding-top: 0 !important;
+        margin-top: 0 !important;
+    }
+
+    /* 顶层主 Tab 导航提升至顶部 Header 工具栏最左侧（极简现代分段控制条风格） */
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"],
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div[data-baseweb="tab-list"] {
+        position: fixed !important;
+        top: 6px !important;
+        left: 14px !important;
+        height: 30px !important;
+        min-height: 30px !important;
+        max-height: 30px !important;
+        width: auto !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 8px !important;
+        padding: 2px !important;
+        gap: 2px !important;
+        margin: 0 !important;
+        z-index: 100000 !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2) !important;
+    }
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"] > div[data-testid="stTab"],
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) [data-baseweb="tab"] {
+        height: 24px !important;
+        min-height: 24px !important;
+        line-height: 24px !important;
+        padding: 0 12px !important;
+        font-size: 12px !important;
+        font-weight: 500 !important;
+        border-radius: 6px !important;
+        border: none !important;
+        color: #94a3b8 !important;
+        cursor: pointer !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        transition: all 0.15s ease !important;
+    }
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"] > div[data-testid="stTab"]:hover {
+        background: rgba(255, 255, 255, 0.06) !important;
+        color: #f1f5f9 !important;
+    }
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"] > div[data-testid="stTab"][aria-selected="true"] {
+        background: rgba(255, 255, 255, 0.12) !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+    }
+    div[data-testid="stTabs"]:not(div[data-testid="stTabPanel"] div[data-testid="stTabs"]) > div > div[role="tablist"] > div[data-testid="stTab"][aria-selected="true"] p {
+        color: #ffffff !important;
+        font-weight: 600 !important;
+    }
+    /* 全局隐藏 BaseWeb 原生指示高亮与底部分割线 */
+    div[data-testid="stTabs"] [data-baseweb="tab-highlight"],
+    div[data-testid="stTabs"] [data-baseweb="tab-border"],
+    div[data-testid="stTabs"] .react-aria-SelectionIndicator {
+        display: none !important;
+    }
+
+    /* 运维面板内部二级 Sub-Tab：极简现代分段控制 */
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab-list"],
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tablist"] {
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 8px !important;
+        padding: 3px !important;
+        gap: 2px !important;
+        margin-bottom: 14px !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"],
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"],
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"] {
+        font-size: 12px !important;
+        font-weight: 500 !important;
+        border-radius: 6px !important;
+        padding: 5px 14px !important;
+        color: #94a3b8 !important;
+        border: none !important;
+        outline: none !important;
+        background: transparent !important;
+        transition: all 0.15s ease !important;
+    }
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"]:hover,
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"]:hover,
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"]:hover {
+        background: rgba(255, 255, 255, 0.06) !important;
+        color: #f1f5f9 !important;
+    }
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"],
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"],
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [role="tab"][aria-selected="true"],
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] {
+        background: rgba(255, 255, 255, 0.12) !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        border: none !important;
+        outline: none !important;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+    }
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="true"] p,
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] p {
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        background: transparent !important;
+        border: none !important;
+    }
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [aria-selected="false"] p,
+    div[data-testid="stTabPanel"] div[data-testid="stTabs"] [data-testid="stTab"][aria-selected="false"] p {
+        color: #94a3b8 !important;
+        background: transparent !important;
+        border: none !important;
+    }
+
+    
+    /* 工具栏面板与输入框微调 */
+    div[data-testid="stWidgetLabel"] {
+        min-height: auto !important;
+        margin-bottom: -3px !important;
+        padding-bottom: 0 !important;
+    }
+    div[data-testid="stWidgetLabel"] p {
+        font-size: 10.5px !important;
+        font-weight: 500 !important;
+        color: #90a4ae !important;
+        white-space: nowrap !important;
+        line-height: 14px !important;
+        margin: 0 !important;
+    }
+
+    /* 区域交界单线分隔体系（无背景框极简设计） */
+    .toolbar-divider {
+        display: none !important;
+    }
+    .grid-row-divider {
+        width: 100%;
+        height: 1px;
+        background: rgba(255, 255, 255, 0.12);
+        margin: 14px 0 16px 0;
+    }
+    html[data-theme="light"] .grid-row-divider,
+    body.theme-light .grid-row-divider,
+    .stApp[data-theme="light"] .grid-row-divider {
+        background: rgba(15, 23, 42, 0.14) !important;
+    }
+
+    /* 双列/三列画廊：等宽等高，gap 归零以确保列间分割线绝对居中 */
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row) {
+        display: flex !important;
+        align-items: stretch !important;
+        width: 100% !important;
+        gap: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row) > div[data-testid="stColumn"] {
+        flex: 1 1 0px !important;
+        min-width: 0 !important;
+        width: 0 !important;
+        box-sizing: border-box !important;
+    }
+
+    /* 隐藏卡片固定高度容器产生的滚动条 */
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row)
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+        overflow: hidden !important;
+        border: none !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row)
+        div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        overflow: hidden !important;
+        scrollbar-width: none !important;
+        -ms-overflow-style: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row)
+        div[data-testid="stVerticalBlockBorderWrapper"] > div::-webkit-scrollbar {
+        display: none !important;
+    }
+
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row) > div[data-testid="stColumn"]:not(:last-child) {
+        border-right: 1px solid rgba(255, 255, 255, 0.12) !important;
+        padding-right: 18px !important;
+    }
+    html[data-theme="light"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row) > div[data-testid="stColumn"]:not(:last-child),
+    body.theme-light div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row) > div[data-testid="stColumn"]:not(:last-child),
+    .stApp[data-theme="light"] div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row) > div[data-testid="stColumn"]:not(:last-child) {
+        border-right: 1px solid rgba(15, 23, 42, 0.14) !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(> div[data-testid="stColumn"] .card-title-row) > div[data-testid="stColumn"]:not(:first-child) {
+        padding-left: 18px !important;
+    }
+    
+    /* 清除单行工具栏内所有 element-container 与 markdown 间距偏差 */
+    div[data-testid="stHorizontalBlock"] div[data-testid="element-container"] {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"] div[data-testid="stMarkdownContainer"] {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"] div[data-testid="stMarkdownContainer"] > p {
+        margin: 0 !important;
+        padding: 0 !important;
+        line-height: normal !important;
+    }
+    
+    /* 顶部单行工具栏统计药丸徽章（极简克制，与输入框/按钮对齐） */
+    .toolbar-stat-badge {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 4px;
+        font-size: 11.5px;
+        color: #94a3b8;
+        white-space: nowrap !important;
+        padding: 0 6px;
+        box-sizing: border-box !important;
+        width: 100%;
+        margin: 0 !important;
+        line-height: 26.5px !important;
+        letter-spacing: 0;
+    }
+    .toolbar-stat-badge .stat-num {
+        color: #f1f5f9;
+        font-weight: 600;
+        margin: 0 3px;
+    }
+    .toolbar-stat-badge .stat-page {
+        color: #cbd5e1;
+        font-weight: 500;
+        margin: 0 2px;
+    }
+
+    /* 顶部单行工具栏内所有控件的尺寸与底部基线严格强制对齐（高度统一为 28.5px） */
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInputRootElement"],
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInputContainer"],
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInput"] > div,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] > div,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInput"] input,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] input,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stSelectbox"] > div > div,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="select"] > div,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="input"],
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="base-input"] {
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        box-sizing: border-box !important;
+        font-size: 11.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInputRootElement"],
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInputContainer"] {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stSelectbox"] > div > div,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-baseweb="select"] > div {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        padding-left: 6px !important;
+        padding-right: 6px !important;
+        min-height: 28.5px !important;
+        height: 28.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stTextInput"] input,
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] input {
+        padding: 0 2px !important;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        line-height: 26.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stNumberInput"] input {
+        text-align: center !important;
+    }
+
+    /* 下拉框内部箭头原生按钮重置（防止被通用 button 样式误伤为黑色方块） */
+    div[data-testid="stSelectbox"] button,
+    div[data-baseweb="select"] button {
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        min-height: unset !important;
+        height: auto !important;
+    }
+
+    /* 工具栏专用翻页按钮 */
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button {
+        border-radius: 4px !important;
+        padding: 0 !important;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: rgba(30, 41, 59, 0.8) !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        color: #cbd5e1 !important;
+        transition: all 0.15s ease !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button:not(:disabled):hover {
+        background: rgba(255, 255, 255, 0.12) !important;
+        border-color: rgba(255, 255, 255, 0.28) !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button:disabled {
+        background: rgba(15, 23, 42, 0.45) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #64748b !important;
+        opacity: 0.55 !important;
+        cursor: not-allowed !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stTextInput"]) div[data-testid="stButton"] button p {
+        font-size: 15px !important;
+        line-height: 1 !important;
+        font-weight: 700 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        white-space: nowrap !important;
+        color: inherit !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    /* 顶部单行工具栏右侧分页控件组：固定合适尺寸（每页条数 98px，翻页按钮 28.5px 正方形，页码跳转 48px） */
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(8) {
+        flex: 0 0 98px !important;
+        width: 98px !important;
+        min-width: 98px !important;
+        max-width: 98px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(8) div[data-testid="stSelectbox"],
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(8) div[data-baseweb="select"] {
+        width: 98px !important;
+        min-width: 98px !important;
+        max-width: 98px !important;
+    }
+
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(9) {
+        flex: 0 0 28.5px !important;
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(9) div[data-testid="stButton"],
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(9) div[data-testid="stButton"] button {
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+    }
+
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(10) {
+        flex: 0 0 48px !important;
+        width: 48px !important;
+        min-width: 48px !important;
+        max-width: 48px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(10) div[data-testid="stNumberInput"],
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(10) div[data-testid="stNumberInputContainer"] {
+        width: 48px !important;
+        min-width: 48px !important;
+        max-width: 48px !important;
+    }
+
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(11) {
+        flex: 0 0 28.5px !important;
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(11) div[data-testid="stButton"],
+    div[data-testid="stHorizontalBlock"]:has(.toolbar-stat-badge) > div[data-testid="stColumn"]:nth-child(11) div[data-testid="stButton"] button {
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+    }
+
+    /* 分页条文字（与顶部统计徽章高度 28.5px 及字号 11.5px 完全对齐） */
+    .pagination-text {
+        display: flex;
+        align-items: center;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        font-size: 11.5px;
+        color: #94a3b8;
+        line-height: 28.5px;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    /* 卡片内部紧凑垂直间距体系与宽度严格约束 */
+    div[data-testid="stColumn"]:has(.card-title-row) > div[data-testid="stVerticalBlock"] {
+        gap: 3px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+    div[data-testid="stColumn"]:has(.card-title-row) div[data-testid="element-container"] {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+
+    /* 预览区宽度兜底：从预览元素向上精确匹配其容器链，强制撑满列宽。
+       防止 Streamlit 内层 stVerticalBlock 的 align-items:start 让预览区（占位符/PDF 容器）
+       收缩到文本宽度，确保有无 PDF 的卡片预览区宽度完全一致 */
+    div[data-testid="stElementContainer"]:has(> div .pdf-empty-placeholder),
+    div[data-testid="stElementContainer"]:has(> div .pdf-scroll-container),
+    div[data-testid="element-container"]:has(> div .pdf-empty-placeholder),
+    div[data-testid="element-container"]:has(> div .pdf-scroll-container) {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        align-self: stretch !important;
+        flex-grow: 1 !important;
+        flex-shrink: 0 !important;
+        flex-basis: auto !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        box-sizing: border-box !important;
+    }
+    div[data-testid="stMarkdown"]:has(.pdf-empty-placeholder),
+    div[data-testid="stMarkdown"]:has(.pdf-scroll-container) {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        box-sizing: border-box !important;
+    }
+    /* 卡片固定高度容器内层：子元素横向拉伸，与外层列宽严格一致 */
+    div[data-testid="stColumn"]:has(.card-title-row) div[data-testid="stVerticalBlockBorderWrapper"],
+    div[data-testid="stColumn"]:has(.card-title-row) div[data-testid="stVerticalBlockBorderWrapper"] > div[data-testid="stVerticalBlock"] {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        align-items: stretch !important;
+        box-sizing: border-box !important;
+    }
+
+    /* 卡片标题行（单行展示，高度统一确保下方内容基线完全对齐） */
+    .card-title-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 0 0 1px 0 !important;
+        padding: 0 !important;
+        line-height: 19px;
+        min-height: 19px !important;
+        max-height: 19px !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        overflow: hidden;
+    }
+    .card-id-badge {
+        display: inline-block;
+        background: rgba(255, 255, 255, 0.06);
+        color: #94a3b8;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+        flex-shrink: 0;
+        line-height: 15px;
+    }
+    .card-title-text {
+        font-size: 13.5px;
+        font-weight: 600;
+        color: #f1f5f9;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 19px;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    /* 标签与徽章样式（低饱和度、极简高级质感） */
+    .badge {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 16px;
+        margin-right: 4px;
+    }
+    .badge-source {
+        background-color: rgba(255, 255, 255, 0.06);
+        color: #cbd5e1;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    .badge-category {
+        background-color: rgba(255, 255, 255, 0.04);
+        color: #94a3b8;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .badge-orphan {
+        background-color: rgba(245, 158, 11, 0.1);
+        color: #fbbf24;
+        border: 1px solid rgba(245, 158, 11, 0.2);
+    }
+    .badge-format {
+        background-color: rgba(255, 255, 255, 0.04);
+        color: #94a3b8;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .badge-duplicate {
+        background-color: rgba(244, 63, 94, 0.1);
+        color: #fb7185;
+        border: 1px solid rgba(244, 63, 94, 0.25);
+        font-weight: 600;
+    }
+
+    /* 卡片单行整合元信息与操作栏（左侧元信息自适应，右侧按钮紧凑自适应，拒绝拉伸变形）
+       注意：必须排除包含 .card-title-row 的祖先级画廊卡片行块（其内部后代包含 .card-meta-row，
+       若不加排除会把整行画廊块误匹配，导致同行第一列被拉伸、其余列收缩，卡片大小不一致） */
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row):not(:has(.card-title-row)) {
+        display: flex !important;
+        align-items: center !important;
+        margin: 0 0 3px 0 !important;
+        padding: 0 !important;
+        flex-wrap: nowrap !important;
+        gap: 6px !important;
+        min-height: 22px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row):not(:has(.card-title-row)) > div[data-testid="stColumn"]:first-child {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row):not(:has(.card-title-row)) > div[data-testid="stColumn"]:not(:first-child) {
+        width: fit-content !important;
+        max-width: fit-content !important;
+        flex: 0 0 auto !important;
+        min-width: 0 !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row):not(:has(.card-title-row)) > div[data-testid="stColumn"]:not(:first-child) > div[data-testid="stVerticalBlock"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row):not(:has(.card-title-row)) > div[data-testid="stColumn"]:not(:first-child) div[data-testid="stElementContainer"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row):not(:has(.card-title-row)) > div[data-testid="stColumn"]:not(:first-child) div[data-testid="stButton"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row):not(:has(.card-title-row)) > div[data-testid="stColumn"]:not(:first-child) div[data-testid="stLinkButton"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row):not(:has(.card-title-row)) > div[data-testid="stColumn"]:not(:first-child) div[data-testid="stPopover"] {
+        width: fit-content !important;
+        max-width: fit-content !important;
+        min-width: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    .card-meta-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        gap: 4px 6px;
+        font-size: 11px;
+        line-height: 22px;
+        min-height: 22px;
+        margin: 0 !important;
+        padding: 0 !important;
+        white-space: nowrap;
+        overflow: hidden;
+    }
+    .card-meta-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        color: #b0bec5;
+        font-size: 11px;
+        white-space: nowrap;
+    }
+    .card-meta-divider {
+        display: inline-block;
+        width: 1px;
+        height: 10px;
+        background: rgba(255, 255, 255, 0.15);
+    }
+
+    /* 覆盖卡片内部操作按钮：精致极简胶囊尺寸 (22px 高度，细腻微边框) */
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) button,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) a,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stButton"] button,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stLinkButton"] a,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] > button,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button {
+        min-height: 22px !important;
+        height: 22px !important;
+        max-height: 22px !important;
+        width: auto !important;
+        min-width: unset !important;
+        max-width: fit-content !important;
+        padding: 0px 8px !important;
+        font-size: 11px !important;
+        line-height: 20px !important;
+        border-radius: 4px !important;
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        font-weight: 500 !important;
+        margin: 0 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-sizing: border-box !important;
+        background: rgba(255, 255, 255, 0.06) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #cbd5e1 !important;
+        transition: all 0.15s ease !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) button:not(:disabled):hover,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) a:hover,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stButton"] button:not(:disabled):hover,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stLinkButton"] a:hover {
+        background: rgba(255, 255, 255, 0.12) !important;
+        border-color: rgba(255, 255, 255, 0.22) !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2) !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] {
+        display: inline-flex !important;
+        align-items: center !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        position: static !important;
+        top: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        left: auto !important;
+        z-index: auto !important;
+        transform: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] > button,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button {
+        position: static !important;
+        top: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        left: auto !important;
+        z-index: auto !important;
+        transform: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] > button:hover,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button:hover {
+        background: rgba(239, 68, 68, 0.12) !important;
+        border-color: rgba(239, 68, 68, 0.4) !important;
+        color: #f87171 !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+    /* 隐藏卡片操作栏内删除按钮上的默认下拉倒三角箭头（SVG 及 Material Icon 容器） */
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button > div > div:last-child:not(:only-child),
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] [data-testid="stIconMaterial"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] [class*="el0gnfx2"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] [class*="ewh6kot2"],
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] svg {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+        max-width: 0 !important;
+        max-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        font-size: 0 !important;
+        line-height: 0 !important;
+        visibility: hidden !important;
+        overflow: hidden !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button > div,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button > div > div:first-child,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button [data-testid="stMarkdownContainer"] {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        text-align: center !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) button p,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) a p,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stButton"] button p,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stLinkButton"] a p,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] > button p,
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) div[data-testid="stPopover"] button p {
+        font-size: 11px !important;
+        line-height: 20px !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        font-weight: 500 !important;
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+        color: inherit !important;
+        text-align: center !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    /* Popover 弹窗内部样式 */
+    div[data-testid="stPopoverBody"] {
+        padding: 10px 12px !important;
+        border-radius: 6px !important;
+        min-width: 200px !important;
+    }
+    div[data-testid="stPopoverBody"] p {
+        font-size: 12px !important;
+        line-height: 1.4 !important;
+        margin: 0 0 6px 0 !important;
+    }
+    /* Popover 内通用操作按钮（如删除确认），明确排除下拉框内部按钮与自定义主题按钮 */
+    div[data-testid="stPopoverBody"] button:not(div[data-baseweb="select"] button):not(div[data-testid="stSelectbox"] button):not(.settings-theme-btn) {
+        min-height: 28px !important;
+        height: 28px !important;
+        font-size: 12px !important;
+        border-radius: 4px !important;
+    }
+
+    /* 下拉框内部箭头原生按钮在 Popover 内部的彻底重置与垂直居中保障 */
+    div[data-testid="stPopoverBody"] div[data-baseweb="select"] button,
+    div[data-testid="stPopoverBody"] div[data-testid="stSelectbox"] button {
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        min-height: unset !important;
+        height: auto !important;
+        max-height: none !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    div[data-testid="stPopoverBody"] div[data-baseweb="select"] svg,
+    div[data-testid="stPopoverBody"] div[data-testid="stSelectbox"] svg {
+        display: inline-block !important;
+        vertical-align: middle !important;
+    }
+
+    /* PDF 预览滚动容器：初始自动上滑 200px，且支持鼠标自由上下滑动查看完整内容 */
+    .pdf-scroll-container {
+        position: relative !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+        border-radius: 6px;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: #1e1e1e;
+        scroll-behavior: auto;
+    }
+    .pdf-scroll-container::-webkit-scrollbar {
+        width: 6px;
+    }
+    .pdf-scroll-container::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.2);
+    }
+    .pdf-scroll-container::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.25);
+        border-radius: 3px;
+    }
+    .pdf-scroll-container::-webkit-scrollbar-thumb:hover {
+        background: rgba(255, 255, 255, 0.45);
+    }
+    .pdf-page-img {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: auto !important;
+        display: block !important;
+        user-select: none;
+        transition: opacity 0.2s ease-in-out;
+    }
+    .pdf-page-img.lazy-pdf-img {
+        opacity: 0;
+        min-height: 280px;
+        background: rgba(255, 255, 255, 0.02);
+    }
+    .pdf-page-img.loaded {
+        opacity: 1;
+        min-height: unset;
+        background: transparent;
+    }
+
+    /* 所有卡片预览区高度与结构严格统一（无论是否有本地 PDF） */
+    .pdf-empty-placeholder {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: rgba(255, 255, 255, 0.018) !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        border-radius: 6px !important;
+        color: #64748b !important;
+        text-align: center !important;
+        padding: 0 !important;
+        box-sizing: border-box !important;
+        transition: border-color 0.2s ease !important;
+    }
+    .pdf-empty-placeholder:hover {
+        border-color: rgba(56, 189, 248, 0.25) !important;
+    }
+    .online-tag-pill {
+        display: inline-block !important;
+        font-size: 11px !important;
+        font-weight: 600 !important;
+        color: #94a3b8 !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        border-radius: 4px !important;
+        padding: 2px 10px !important;
+        letter-spacing: 0.3px !important;
+    }
+    .online-tag-pill.warn-pill {
+        color: #f59e0b !important;
+        background: rgba(245, 158, 11, 0.1) !important;
+        border-color: rgba(245, 158, 11, 0.25) !important;
+    }
+    .pdf-empty-placeholder .empty-icon {
+        display: none !important;
+    }
+    .pdf-empty-placeholder .empty-title {
+        font-size: 13.5px !important;
+        font-weight: 600 !important;
+        color: #cbd5e1 !important;
+        margin-bottom: 4px !important;
+        letter-spacing: 0.2px !important;
+    }
+    .pdf-empty-placeholder .empty-desc {
+        font-size: 11.5px !important;
+        color: #64748b !important;
+        line-height: 1.5 !important;
+        max-width: 85% !important;
+    }
+    .empty-dossier-box {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 8px 16px !important;
+        background: rgba(255, 255, 255, 0.025) !important;
+        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        border-radius: 6px !important;
+        padding: 12px 18px !important;
+        width: 80% !important;
+        max-width: 320px !important;
+        margin: 14px 0 !important;
+        box-sizing: border-box !important;
+    }
+    .dossier-item {
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        font-size: 11.5px !important;
+    }
+    .dossier-label {
+        color: #64748b !important;
+    }
+    .dossier-val {
+        color: #cbd5e1 !important;
+        font-weight: 500 !important;
+    }
+    .empty-action-hint {
+        font-size: 11px !important;
+        color: #475569 !important;
+    }
+    .pdf-empty-placeholder code {
+        background: rgba(255, 255, 255, 0.05);
+        color: #cbd5e1;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 11px;
+    }
+
+    /* 商业级数据大盘与 KPI 卡片样式 */
+    .kpi-scorecard-grid {
+        display: grid !important;
+        grid-template-columns: repeat(4, 1fr) !important;
+        gap: 14px !important;
+        margin: 12px 0 20px 0 !important;
+        width: 100% !important;
+    }
+    .kpi-card {
+        background: rgba(255, 255, 255, 0.025) !important;
+        border: 1px solid rgba(255, 255, 255, 0.07) !important;
+        border-radius: 8px !important;
+        padding: 16px 18px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: space-between !important;
+        min-height: 98px !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+        transition: all 0.2s ease !important;
+    }
+    .kpi-card:hover {
+        border-color: rgba(56, 189, 248, 0.3) !important;
+        background: rgba(255, 255, 255, 0.04) !important;
+        transform: translateY(-1px) !important;
+    }
+    .kpi-label {
+        font-size: 12px !important;
+        font-weight: 500 !important;
+        color: #94a3b8 !important;
+        letter-spacing: 0.2px !important;
+    }
+    .kpi-value {
+        font-size: 26px !important;
+        font-weight: 700 !important;
+        color: #f8fafc !important;
+        letter-spacing: -0.5px !important;
+        font-variant-numeric: tabular-nums !important;
+        margin: 6px 0 4px 0 !important;
+        line-height: 1.1 !important;
+    }
+    .kpi-meta {
+        font-size: 11px !important;
+        color: #64748b !important;
+        line-height: 1.4 !important;
+    }
+    .analytics-divider {
+        height: 1px !important;
+        background: rgba(255, 255, 255, 0.06) !important;
+        margin: 20px 0 16px 0 !important;
+    }
+    .analytics-section-title {
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        color: #cbd5e1 !important;
+        margin-bottom: 10px !important;
+        letter-spacing: 0.3px !important;
+    }
+    body.theme-light .kpi-card {
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04) !important;
+    }
+    body.theme-light .kpi-label { color: #64748b !important; }
+    body.theme-light .kpi-value { color: #0f172a !important; }
+    body.theme-light .kpi-meta { color: #94a3b8 !important; }
+    body.theme-light .analytics-divider { background: #e2e8f0 !important; }
+    body.theme-light .pdf-empty-placeholder {
+        background: #f8fafc !important;
+        border-color: #e2e8f0 !important;
+    }
+    body.theme-light .pdf-empty-placeholder .empty-title {
+        color: #1e293b !important;
+    }
+    body.theme-light .pdf-empty-placeholder .empty-desc {
+        color: #64748b !important;
+    }
+    body.theme-light .empty-dossier-box {
+        background: #ffffff !important;
+        border-color: #e2e8f0 !important;
+    }
+    body.theme-light .dossier-label {
+        color: #64748b !important;
+    }
+    body.theme-light .dossier-val {
+        color: #0f172a !important;
+    }
+    body.theme-light .empty-action-hint {
+        color: #94a3b8 !important;
+    }
+    body.theme-light .online-tag-pill {
+        color: #475569 !important;
+        background: #e2e8f0 !important;
+        border-color: #cbd5e1 !important;
+    }
+
+    /* 卡片底部信息展示（两行：第一行 PDF 文件名，第二行资源链接，超出一行动态省略，鼠标悬停查看完整内容） */
+    .card-bottom-info {
+        margin-top: 4px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+    .card-bottom-line {
+        display: flex;
+        align-items: center;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        white-space: nowrap !important;
+        text-overflow: ellipsis !important;
+        font-size: 11px;
+        line-height: 17px;
+        min-height: 17px;
+        max-height: 17px;
+        color: #94a3b8;
+    }
+    .card-bottom-label {
+        flex: 0 0 auto;
+        font-weight: 600;
+        color: #64748b;
+        margin-right: 4px;
+        font-size: 11px;
+        user-select: none;
+    }
+    .card-bottom-value {
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden !important;
+        white-space: nowrap !important;
+        text-overflow: ellipsis !important;
+        color: #cbd5e1;
+        font-size: 11px;
+    }
+    .card-bottom-link {
+        color: #38bdf8 !important;
+        text-decoration: none !important;
+    }
+    .card-bottom-link:hover {
+        text-decoration: underline !important;
+        color: #7dd3fc !important;
+    }
+    .card-bottom-empty {
+        color: #64748b;
+    }
+    /* 重置底部信息链接：防止被卡片操作按钮的全局胶囊样式（深色背景、22px 固定高度）污染，选择器优先级必须高于按钮覆盖规则 */
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) .card-bottom-info a.card-bottom-link {
+        min-height: 0 !important;
+        height: auto !important;
+        max-height: none !important;
+        width: auto !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        display: inline !important;
+        font-size: 11px !important;
+        font-weight: 400 !important;
+        line-height: 17px !important;
+        overflow: hidden !important;
+        white-space: nowrap !important;
+        text-overflow: ellipsis !important;
+        color: #38bdf8 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.card-meta-row) .card-bottom-info a.card-bottom-link:hover {
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        text-decoration: underline !important;
+        color: #7dd3fc !important;
+    }
+
+    /* 底部分页控制栏：与页首翻页控件组完全像素级对齐（统一 28.5px 高度、6px 紧凑列距、正方形按钮、无竖线干扰） */
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge),
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) {
+        display: flex !important;
+        align-items: flex-end !important;
+        justify-content: flex-end !important;
+        margin-top: 10px !important;
+        margin-bottom: 8px !important;
+        gap: 6px !important;
+        width: 100% !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"] {
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: flex-end !important;
+        min-width: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:first-child,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:first-child {
+        flex: 1 1 auto !important;
+        min-width: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stWidgetLabel"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stWidgetLabel"] {
+        display: none !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stButton"] button,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stNumberInputContainer"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stNumberInput"] > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stSelectbox"] > div > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-baseweb="select"] > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-baseweb="input"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-baseweb="base-input"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) .pagination-stat-badge,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInputContainer"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInput"] > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stSelectbox"] > div > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-baseweb="select"] > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-baseweb="input"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-baseweb="base-input"] {
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        box-sizing: border-box !important;
+        font-size: 11.5px !important;
+        border-radius: 4px !important;
+    }
+    .pagination-stat-badge {
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        line-height: 26.5px !important;
+        padding: 0 8px !important;
+        white-space: nowrap !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 4px !important;
+        font-size: 11.5px !important;
+        color: #94a3b8 !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+        margin: 0 !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stSelectbox"] > div > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-baseweb="select"] > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stSelectbox"] > div > div,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-baseweb="select"] > div {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        padding-left: 6px !important;
+        padding-right: 6px !important;
+        min-height: 28.5px !important;
+        height: 28.5px !important;
+        max-height: 28.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stSelectbox"] input,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stSelectbox"] div[data-rac] input,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stSelectbox"] input,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stSelectbox"] div[data-rac] input {
+        border: none !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        height: 26.5px !important;
+        min-height: 26.5px !important;
+        max-height: 26.5px !important;
+        box-shadow: none !important;
+        padding: 0 2px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stSelectbox"] button,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-baseweb="select"] button,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stSelectbox"] button,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-baseweb="select"] button {
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        min-height: unset !important;
+        height: auto !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stButton"] button,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button {
+        border-radius: 4px !important;
+        padding: 0 !important;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: rgba(30, 41, 59, 0.8) !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        color: #cbd5e1 !important;
+        transition: all 0.15s ease !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stButton"] button:not(:disabled):hover,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button:not(:disabled):hover {
+        background: rgba(255, 255, 255, 0.12) !important;
+        border-color: rgba(255, 255, 255, 0.28) !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stButton"] button:disabled,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button:disabled {
+        background: rgba(15, 23, 42, 0.45) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #64748b !important;
+        opacity: 0.55 !important;
+        cursor: not-allowed !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stButton"] button p,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stButton"] button p {
+        font-size: 15px !important;
+        line-height: 1 !important;
+        font-weight: 700 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        white-space: nowrap !important;
+        color: inherit !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stNumberInputContainer"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInputContainer"] {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stNumberInput"] input,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInput"] input {
+        padding: 0 2px !important;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        line-height: 26.5px !important;
+        text-align: center !important;
+        font-size: 11.5px !important;
+        background: rgba(30, 41, 59, 0.8) !important;
+        color: #e2e8f0 !important;
+        border: 1px solid rgba(255, 255, 255, 0.12) !important;
+        border-radius: 4px !important;
+    }
+
+    /* 底部分页控制栏：各列固定合适尺寸（与顶部单行工具栏完全对齐） */
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(2) {
+        flex: 0 0 178px !important;
+        width: 178px !important;
+        min-width: 178px !important;
+        max-width: 178px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(3),
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(2) {
+        flex: 0 0 98px !important;
+        width: 98px !important;
+        min-width: 98px !important;
+        max-width: 98px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(3) div[data-testid="stSelectbox"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(3) div[data-baseweb="select"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(2) div[data-testid="stSelectbox"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(2) div[data-baseweb="select"] {
+        width: 98px !important;
+        min-width: 98px !important;
+        max-width: 98px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(4),
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(3) {
+        flex: 0 0 28.5px !important;
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(4) div[data-testid="stButton"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(4) div[data-testid="stButton"] button,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(3) div[data-testid="stButton"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(3) div[data-testid="stButton"] button {
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(5),
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(4) {
+        flex: 0 0 48px !important;
+        width: 48px !important;
+        min-width: 48px !important;
+        max-width: 48px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(5) div[data-testid="stNumberInput"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(5) div[data-testid="stNumberInputContainer"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(4) div[data-testid="stNumberInput"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(4) div[data-testid="stNumberInputContainer"] {
+        width: 48px !important;
+        min-width: 48px !important;
+        max-width: 48px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stNumberInputContainer"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stNumberInput"] div[data-baseweb="input"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stNumberInput"] div[data-baseweb="base-input"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInputContainer"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInput"] div[data-baseweb="input"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInput"] div[data-baseweb="base-input"] {
+        padding: 0 !important;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) div[data-testid="stNumberInput"] input,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) div[data-testid="stNumberInput"] input {
+        padding: 0 2px !important;
+        height: 28.5px !important;
+        min-height: 28.5px !important;
+        max-height: 28.5px !important;
+        line-height: 26.5px !important;
+        font-size: 11.5px !important;
+        text-align: center !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(6),
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(5) {
+        flex: 0 0 28.5px !important;
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(6) div[data-testid="stButton"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-stat-badge) > div[data-testid="stColumn"]:nth-child(6) div[data-testid="stButton"] button,
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(5) div[data-testid="stButton"],
+    div[data-testid="stHorizontalBlock"]:has(.pagination-text) > div[data-testid="stColumn"]:nth-child(5) div[data-testid="stButton"] button {
+        width: 28.5px !important;
+        min-width: 28.5px !important;
+        max-width: 28.5px !important;
+    }
+
+    /* 全局标准通用按钮规范 (深色模式基准) — 高度贴合内容，无多余空白 */
+    button[data-testid="stBaseButton-secondary"],
+    .stButton > button:not([data-testid="stBaseButton-primary"]) {
+        background: rgba(30, 41, 59, 0.8) !important;
+        color: #f1f5f9 !important;
+        border: 1px solid rgba(255, 255, 255, 0.14) !important;
+        border-radius: 6px !important;
+        transition: all 0.15s ease !important;
+        height: 30px !important;
+        min-height: 30px !important;
+        max-height: 30px !important;
+        padding: 0 14px !important;
+        font-size: 12px !important;
+        line-height: 28px !important;
+        width: auto !important;
+        min-width: unset !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        white-space: nowrap !important;
+        box-sizing: border-box !important;
+    }
+    button[data-testid="stBaseButton-secondary"]:not(:disabled):hover,
+    .stButton > button:not([data-testid="stBaseButton-primary"]):not(:disabled):hover {
+        background: rgba(255, 255, 255, 0.12) !important;
+        border-color: rgba(255, 255, 255, 0.28) !important;
+        color: #ffffff !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2) !important;
+    }
+    button[data-testid="stBaseButton-secondary"]:disabled,
+    .stButton > button:not([data-testid="stBaseButton-primary"]):disabled {
+        background: rgba(15, 23, 42, 0.45) !important;
+        border-color: rgba(255, 255, 255, 0.06) !important;
+        color: #64748b !important;
+        opacity: 0.5 !important;
+        cursor: not-allowed !important;
+    }
+    button[data-testid="stBaseButton-primary"] {
+        background: linear-gradient(135deg, #0284c7, #2563eb) !important;
+        border: 1px solid #38bdf8 !important;
+        color: #ffffff !important;
+        border-radius: 6px !important;
+        box-shadow: 0 2px 10px rgba(56, 189, 248, 0.25) !important;
+        transition: all 0.15s ease !important;
+        height: 30px !important;
+        min-height: 30px !important;
+        padding: 0 16px !important;
+        font-size: 12px !important;
+        line-height: 28px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        white-space: nowrap !important;
+        box-sizing: border-box !important;
+    }
+    button[data-testid="stBaseButton-primary"]:hover {
+        background: linear-gradient(135deg, #0369a1, #1d4ed8) !important;
+        box-shadow: 0 0 16px rgba(56, 189, 248, 0.45) !important;
+    }
+    /* 全局按钮内 p 标签压实——防止 Streamlit 默认 margin 撑高 */
+    button[data-testid="stBaseButton-secondary"] p,
+    button[data-testid="stBaseButton-primary"] p,
+    .stButton > button p {
+        margin: 0 !important;
+        padding: 0 !important;
+        font-size: inherit !important;
+        line-height: inherit !important;
+        white-space: nowrap !important;
+    }
+
+
+/* ==================== 批量管理面板 现代运维功能卡片栅格 ==================== */
+
+.maint-card-container {
+    background: rgba(30, 41, 59, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 16px 18px 14px 18px;
+    margin-bottom: 12px;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 136px;
+    box-sizing: border-box;
+}
+
+.maint-card-container:hover {
+    border-color: rgba(56, 189, 248, 0.4);
+    background: rgba(30, 41, 59, 0.55);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+}
+
+.maint-card-container.is-selected {
+    border-color: #38bdf8;
+    background: rgba(56, 189, 248, 0.08);
+    box-shadow: 0 0 0 1px #38bdf8, 0 6px 20px rgba(56, 189, 248, 0.15);
+}
+
+.maint-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.maint-card-badge {
+    font-size: 11px;
+    font-weight: 700;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #94a3b8;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.maint-card-container.is-selected .maint-card-badge {
+    background: #38bdf8;
+    color: #0f172a;
+    border-color: #38bdf8;
+}
+
+.maint-card-tag {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 1px 7px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #94a3b8;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.maint-card-tag.tag-warn {
+    color: #cbd5e1;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.maint-card-tag.tag-sys {
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.3);
+}
+
+.maint-card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin-bottom: 6px;
+    line-height: 1.35;
+}
+
+.maint-card-desc {
+    font-size: 12px;
+    color: #94a3b8;
+    line-height: 1.45;
+    flex-grow: 1;
+    margin-bottom: 12px;
+}
+
+/* 浅色主题适配 */
+html[data-theme="light"] .maint-card-container,
+body.theme-light .maint-card-container {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+html[data-theme="light"] .maint-card-container:hover,
+body.theme-light .maint-card-container:hover {
+    border-color: #0284c7;
+    background: #f8fafc;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
+}
+
+html[data-theme="light"] .maint-card-container.is-selected,
+body.theme-light .maint-card-container.is-selected {
+    border-color: #0284c7;
+    background: rgba(2, 132, 199, 0.04);
+    box-shadow: 0 0 0 1px #0284c7, 0 6px 18px rgba(2, 132, 199, 0.1);
+}
+
+html[data-theme="light"] .maint-card-title,
+body.theme-light .maint-card-title {
+    color: #0f172a;
+}
+
+html[data-theme="light"] .maint-card-desc,
+body.theme-light .maint-card-desc {
+    color: #64748b;
+}
+
+html[data-theme="light"] .maint-card-badge,
+body.theme-light .maint-card-badge {
+    background: #f1f5f9;
+    color: #475569;
+    border-color: #cbd5e1;
+}
+
+html[data-theme="light"] .maint-card-container.is-selected .maint-card-badge,
+body.theme-light .maint-card-container.is-selected .maint-card-badge {
+    background: #0284c7;
+    color: #ffffff;
+    border-color: #0284c7;
+}
+
+/* 运维操作台工作区容器 */
+.maint-action-workbench {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 22px 24px;
+    margin-top: 10px;
+    margin-bottom: 24px;
+}
+
+html[data-theme="light"] .maint-action-workbench,
+body.theme-light .maint-action-workbench {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
