@@ -317,6 +317,7 @@ def delete_records_cascade_pdf(
     record_ids: Sequence[Union[int, str]],
     table_name: str = "resources",
     project_root: Optional[str] = None,
+    is_run: bool = True,
 ) -> Tuple[int, int, int, int]:
     """批量删除数据库记录，并在无其他活跃记录引用时安全级联删除对应的物理 PDF 文件（共享 PDF 安全保护）
 
@@ -325,9 +326,11 @@ def delete_records_cascade_pdf(
         record_ids: 要删除的记录 ID 列表
         table_name: 表名，默认 'resources'
         project_root: 项目根目录
+        is_run: 是否正式执行删除；False 时为 Dry Run 预览模式，仅统计不删除
 
     Returns:
         (deleted_records, deleted_pdfs, failed_pdfs, freed_bytes)
+        Dry Run 模式下返回 (待删除记录数, 将删除的 PDF 数, 0, 将释放的字节数)
     """
     if not record_ids:
         return 0, 0, 0, 0
@@ -385,6 +388,18 @@ def delete_records_cascade_pdf(
     deleted_pdfs = 0
     failed_pdfs = 0
     freed_bytes = 0
+
+    if not is_run:
+        # Dry Run 预览模式：仅统计将删除的 PDF 与可释放空间，不做任何删除
+        for pdf_path in pdf_paths_to_delete:
+            try:
+                freed_bytes += os.path.getsize(pdf_path)
+                deleted_pdfs += 1
+            except Exception:
+                pass
+        print(f"[*] [Dry Run] 预览模式：将删除 {len(id_list)} 条数据库记录，"
+              f"级联清理 {deleted_pdfs} 个无共享引用的 PDF（未实际执行）")
+        return len(id_list), deleted_pdfs, 0, freed_bytes
 
     for pdf_path in pdf_paths_to_delete:
         try:

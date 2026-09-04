@@ -89,6 +89,8 @@ from fixes.db_utils import (
     export_records_to_db,
     export_to_csv,
     delete_records_cascade_pdf,
+    vacuum_db,
+    format_size,
     print_banner,
     print_section,
     print_step,
@@ -2362,7 +2364,16 @@ def run_clean_missing_records(args):
         exp_records = [{"id": r[0], "title": r[1], "missing_pdf_path": r[2]} for r in to_delete]
         export_to_csv(exp_records, f"missing_pdf_records_{get_timestamp()}.csv")
 
-    delete_records_cascade_pdf(conn, delete_ids, is_run=is_run)
+    if is_run:
+        backup_db(db_path, "clean_missing")
+
+    del_rec, del_pdf, fail_pdf, freed = delete_records_cascade_pdf(conn, delete_ids, is_run=is_run)
+
+    if is_run:
+        print_success(f"已删除 {del_rec} 条脏记录，级联清理 {del_pdf} 个 PDF，释放空间 {format_size(freed)}。")
+        vacuum_db(conn)
+    else:
+        print_step(f"[Dry Run] 预览完成：共 {del_rec} 条脏记录待清理（未实际删除）。")
     conn.close()
 
 

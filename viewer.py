@@ -5675,6 +5675,19 @@ setInterval(injectHeaderMetadata, 3000);
                         el.style.removeProperty('box-shadow');
                     });
                 }
+
+                // 7. 下拉选择菜单选项（来源/分类等筛选项）→ 为每个选项补充完整文本悬停提示，
+                //    使被截断（text-overflow: ellipsis）的选项在鼠标悬停时展示全部内容。
+                pDoc.querySelectorAll(
+                    'ul[data-baseweb="menu"] li[role="option"], [data-baseweb="popover"] li[role="option"], li[role="option"]'
+                ).forEach(function(opt) {
+                    if (!opt.getAttribute('title')) {
+                        const fullText = (opt.innerText || '').replace(/\s+/g, ' ').trim();
+                        if (fullText) {
+                            opt.setAttribute('title', fullText);
+                        }
+                    }
+                });
             } catch(err) {}
         }
 
@@ -6076,13 +6089,13 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
     action_buttons.append(("delete", T("删除"), item_id))
 
     # 3. 标签徽章与元信息 HTML（支持重复组徽章）
-    badge_list = [f'<span class="badge badge-source">{source_esc}</span>']
+    badge_list = [f'<span class="badge badge-source" title="{source_esc}">{source_esc}</span>']
     if category and category != "-" and category != "未分类":
         badge_cls = "badge-orphan" if "孤儿" in category else "badge-category"
         category_disp = html.escape(T(str(category)), quote=True)
-        badge_list.append(f'<span class="badge {badge_cls}">{category_disp}</span>')
+        badge_list.append(f'<span class="badge {badge_cls}" title="{category_disp}">{category_disp}</span>')
     if fmt and fmt != "-":
-        badge_list.append(f'<span class="badge badge-format">{fmt_esc}</span>')
+        badge_list.append(f'<span class="badge badge-format" title="{fmt_esc}">{fmt_esc}</span>')
     
     dup_cnt = row.get("dup_cnt", 1)
     if dup_cnt and int(dup_cnt) > 1:
@@ -6093,8 +6106,8 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
     <div class="card-meta-row">
         <div>{badges_str}</div>
         <span class="card-meta-divider"></span>
-        <span class="card-meta-item">{T('发布')}: {publish_time_esc}</span>
-        <span class="card-meta-item">{T('大小')}: {size_esc}</span>
+        <span class="card-meta-item" title="{T('发布')}: {publish_time_esc}">{T('发布')}: {publish_time_esc}</span>
+        <span class="card-meta-item" title="{T('大小')}: {size_esc}">{T('大小')}: {size_esc}</span>
     </div>
     '''
 
