@@ -149,9 +149,9 @@ class BaseCrawler:
             headers["Referer"] = base + "/"
         return headers
 
-    def _http_get(self, url, timeout=20, impersonate="chrome120"):
-        """通用 HTTP GET 请求，根据 self.max_retries 重试，支持代理自动切换和失败上报"""
-        from config import get_effective_proxy, is_proxy_manager_enabled
+    def _http_get(self, url, timeout=20, impersonate="chrome120", no_proxy_last=True):
+        """通用 HTTP GET 请求，根据 self.max_retries 重试，支持代理自动切换、失败上报与末次直连降级兜底"""
+        from config import get_effective_proxy, is_proxy_manager_enabled, get_crawler_proxy
         from utils.proxy_manager import get_proxy_manager
 
         # 预先获取代理管理器实例
@@ -160,12 +160,21 @@ class BaseCrawler:
         # 分离连接超时与读取超时，防止死代理建立 TCP 连接卡死 20 秒
         req_timeout = (4.0, timeout) if isinstance(timeout, (int, float)) else timeout
 
+        fixed_proxy = get_crawler_proxy()
+
         for attempt in range(1, max_retries + 1):
             proxies = None
+            # 若配置了固定代理 (fixed_proxy)，则严格尊重用户强制代理设定；
+            # 若未配置固定代理（即使用免费代理池或默认直连），且开启了 no_proxy_last，在最后一次尝试时切换为直连兜底
+            use_direct = no_proxy_last and (attempt == max_retries) and not fixed_proxy
+            if use_direct and attempt > 1:
+                self.log.warning("[HTTP-GET] ⚠️ 第 %s/%s 次尝试: 前 %s 次代理请求均失败，切换直连兜底: %s", attempt, max_retries, attempt - 1, url)
+
             try:
                 ua = random.choice(USER_AGENTS)
                 headers = {"User-Agent": ua}
-                proxies = get_effective_proxy(source=self.source_name)
+                if not use_direct:
+                    proxies = get_effective_proxy(source=self.source_name)
 
                 r = requests.get(url, headers=headers, impersonate=impersonate, timeout=req_timeout, proxies=proxies)
                 r.encoding = 'utf-8'
