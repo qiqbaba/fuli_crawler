@@ -38,6 +38,14 @@ def is_local_mode():
     # 默认 auto 模式：如果未检测到 GitHub Actions 环境，则判定为本地模式
     return os.environ.get("GITHUB_ACTIONS") != "true"
 
+# ========== 浏览器引擎配置 ==========
+# 可选值: "camoufox"（默认，反检测 Firefox 内核，试运行中）或 "chromium"（原有方案，保留作回退）
+BROWSER_ENGINE = os.environ.get("BROWSER_ENGINE", "camoufox").strip().lower()
+
+def get_browser_engine():
+    """获取当前浏览器引擎，返回 'camoufox' 或 'chromium'"""
+    return "camoufox" if BROWSER_ENGINE == "camoufox" else "chromium"
+
 # ========== 数据库配置 ==========
 # 优先读取环境变量（云端运行）；若无则使用本地 SQLite 路径（本地开发）
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")

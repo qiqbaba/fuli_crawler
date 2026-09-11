@@ -164,6 +164,8 @@ jobs:
       PDF_BASE_DIR:          /tmp/pdfs
       # 启用内置代理IP管理器（自动获取并轮换免费代理）
       ENABLE_PROXY_MANAGER:  'true'
+      # 浏览器引擎：Camoufox（反检测 Firefox 内核）；改回 chromium 即回退原方案
+      BROWSER_ENGINE:        'camoufox'
 
     steps:
       - name: 检出代码
@@ -175,12 +177,11 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 缓存 Playwright Chromium 浏览器
+      - name: 缓存 Camoufox 浏览器内核
         uses: actions/cache@v6.1.0
-        id: playwright-cache
         with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+          path: ~/.cache/camoufox
+          key: ${{ runner.os }}-camoufox-${{ hashFiles('requirements.txt') }}
 
       - name: 恢复代理 IP 列表（共享缓存）
         uses: actions/cache/restore@v6.1.0
@@ -190,10 +191,13 @@ jobs:
           restore-keys: |
             proxy-cache-
 
-      - name: 安装 Python 依赖与 Playwright Chromium 浏览器
+      - name: 安装 Python 依赖、Camoufox 内核与系统依赖
         run: |
           pip install -r requirements.txt
-          playwright install chromium --with-deps
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          python -m playwright install-deps firefox
+          python -m camoufox fetch
 
       - name: 创建临时 PDF 目录
         run: mkdir -p /tmp/pdfs
@@ -296,6 +300,8 @@ jobs:
       PDF_BASE_DIR:          /tmp/pdfs
       # 启用内置代理IP管理器（自动获取并轮换免费代理）
       ENABLE_PROXY_MANAGER:  'true'
+      # 浏览器引擎：Camoufox（反检测 Firefox 内核）；改回 chromium 即回退原方案
+      BROWSER_ENGINE:        'camoufox'
 
     steps:
       - name: 检出代码
@@ -307,12 +313,11 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 缓存 Playwright Chromium 浏览器
+      - name: 缓存 Camoufox 浏览器内核
         uses: actions/cache@v6.1.0
-        id: playwright-cache
         with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+          path: ~/.cache/camoufox
+          key: ${{ runner.os }}-camoufox-${{ hashFiles('requirements.txt') }}
 
       - name: 恢复代理 IP 列表（共享缓存）
         uses: actions/cache/restore@v6.1.0
@@ -322,10 +327,13 @@ jobs:
           restore-keys: |
             proxy-cache-
 
-      - name: 安装 Python 依赖与 Playwright Chromium 浏览器
+      - name: 安装 Python 依赖、Camoufox 内核与系统依赖
         run: |
           pip install -r requirements.txt
-          playwright install chromium --with-deps
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          python -m playwright install-deps firefox
+          python -m camoufox fetch
 
       - name: 创建临时 PDF 目录
         run: mkdir -p /tmp/pdfs

@@ -8,6 +8,7 @@ dependencies = [
     "beautifulsoup4",
     "lxml",
     "playwright",
+    "camoufox[geoip]",
     "supabase",
     "boto3",
     "python-dotenv",

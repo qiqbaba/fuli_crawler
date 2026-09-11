@@ -13,3 +13,5 @@ lingua-language-detector
 flask
 streamlit
 pandas
+
+camoufox[geoip]

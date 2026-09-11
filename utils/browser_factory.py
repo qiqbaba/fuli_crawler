@@ -5,7 +5,7 @@ import threading
 from typing import Optional, Tuple
 from playwright.sync_api import Playwright, Browser, BrowserContext
 
-from config import USER_AGENTS, get_effective_proxy_string, is_local_mode
+from config import USER_AGENTS, get_effective_proxy_string, is_local_mode, get_browser_engine
 from utils.logger import get_logger
 from utils.stealth import get_browser_launch_args, apply_stealth
 
@@ -37,7 +37,11 @@ class BrowserFactory:
         # 检查线程本地资源是否已存在
         if hasattr(self._thread_local, "context"):
             return self._thread_local.playwright, self._thread_local.browser, self._thread_local.context
-            
+
+        # Camoufox 引擎分支（原有 Chromium 方案保留，见下方分支）
+        if get_browser_engine() == "camoufox":
+            return self._create_camoufox_context(headless=headless, no_proxy=no_proxy, source=source)
+
         from playwright.sync_api import sync_playwright
         p = sync_playwright().start()
         
@@ -157,7 +161,7 @@ class BrowserFactory:
             self._thread_local.profile_dir = profile_dir
             
             with self._resources_lock:
-                self._active_resources.append((p, browser, context, profile_dir))
+                self._active_resources.append((p, browser, context, profile_dir, None))
                 
             return p, browser, context
             
@@ -172,7 +176,63 @@ class BrowserFactory:
                 p.stop()
             raise
             
-    def _cleanup_resources(self, p, browser, context, profile_dir):
+    def _create_camoufox_context(
+        self,
+        headless: Optional[bool] = None,
+        no_proxy: bool = False,
+        source: Optional[str] = None,
+    ) -> Tuple[Playwright, Browser, BrowserContext]:
+        """使用 Camoufox（反检测定制 Firefox）创建浏览器上下文。
+
+        Camoufox 自带指纹伪装与反检测能力，无需再注入 stealth 脚本，
+        也不支持自定义 UA（UA 由 Camoufox 按指纹一致性自动生成）。
+        返回 (None, None, context) 以兼容现有调用方签名；
+        Camoufox 实例保存在线程本地并在清理时关闭。
+        """
+        from camoufox.sync_api import Camoufox
+
+        if headless is None:
+            headless = not is_local_mode()
+
+        # 配置代理（复用原有代理逻辑）
+        camoufox_proxy = None
+        if not no_proxy:
+            try:
+                proxy_url = get_effective_proxy_string(exclusive=True, source=source)
+                if proxy_url:
+                    camoufox_proxy = {"server": proxy_url}
+            except Exception as ex:
+                logger.warning("获取自动代理失败: %s", ex)
+
+        fox = Camoufox(
+            headless=headless,
+            proxy=camoufox_proxy,
+            geoip=bool(camoufox_proxy),  # 有代理时按代理 IP 伪造地理位置/时区/语言
+            humanize=True,               # 模拟真人鼠标移动
+            i_know_what_im_doing=True,   # 允许上述自定义配置
+        )
+        try:
+            context = fox.start()
+        except Exception as e:
+            logger.error("启动 Camoufox 失败: %s", e)
+            raise
+
+        logger.info("[+] 线程 %s 成功启动 Camoufox 浏览器上下文 (headless=%s, proxy=%s)",
+                    threading.get_ident(), headless, "是" if camoufox_proxy else "否")
+
+        # 保存线程本地资源：p/browser 为 None，fox 单独保存供清理
+        self._thread_local.playwright = None
+        self._thread_local.browser = None
+        self._thread_local.context = context
+        self._thread_local.profile_dir = None
+        self._thread_local.camoufox = fox
+
+        with self._resources_lock:
+            self._active_resources.append((None, None, context, None, fox))
+
+        return None, None, context
+
+    def _cleanup_resources(self, p, browser, context, profile_dir, camoufox=None):
         """通用资源清理方法"""
         def _safe_close(name, action):
             try:
@@ -215,24 +275,33 @@ class BrowserFactory:
             except Exception as e:
                 logger.warning("删除临时用户数据目录失败: %s", e)
 
+        if camoufox:
+            def _stop_fox():
+                try:
+                    camoufox.__exit__(None, None, None)
+                except AttributeError:
+                    camoufox.stop()
+            _safe_close("停止 Camoufox 实例", _stop_fox)
+
     def destroy_thread_resources(self):
         """清理当前线程的浏览器资源"""
         p = getattr(self._thread_local, "playwright", None)
         browser = getattr(self._thread_local, "browser", None)
         context = getattr(self._thread_local, "context", None)
         profile_dir = getattr(self._thread_local, "profile_dir", None)
+        camoufox = getattr(self._thread_local, "camoufox", None)
         
-        self._cleanup_resources(p, browser, context, profile_dir)
+        self._cleanup_resources(p, browser, context, profile_dir, camoufox=camoufox)
         
-        # 从活跃资源列表中移除
+        # 从活跃资源列表中移除（按 context 精确匹配，Camoufox 模式下 p 为 None）
         with self._resources_lock:
             self._active_resources = [
                 item for item in self._active_resources
-                if item[0] != p
+                if item[2] is not context
             ]
                 
         # 清除线程本地属性
-        for attr in ["playwright", "browser", "context", "profile_dir"]:
+        for attr in ["playwright", "browser", "context", "profile_dir", "camoufox"]:
             if hasattr(self._thread_local, attr):
                 delattr(self._thread_local, attr)
                 
@@ -266,8 +335,10 @@ class BrowserFactory:
                 if item[0] == current_p
             ]
             
-        for p, browser, context, profile_dir in other_resources:
-            self._cleanup_resources(p, browser, context, profile_dir)
+        for item in other_resources:
+            p, browser, context, profile_dir = item[0], item[1], item[2], item[3]
+            camoufox = item[4] if len(item) > 4 else None
+            self._cleanup_resources(p, browser, context, profile_dir, camoufox=camoufox)
 
     def destroy_all_resources(self):
         """清理所有线程的浏览器资源"""
@@ -275,11 +346,13 @@ class BrowserFactory:
             resources = list(self._active_resources)
             self._active_resources.clear()
             
-        for p, browser, context, profile_dir in resources:
-            self._cleanup_resources(p, browser, context, profile_dir)
+        for item in resources:
+            p, browser, context, profile_dir = item[0], item[1], item[2], item[3]
+            camoufox = item[4] if len(item) > 4 else None
+            self._cleanup_resources(p, browser, context, profile_dir, camoufox=camoufox)
             
         # 清除当前线程的线程本地属性
-        for attr in ["playwright", "browser", "context", "profile_dir"]:
+        for attr in ["playwright", "browser", "context", "profile_dir", "camoufox"]:
             if hasattr(self._thread_local, attr):
                 delattr(self._thread_local, attr)
                 
