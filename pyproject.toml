@@ -18,6 +18,8 @@ dependencies = [
     "pysocks",
     "lingua-language-detector",
     "flask",
+    "streamlit",
+    "pandas",
 ]
 
 [tool.uv]

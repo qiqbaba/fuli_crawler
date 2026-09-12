@@ -2479,3 +2479,73 @@ setInterval(injectHeaderMetadata, 3000);
         }, 2000);
     } catch(e) {}
 })();
+
+// ── 控制台/实时同步日志窗口与进度安全吸底 (Safe Auto-scroll for live sync & status console) ──
+;(() => {
+    try {
+        const pDoc = (window.parent && window.parent.document) || document;
+        if (!pDoc) return;
+
+        let isAutoScrolling = false;
+
+        function autoScrollConsole() {
+            if (isAutoScrolling) return;
+            isAutoScrolling = true;
+
+            try {
+                // 1. 查找所有包含代码块的容器（状态微件内部、折叠框内部以及独立代码块）
+                const pres = pDoc.querySelectorAll(
+                    '[data-testid="stExpanderDetails"] pre, [data-testid="stExpander"] pre, [data-testid="stCode"] pre'
+                );
+
+                pres.forEach(pre => {
+                    // 初始化滚动配置与用户手动滚动监听
+                    if (!pre._hasScrollConfig) {
+                        pre._hasScrollConfig = true;
+                        pre.style.setProperty('max-height', '420px', 'important');
+                        pre.style.setProperty('overflow-y', 'auto', 'important');
+
+                        pre.addEventListener('scroll', () => {
+                            const dist = pre.scrollHeight - pre.clientHeight - pre.scrollTop;
+                            // 用户主动向上滑动超过 50px 查看历史时暂停吸底；滑回 50px 内恢复吸底
+                            pre.dataset.userScrolledUp = (dist > 50) ? 'true' : 'false';
+                        }, { passive: true });
+                    }
+
+                    // 如果用户没有主动向上查看历史，且内容有溢出，滚动到最底部
+                    if (pre.dataset.userScrolledUp !== 'true' && pre.scrollHeight > pre.clientHeight) {
+                        pre.scrollTop = pre.scrollHeight;
+                    }
+                });
+
+                // 2. 当 Streamlit 处于 running 状态且有展开的状态微件时，确保状态微件在视口内平滑可见
+                const isRunning = pDoc.querySelector('.stApp[data-test-script-state="running"]');
+                if (isRunning) {
+                    const expanders = pDoc.querySelectorAll('[data-testid="stExpander"]');
+                    if (expanders.length > 0) {
+                        const activeExpander = expanders[expanders.length - 1];
+                        const rect = activeExpander.getBoundingClientRect();
+                        const windowHeight = window.innerHeight || pDoc.documentElement.clientHeight;
+                        // 如果状态微件下边缘超出可视区下方，轻柔随动滚动
+                        if (rect.bottom > windowHeight - 15 && rect.top > 0) {
+                            const scrollContainer = pDoc.querySelector('[data-testid="stAppViewContainer"]') || window;
+                            if (scrollContainer.scrollBy) {
+                                scrollContainer.scrollBy({ top: Math.min(rect.bottom - windowHeight + 35, 60), behavior: 'smooth' });
+                            }
+                        }
+                    }
+                }
+            } catch(e) {
+            } finally {
+                isAutoScrolling = false;
+            }
+        }
+
+        // 定时轮询：采用 macrotask 级别的 setInterval (80ms)，完全脱离 React 微任务与虚拟 DOM 周期，100% 零冲突
+        if (window._syncConsoleScrollTimer) {
+            clearInterval(window._syncConsoleScrollTimer);
+        }
+        window._syncConsoleScrollTimer = setInterval(autoScrollConsole, 80);
+    } catch(err) {}
+})();
+

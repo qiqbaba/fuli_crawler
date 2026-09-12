@@ -1,7 +1,13 @@
 @echo off
-title ×ÊÔ´Êı¾İ¿âÓë PDF ÔöÇ¿Ô¤ÀÀÃæ°å
+chcp 65001 >nul
+title èµ„æºåº“ PDF å°é¢é¢„è§ˆ
 echo ========================================================
-echo   ÕıÔÚÆô¶¯ ×ÊÔ´Êı¾İ¿âÓë PDF ÔöÇ¿Ô¤ÀÀÃæ°å (Streamlit)...
+echo   ğŸš€ å¯åŠ¨æ•°æ®åº“ PDF å°é¢é¢„è§ˆ (Streamlit)...
 echo ========================================================
-python -m streamlit run viewer.py
+cd /d "%~dp0"
+if exist "%~dp0.venv\Scripts\python.exe" (
+    "%~dp0.venv\Scripts\python.exe" -m streamlit run viewer.py
+) else (
+    python -m streamlit run viewer.py
+)
 pause

@@ -258,6 +258,10 @@ def render_operation_result(
 # 现代运维功能卡片栅格选择矩阵 (Action Cards Grid Selector)
 # ===================================================================
 
+def _on_maint_card_click(state_key: str, opt_key: str):
+    st.session_state[state_key] = opt_key
+
+
 def render_maint_card_selector(
     options: List[Dict[str, Any]],
     state_key: str,
@@ -308,9 +312,14 @@ def render_maint_card_selector(
                         """,
                         unsafe_allow_html=True
                     )
-                    if st.button("", key=f"mgrid_{state_key}_{opt['key']}", help=T(f"切换至：{opt['title']}"), use_container_width=True):
-                        st.session_state[state_key] = opt["key"]
-                        st.rerun()
+                    st.button(
+                        "",
+                        key=f"mgrid_{state_key}_{opt['key']}",
+                        help=T(f"切换至：{opt['title']}"),
+                        use_container_width=True,
+                        on_click=_on_maint_card_click,
+                        args=(state_key, opt["key"])
+                    )
                 else:
                     st.empty()
 

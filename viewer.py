@@ -23,10 +23,15 @@ from utils.pdf_utils import parse_filename
 from utils.fanhao_filter import extract_fanhao
 from utils.resource_link_cleaner import clean_resource_link
 from utils.ui_compact import T
+import config
 import viewer_maintenance
+import viewer_sync
 import importlib
+importlib.reload(config)
 importlib.reload(viewer_maintenance)
+importlib.reload(viewer_sync)
 from viewer_maintenance import render_maintenance_hub
+from viewer_sync import render_sync_hub
 
 
 # 设置页面配置（收起侧边栏以最大化内容区域）
@@ -38,15 +43,19 @@ st.set_page_config(
 )
 
 # 自定义 CSS 样式提升视觉体验
-# 静态资源读取器 (支持 LRU 内存驻留)
+# 静态资源读取器 (支持文件修改热更新与 LRU 内存驻留)
 @functools.lru_cache(maxsize=16)
-def get_asset_content(rel_name: str) -> str:
-    asset_file = os.path.join(PROJECT_ROOT, 'assets', rel_name)
+def _read_asset_file(asset_file: str, mtime: float) -> str:
     try:
         with open(asset_file, 'r', encoding='utf-8') as f:
             return f.read()
     except Exception as e:
-        return f'/* Failed to load asset {rel_name}: {e} */'
+        return f'/* Failed to load asset {os.path.basename(asset_file)}: {e} */'
+
+def get_asset_content(rel_name: str) -> str:
+    asset_file = os.path.join(PROJECT_ROOT, 'assets', rel_name)
+    mtime = os.path.getmtime(asset_file) if os.path.exists(asset_file) else 0.0
+    return _read_asset_file(asset_file, mtime)
 
 # 载入外置基础 CSS 样式表 (assets/viewer_base.css)
 st.markdown(f'<style>\n{get_asset_content("viewer_base.css")}\n</style>', unsafe_allow_html=True)
@@ -1879,9 +1888,10 @@ with st.container():
 
 # ==================== 顶部主导航 Tab 与多维筛选工具栏 ====================
 
-main_tab_gallery, main_tab_maintenance = st.tabs([
+main_tab_gallery, main_tab_maintenance, main_tab_sync = st.tabs([
     T("画廊浏览"),
     T("批量管理"),
+    T("云端同步"),
 ])
 
 with main_tab_gallery:
@@ -2007,6 +2017,9 @@ with main_tab_gallery:
 
 with main_tab_maintenance:
     render_maintenance_hub()
+
+with main_tab_sync:
+    render_sync_hub()
 
 
 # 注入 JavaScript：基于 IntersectionObserver 视口真懒加载 + 内部自由滑动动态渲染 + 初始滚动 200px

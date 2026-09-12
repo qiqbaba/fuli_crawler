@@ -2307,3 +2307,14 @@ body.theme-light .maint-action-workbench {
     border-color: #e2e8f0;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
 }
+
+/* 状态微件、折叠框与控制台日志代码块：固定高度视口与内部平滑滚动 */
+[data-testid="stExpanderDetails"] [data-testid="stCode"] pre,
+[data-testid="stExpander"] [data-testid="stCode"] pre,
+div[data-testid="stCodeBlock"] pre,
+div[data-testid="stCode"] pre {
+    max-height: 420px !important;
+    overflow-y: auto !important;
+    scroll-behavior: smooth !important;
+}
+

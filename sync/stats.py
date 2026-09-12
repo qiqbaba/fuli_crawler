@@ -231,33 +231,37 @@ def query_r2(year=None):
 
     for prefix in prefixes:
         logger.info("[*] 正在扫描 R2 前缀: %s", prefix)
-        paginator = client.get_paginator("list_objects_v2")
-        page_count = 0
+        try:
+            paginator = client.get_paginator("list_objects_v2")
+            page_count = 0
 
-        for page in paginator.paginate(Bucket=config.R2_BUCKET_NAME, Prefix=prefix):
-            page_count += 1
-            if "Contents" not in page:
-                continue
-
-            for obj in page["Contents"]:
-                key = obj["Key"]
-                if not key.lower().endswith(".pdf"):
+            for page in paginator.paginate(Bucket=config.R2_BUCKET_NAME, Prefix=prefix):
+                page_count += 1
+                if "Contents" not in page:
                     continue
 
-                size = obj.get("Size", 0)
-                total_count += 1
-                total_size += size
+                for obj in page["Contents"]:
+                    key = obj["Key"]
+                    if not key.lower().endswith(".pdf"):
+                        continue
 
-                # 提取年份
-                parts = key.split("/")
-                if len(parts) >= 2:
-                    y = parts[1]
-                    if y.isdigit():
-                        year_stats[y] = year_stats.get(y, {"count": 0, "size": 0})
-                        year_stats[y]["count"] += 1
-                        year_stats[y]["size"] += size
+                    size = obj.get("Size", 0)
+                    total_count += 1
+                    total_size += size
 
-        logger.info("  [进度] 已扫描 %s 页", page_count)
+                    # 提取年份
+                    parts = key.split("/")
+                    if len(parts) >= 2:
+                        y = parts[1]
+                        if y.isdigit():
+                            year_stats[y] = year_stats.get(y, {"count": 0, "size": 0})
+                            year_stats[y]["count"] += 1
+                            year_stats[y]["size"] += size
+
+            logger.info("  [进度] 已扫描 %s 页", page_count)
+        except Exception as e:
+            logger.error("[-] 查询 R2 失败 (%s): %s", prefix, e)
+            break
 
     # 输出结果
     logger.info("[+] PDF 文件总数: %s", f"{total_count:,}")

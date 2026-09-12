@@ -17,6 +17,68 @@ except ImportError:
 from utils.logger import get_logger
 logger = get_logger(__name__)
 
+
+def _sanitize_dead_proxies():
+    """
+    自愈机制：检测系统代理与环境变量中的代理是否可用。
+    在 Windows 下，当本地代理软件（如 Clash、v2rayN 等）异常关闭但系统代理（注册表 ProxyEnable=1）未关闭时，
+    urllib.request.getproxies() 会返回不可用的 127.0.0.1:7890，导致 boto3、httpx、requests 等全部报
+    ProxyConnectionError: Failed to connect to proxy URL: "http://127.0.0.1:7890" 或 WinError 10061。
+    本函数在启动时快速探测该代理端口，若无法连通则自动屏蔽该失效代理，保证程序可直接直连云端服务（R2、Supabase、DynamoDB）。
+    """
+    import socket
+    import urllib.request
+    from urllib.parse import urlparse
+
+    try:
+        proxies = urllib.request.getproxies()
+        if not proxies:
+            return
+
+        dead_proxies = {}
+        for proto, proxy_url in list(proxies.items()):
+            if not proxy_url:
+                continue
+            test_url = proxy_url if "://" in proxy_url else f"http://{proxy_url}"
+            try:
+                parsed = urlparse(test_url)
+                host = parsed.hostname
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                if not host:
+                    continue
+
+                if host in ("127.0.0.1", "localhost", "::1"):
+                    with socket.create_connection((host, port), timeout=0.3):
+                        pass
+            except Exception:
+                dead_proxies[proto] = proxy_url
+
+        if dead_proxies:
+            logger.warning(
+                "检测到系统/环境代理已开启但目标端口未连通 %s，自动屏蔽失效代理以启用直连",
+                dead_proxies,
+            )
+            os.environ["NO_PROXY"] = "*"
+            os.environ["no_proxy"] = "*"
+
+            for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+                if var in os.environ:
+                    os.environ.pop(var, None)
+
+            orig_getproxies = urllib.request.getproxies
+
+            def _clean_getproxies():
+                curr = orig_getproxies()
+                return {k: v for k, v in curr.items() if k not in dead_proxies}
+
+            urllib.request.getproxies = _clean_getproxies
+    except Exception as e:
+        logger.debug("检测代理健康状态失败: %s", e)
+
+
+_sanitize_dead_proxies()
+sanitize_dead_proxies = _sanitize_dead_proxies
+
 # ========== 运行模式配置 ==========
 _force_mode = None  # 可选值为 'local' 或 'cloud'
 _force_mode_lock = threading.Lock()
