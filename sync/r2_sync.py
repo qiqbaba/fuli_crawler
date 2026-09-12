@@ -107,6 +107,9 @@ def _list_single_prefix(client, prefix, max_keys=None):
             })
             if max_keys and len(pdfs) >= max_keys:
                 return pdfs[:max_keys]
+    return pdfs
+
+
 def _strip_pdf_prefix(key: str) -> str:
     """去除 key 前缀中的 pdf/"""
     if key.startswith("pdf/"):
@@ -134,13 +137,15 @@ def list_all_pdfs(client, prefix="pdf/", max_keys=None):
                 sub_p = future_to_prefix[future]
                 try:
                     res = future.result()
-                    all_pdfs.extend(res)
-                    print(f"  [进度] 前缀 '{sub_p}' 检索完成，找到 {len(res)} 个 PDF")
+                    if res:
+                        all_pdfs.extend(res)
+                    print(f"  [进度] 前缀 '{sub_p}' 检索完成，找到 {len(res) if res else 0} 个 PDF")
                 except Exception as e:
                     print(f"  [-] 前缀 '{sub_p}' 检索失败: {e}")
         return all_pdfs
     else:
-        return _list_single_prefix(client, prefix=prefix, max_keys=max_keys)
+        res = _list_single_prefix(client, prefix=prefix, max_keys=max_keys)
+        return res if res is not None else []
 
 
 def format_size(size_bytes):
@@ -268,6 +273,13 @@ def download_all_pdfs(output_dir, pdfs, resume=True, workers=30):
     start_time = time.time()
     stop_event = threading.Event()
     reporter = threading.Thread(target=_progress_reporter, args=(total, stop_event, start_time), daemon=True)
+    try:
+        from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+        ctx = get_script_run_ctx()
+        if ctx:
+            add_script_run_ctx(reporter, ctx)
+    except Exception:
+        pass
     reporter.start()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:

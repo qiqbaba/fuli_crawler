@@ -701,6 +701,9 @@ def render_tab_r2_sync():
                 complete_label=T("R2 PDF 同步下载完成"),
                 error_label=T("R2 PDF 同步下载中断或异常")
             ) as runner:
+                import importlib
+                import sync.r2_sync
+                importlib.reload(sync.r2_sync)
                 from sync.r2_sync import get_r2_client, list_all_pdfs, download_all_pdfs, list_all_objects, run_delete_flow
                 
                 selected_year = None if dl_year == "全部年份" else dl_year
@@ -711,11 +714,13 @@ def render_tab_r2_sync():
                 try:
                     client = get_r2_client()
                     print(f"[*] 正在检索 R2 文件清单 (前缀: {prefix})...")
-                    pdfs = list_all_pdfs(client, prefix=prefix, max_keys=max_keys)
+                    pdfs = list_all_pdfs(client, prefix=prefix, max_keys=max_keys) or []
                     print(f"[+] 检索完成，共找到 {len(pdfs)} 个 PDF 文件")
 
                     if pdfs:
                         download_all_pdfs(out_dir, pdfs, resume=dl_resume, workers=dl_workers)
+                    else:
+                        print(f"[*] 未在 R2 中检索到符合前缀 '{prefix}' 的 PDF 文件")
 
                     if dl_delete_after and pdfs:
                         print("\n[*] 正在执行下载后联动删除流程...")
@@ -756,11 +761,39 @@ def render_tab_r2_sync():
         with c2:
             local_check_dir = st.text_input(T("本地比对目录 (用于检测是否存在副本)"), value=os.path.join(PROJECT_ROOT, "pdf"), key="r2_local_check_dir")
 
+        # 保证互斥联动：初始化与状态回调（勾选一个自动取消另一个）
+        if "r2_del_dry_run" not in st.session_state:
+            st.session_state["r2_del_dry_run"] = True
+        if "r2_del_force" not in st.session_state:
+            st.session_state["r2_del_force"] = False
+
+        # 若历史状态中两者同时为 True，优先纠正为安全预览模式
+        if st.session_state.get("r2_del_dry_run") and st.session_state.get("r2_del_force"):
+            st.session_state["r2_del_force"] = False
+
+        def _on_r2_del_dry_run_change():
+            if st.session_state.get("r2_del_dry_run"):
+                st.session_state["r2_del_force"] = False
+
+        def _on_r2_del_force_change():
+            if st.session_state.get("r2_del_force"):
+                st.session_state["r2_del_dry_run"] = False
+
         c3, c4 = st.columns([1.5, 2.5])
         with c3:
-            del_dry_run = st.checkbox(T("仅模拟预览 (dry-run)"), value=True, key="r2_del_dry_run", help=T("只扫描并列出将删除的文件与大小，不执行真实删除"))
+            del_dry_run = st.checkbox(
+                T("仅模拟预览 (dry-run)"),
+                key="r2_del_dry_run",
+                on_change=_on_r2_del_dry_run_change,
+                help=T("只扫描并列出将删除的文件与大小，不执行真实删除")
+            )
         with c4:
-            del_force = st.checkbox(T("删除本地无副本的孤立文件 (谨慎)"), value=False, key="r2_del_force")
+            del_force = st.checkbox(
+                T("删除本地无副本的孤立文件 (谨慎)"),
+                key="r2_del_force",
+                on_change=_on_r2_del_force_change,
+                help=T("勾选将自动切换为正式清理（自动取消模拟预览），并连同本地无备份的云端孤立文件一并清理；未勾选时将强制保护本地无副本的文件。（与「仅模拟预览」互斥联动）")
+            )
 
         btn_del = st.button(T("执行 R2 云端文件清理"), type="primary")
 
@@ -770,6 +803,9 @@ def render_tab_r2_sync():
                 complete_label=T("R2 文件清理完成"),
                 error_label=T("R2 文件清理中断或异常")
             ) as runner:
+                import importlib
+                import sync.r2_sync
+                importlib.reload(sync.r2_sync)
                 from sync.r2_sync import get_r2_client, list_all_objects, run_delete_flow
 
                 try:

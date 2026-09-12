@@ -940,55 +940,72 @@ def render_tab_record_filter():
         st.markdown(T("#### 数据库记录多维查重、独立 DB 导出与批量去重 (强制级联删除 PDF)"))
         st.info(T("多维检测与批量去重，支持安全级联删除关联 PDF 文件并自动导出独立 .db 备份。可在下方勾选参数调整保留与过滤策略。"))
         
-        with st.form("record_duplicates_form", clear_on_submit=False):
-            c1, c2, c3 = st.columns([1.1, 1.3, 1.1])
-            with c1:
-                field_choice = st.selectbox(
-                    T("查重维度 (Field)"),
-                    [
-                        "pdf_path (PDF 路径重复)",
-                        "url (URL 地址重复)",
-                        "resource_link (磁力链接重复)",
-                        "title_link (标题 + 磁力链接联合重复)",
-                        "all (全维度综合查重)",
-                    ],
-                    key="dup_field_sel",
-                    format_func=T
-                )
-                field_val = field_choice.split(" ")[0]
-            with c2:
-                keep_choice = st.selectbox(
-                    T("去重保留策略"),
-                    [
-                        "newest (优先非HTTP/含PDF > 最新入库: ID 最大)",
-                        "oldest (优先非HTTP/含PDF > 最旧入库: ID 最小)",
-                    ],
-                    key="dup_keep_choice",
-                    help="【去重保留判定完整条件链】\n1. 优质链接优先：优先保留不含 http 的优质资源（如 magnet 磁力链）；\n2. PDF 优先判定：若组内存在已生成 PDF 的记录 (pdf_path 非空)，优先在含 PDF 的候选集中筛选（防止误删导致 PDF 孤立丢失）；\n3. ID 时序排序：在候选集中按 ID 最大 (最新入库) 或 ID 最小 (最早入库) 确定唯一保留记录；\n4. 物理级联清理：对其余冗余副本从数据库删除（若未勾选保护模式则同步物理级联删除关联的本地 PDF 文件）。",
-                    format_func=T
-                )
-                keep_val = keep_choice.split(" ")[0]
-            with c3:
-                only_http_opt = st.checkbox(
-                    T("仅删除链接中包含 http 的重复记录"),
-                    value=False,
-                    key="dup_only_http",
-                    help=T("【保护磁力链接】勾选后仅清理 resource_link 中包含 http/https 的网页/中转链接副本；优先保护 magnet 磁力等非 HTTP 优质资源不被误删。")
-                )
-                only_no_pdf_opt = st.checkbox(
-                    T("仅删除无 PDF 的重复链接"),
-                    value=False,
-                    key="dup_only_no_pdf",
-                    help=T("【安全保护模式】勾选后仅清理未生成/未关联 PDF 的冗余链接副本；凡已关联 PDF 文件的记录均受严格保护绝不删除，也不会删除任何物理 PDF 文件。")
-                )
-                export_db_opt = st.checkbox(T("默认导出为独立 SQLite .db"), value=True, key="dup_export_db")
-                export_csv_opt = st.checkbox(T("同时导出为 CSV 审计表"), value=False, key="dup_export_csv")
-                
-            b1, b2, b3 = st.columns([1, 1, 2])
-            with b1:
-                btn_dup_prev = st.form_submit_button(T("扫描并预览重复记录 (Dry Run)"), type="primary", use_container_width=True)
-            with b2:
-                btn_dup_run = st.form_submit_button(T("正式执行批量去重/清理 (Run)"), use_container_width=True)
+        # 保证互斥联动：初始化与状态回调（仅删除包含 http 与 仅删除无 PDF 属于排他性过滤策略，不可同时勾选）
+        if "dup_only_http" not in st.session_state:
+            st.session_state["dup_only_http"] = False
+        if "dup_only_no_pdf" not in st.session_state:
+            st.session_state["dup_only_no_pdf"] = False
+
+        # 若历史会话中两者同时为 True，优先纠偏（保留更安全的“保护已有 PDF”模式）
+        if st.session_state.get("dup_only_http") and st.session_state.get("dup_only_no_pdf"):
+            st.session_state["dup_only_http"] = False
+
+        def _on_dup_only_http_change():
+            if st.session_state.get("dup_only_http"):
+                st.session_state["dup_only_no_pdf"] = False
+
+        def _on_dup_only_no_pdf_change():
+            if st.session_state.get("dup_only_no_pdf"):
+                st.session_state["dup_only_http"] = False
+
+        c1, c2, c3 = st.columns([1.1, 1.3, 1.1])
+        with c1:
+            field_choice = st.selectbox(
+                T("查重维度 (Field)"),
+                [
+                    "pdf_path (PDF 路径重复)",
+                    "url (URL 地址重复)",
+                    "resource_link (磁力链接重复)",
+                    "title_link (标题 + 磁力链接联合重复)",
+                    "all (全维度综合查重)",
+                ],
+                key="dup_field_sel",
+                format_func=T
+            )
+            field_val = field_choice.split(" ")[0]
+        with c2:
+            keep_choice = st.selectbox(
+                T("去重保留策略"),
+                [
+                    "newest (优先非HTTP/含PDF > 最新入库: ID 最大)",
+                    "oldest (优先非HTTP/含PDF > 最旧入库: ID 最小)",
+                ],
+                key="dup_keep_choice",
+                help="【去重保留判定完整条件链】\n1. 优质链接优先：优先保留不含 http 的优质资源（如 magnet 磁力链）；\n2. PDF 优先判定：若组内存在已生成 PDF 的记录 (pdf_path 非空)，优先在含 PDF 的候选集中筛选（防止误删导致 PDF 孤立丢失）；\n3. ID 时序排序：在候选集中按 ID 最大 (最新入库) 或 ID 最小 (最早入库) 确定唯一保留记录；\n4. 物理级联清理：对其余冗余副本从数据库删除（若未勾选保护模式则同步物理级联删除关联的本地 PDF 文件）。",
+                format_func=T
+            )
+            keep_val = keep_choice.split(" ")[0]
+        with c3:
+            only_http_opt = st.checkbox(
+                T("仅删除链接中包含 http 的重复记录"),
+                key="dup_only_http",
+                on_change=_on_dup_only_http_change,
+                help=T("【保护磁力链接】勾选后仅清理 resource_link 中包含 http/https 的网页/中转链接副本；优先保护 magnet 磁力等非 HTTP 优质资源不被误删。（与下方「仅删除无 PDF」互斥）")
+            )
+            only_no_pdf_opt = st.checkbox(
+                T("仅删除无 PDF 的重复链接"),
+                key="dup_only_no_pdf",
+                on_change=_on_dup_only_no_pdf_change,
+                help=T("【安全保护模式】勾选后仅清理未生成/未关联 PDF 的冗余链接副本；凡已关联 PDF 文件的记录均受严格保护绝不删除，也不会删除任何物理 PDF 文件。（与上方「仅删除包含 http」互斥）")
+            )
+            export_db_opt = st.checkbox(T("默认导出为独立 SQLite .db"), value=True, key="dup_export_db")
+            export_csv_opt = st.checkbox(T("同时导出为 CSV 审计表"), value=False, key="dup_export_csv")
+            
+        b1, b2, b3 = st.columns([1, 1, 2])
+        with b1:
+            btn_dup_prev = st.button(T("扫描并预览重复记录 (Dry Run)"), type="primary", use_container_width=True, key="btn_dup_prev")
+        with b2:
+            btn_dup_run = st.button(T("正式执行批量去重/清理 (Run)"), use_container_width=True, key="btn_dup_run")
             
         if btn_dup_prev or btn_dup_run:
             from fixes.record_filter import run_duplicates_cli
