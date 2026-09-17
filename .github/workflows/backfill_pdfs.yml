@@ -23,6 +23,10 @@ on:
         description: '是否启用代理 (开启后自动获取并轮换免费代理，复用主任务缓存)'
         type: boolean
         default: true
+      refresh_proxy:
+        description: '是否强制重新获取代理 (不复用旧缓存，从网络重新拉取并验证新代理)'
+        type: boolean
+        default: false
       dry_run:
         description: '仅检索并预览待补全记录，不实际生成与上传'
         type: boolean
@@ -45,7 +49,7 @@ jobs:
           cache: 'pip'
 
       - name: 恢复代理 IP 缓存（复用主任务共享缓存）
-        if: inputs.enable_proxy
+        if: inputs.enable_proxy && !inputs.refresh_proxy
         uses: actions/cache/restore@v6.1.0
         with:
           path: temp_profiles/
@@ -63,16 +67,27 @@ jobs:
         env:
           ENABLE_PROXY_MANAGER: 'true'
           CRAWLER_PROXY: ${{ secrets.CRAWLER_PROXY }}
+          REFRESH_PROXY: ${{ inputs.refresh_proxy }}
         run: |
           python -c "
+          import os
           from utils.proxy_manager import init_proxy_manager
-          mgr = init_proxy_manager(force_fetch=False, force_verify=False)
+          force = os.environ.get('REFRESH_PROXY', 'false').lower() == 'true'
+          mgr = init_proxy_manager(force_fetch=force, force_verify=force)
           if mgr:
               stats = mgr.get_stats()
-              print(f'代理池就绪: 总计 {stats[\"total\"]} 个, 可用 {stats[\"working\"]} 个')
+              print(f'代理池就绪: 总计 {stats[\"total\"]} 个, 可用 {stats[\"working\"]} 个 (强制刷新={force})')
           else:
               print('代理管理器未启用')
           "
+
+      - name: 保存全新代理 IP 缓存
+        if: inputs.enable_proxy && inputs.refresh_proxy
+        continue-on-error: true
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: temp_profiles/
+          key: proxy-cache-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Install Playwright Chromium & System Dependencies
         run: |
