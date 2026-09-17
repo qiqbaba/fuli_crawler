@@ -161,11 +161,9 @@ jobs:
       AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       # 云端临时 PDF 目录（上传 R2 后自动删除）
-      PDF_BASE_DIR:          /tmp/pdfs
+      PDF_BASE_DIR:          /tmp/pdf
       # 启用内置代理IP管理器（自动获取并轮换免费代理）
       ENABLE_PROXY_MANAGER:  'true'
-      # 浏览器引擎：Camoufox（反检测 Firefox 内核）；改回 chromium 即回退原方案
-      BROWSER_ENGINE:        'camoufox'
 
     steps:
       - name: 检出代码
@@ -177,11 +175,12 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 缓存 Camoufox 浏览器内核
+      - name: 缓存 Playwright Chromium 浏览器
         uses: actions/cache@v6.1.0
+        id: playwright-cache
         with:
-          path: ~/.cache/camoufox
-          key: ${{ runner.os }}-camoufox-${{ hashFiles('requirements.txt') }}
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
 
       - name: 恢复代理 IP 列表（共享缓存）
         uses: actions/cache/restore@v6.1.0
@@ -191,16 +190,13 @@ jobs:
           restore-keys: |
             proxy-cache-
 
-      - name: 安装 Python 依赖、Camoufox 内核与系统依赖
+      - name: 安装 Python 依赖与 Playwright Chromium 浏览器
         run: |
           pip install -r requirements.txt
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          python -m playwright install-deps firefox
-          python -m camoufox fetch
+          playwright install chromium --with-deps
 
       - name: 创建临时 PDF 目录
-        run: mkdir -p /tmp/pdfs
+        run: mkdir -p /tmp/pdf
 
       - name: 检查 workflow_dispatch 是否匹配当前爬虫
         id: check-crawler
@@ -273,7 +269,7 @@ jobs:
 
       - name: 清理临时 PDF 目录
         if: always()
-        run: rm -rf /tmp/pdfs
+        run: rm -rf /tmp/pdf
 
   # ========== 爬虫并行 job 2：同源集群站点爬虫（限制并发 max-parallel: 4 防止封禁） ==========
   crawl_cluster:
@@ -297,11 +293,9 @@ jobs:
       AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       # 云端临时 PDF 目录（上传 R2 后自动删除）
-      PDF_BASE_DIR:          /tmp/pdfs
+      PDF_BASE_DIR:          /tmp/pdf
       # 启用内置代理IP管理器（自动获取并轮换免费代理）
       ENABLE_PROXY_MANAGER:  'true'
-      # 浏览器引擎：Camoufox（反检测 Firefox 内核）；改回 chromium 即回退原方案
-      BROWSER_ENGINE:        'camoufox'
 
     steps:
       - name: 检出代码
@@ -313,11 +307,12 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 缓存 Camoufox 浏览器内核
+      - name: 缓存 Playwright Chromium 浏览器
         uses: actions/cache@v6.1.0
+        id: playwright-cache
         with:
-          path: ~/.cache/camoufox
-          key: ${{ runner.os }}-camoufox-${{ hashFiles('requirements.txt') }}
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
 
       - name: 恢复代理 IP 列表（共享缓存）
         uses: actions/cache/restore@v6.1.0
@@ -327,16 +322,13 @@ jobs:
           restore-keys: |
             proxy-cache-
 
-      - name: 安装 Python 依赖、Camoufox 内核与系统依赖
+      - name: 安装 Python 依赖与 Playwright Chromium 浏览器
         run: |
           pip install -r requirements.txt
-          sudo apt-get update
-          sudo apt-get install -y xvfb
-          python -m playwright install-deps firefox
-          python -m camoufox fetch
+          playwright install chromium --with-deps
 
       - name: 创建临时 PDF 目录
-        run: mkdir -p /tmp/pdfs
+        run: mkdir -p /tmp/pdf
 
       - name: 检查 workflow_dispatch 是否匹配当前爬虫
         id: check-crawler
@@ -409,7 +401,7 @@ jobs:
 
       - name: 清理临时 PDF 目录
         if: always()
-        run: rm -rf /tmp/pdfs
+        run: rm -rf /tmp/pdf
 
   # ========== 汇总 job：合并所有爬虫的重试统计并提交到仓库 ==========
   merge_stats:

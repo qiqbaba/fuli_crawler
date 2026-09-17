@@ -48,15 +48,32 @@ class PDFGenerator:
         """空方法，用于向后兼容"""
         pass
 
+    def _normalize_date_and_year(self, publish_date):
+        """标准化发布日期与年份，防止出现 Unknown_Year 或不规范路径"""
+        import re
+        from datetime import datetime
+        date_str = str(publish_date or "").strip()
+        m = re.search(r'\b(20\d{2}-\d{2}-\d{2})\b', date_str)
+        if m:
+            clean_date = m.group(1)
+            return clean_date, clean_date.split('-')[0]
+        m_year = re.search(r'\b(20\d{2})\b', date_str)
+        if m_year:
+            year = m_year.group(1)
+            today = datetime.now().strftime("%m-%d")
+            return f"{year}-{today}", year
+        now = datetime.now().strftime("%Y-%m-%d")
+        return now, now.split('-')[0]
+
     def _get_pdf_local_tmp_path(self, publish_date, title, source_name):
         """获取 PDF 本地临时/持久化保存路径"""
+        publish_date, year = self._normalize_date_and_year(publish_date)
         if self.r2_uploader:
             import tempfile
             base = os.path.join(tempfile.gettempdir(), f"{source_name}_pdf")
         else:
             base = PDF_BASE_DIR
 
-        year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
         save_dir = os.path.join(base, year)
         os.makedirs(save_dir, exist_ok=True)
 
@@ -76,8 +93,8 @@ class PDFGenerator:
         """统一的 PDF R2 上传与相对路径返回逻辑"""
         if not local_path or not os.path.exists(local_path):
             return None
+        publish_date, year = self._normalize_date_and_year(publish_date)
         if self.r2_uploader:
-            year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
             remote_key = f"pdf/{year}/{os.path.basename(local_path)}"
             result = self.r2_uploader.upload_pdf(local_path, remote_key)
             if os.path.exists(local_path):
@@ -87,7 +104,6 @@ class PDFGenerator:
                     pass
             return result
         else:
-            year = publish_date.split('-')[0] if '-' in publish_date else "Unknown_Year"
             rel_path = f"pdf/{year}/{os.path.basename(local_path)}"
             return rel_path.replace('\\', '/')
 

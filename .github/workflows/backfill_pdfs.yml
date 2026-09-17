@@ -1,0 +1,83 @@
+name: Cloud PDF Backfill (一键云端批量补全缺失 PDF)
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: '单次补充的最大记录数 (默认 1000，填 0 表示全部处理)'
+        required: true
+        default: '1000'
+      workers:
+        description: '并发线程数 (GitHub Actions 建议 4-8)'
+        required: true
+        default: '6'
+      source:
+        description: '指定补全的来源站点 (默认 all，可选 u3c3, dashen, jingpin_toupai, gcbt, taose 等)'
+        required: true
+        default: 'all'
+      start_date:
+        description: '检索起始日期 (格式 YYYY-MM-DD，默认 2026-09-12)'
+        required: false
+        default: '2026-09-12'
+      dry_run:
+        description: '仅检索并预览待补全记录，不实际生成与上传'
+        type: boolean
+        default: false
+
+jobs:
+  backfill-pdfs:
+    name: Backfill Missing PDFs to R2 & Supabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright Chromium & System Dependencies
+        run: |
+          playwright install chromium --with-deps
+
+      - name: Create temp PDF directory
+        run: |
+          mkdir -p /tmp/pdf
+
+      - name: Run PDF Backfill
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_CUSTOM_DOMAIN: ${{ secrets.R2_CUSTOM_DOMAIN }}
+          RUN_MODE: cloud
+          PDF_BASE_DIR: /tmp/pdf
+        run: |
+          DRY_RUN_ARG=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            DRY_RUN_ARG="--dry-run"
+          fi
+          
+          python fixes/backfill_missing_pdfs.py \
+            --batch-size ${{ inputs.batch_size }} \
+            --workers ${{ inputs.workers }} \
+            --source ${{ inputs.source }} \
+            --start-date "${{ inputs.start_date }}" \
+            $DRY_RUN_ARG
+
+      - name: Cleanup Temp Directory
+        if: always()
+        run: |
+          rm -rf /tmp/pdf
