@@ -394,6 +394,8 @@ def main():
     parser.add_argument("--start-date", type=str, default="2026-09-12", help="检索起始日期 (YYYY-MM-DD)")
     parser.add_argument("--delay", type=float, default=0.2, help="单任务间隔延时 (秒)")
     parser.add_argument("--dry-run", action="store_true", help="仅检索并显示待补全记录，不实际生成与上传")
+    parser.add_argument("--proxy-start-threshold", type=int, default=250, help="代理池提前启动阈值 (默认 250)")
+    parser.add_argument("--refresh-proxy", action="store_true", help="是否强制重新获取并验证代理")
 
     args = parser.parse_args()
 
@@ -405,6 +407,34 @@ def main():
         logger.info("[*] 网络代理: 使用固定代理 %s", config.get_crawler_proxy())
     elif config.is_proxy_manager_enabled():
         logger.info("[*] 网络代理: 已启用自动代理池管理器")
+        from utils.proxy_manager import get_proxy_manager
+        manager = get_proxy_manager()
+        if manager:
+            force_refresh = os.environ.get('REFRESH_PROXY', 'false').lower() == 'true' or args.refresh_proxy
+            start_threshold = int(os.environ.get('PROXY_START_THRESHOLD', str(args.proxy_start_threshold)))
+            target_count = int(os.environ.get('PROXY_TARGET_COUNT', '1000'))
+
+            if force_refresh or len(manager._working_proxies) < start_threshold:
+                logger.info(
+                    "[*] 正在准备代理池 (强制刷新=%s, 启动阈值=%d, 目标数量=%d)...",
+                    force_refresh, start_threshold, target_count
+                )
+                if force_refresh or len(manager._proxies) < 500:
+                    manager.fetch_proxies(force=force_refresh)
+                
+                manager.verify_proxies(
+                    force=force_refresh,
+                    target_count=target_count,
+                    start_threshold=start_threshold,
+                    post_start_workers=config.get_proxy_verify_post_start_workers(),
+                    max_workers=config.get_proxy_verify_workers(),
+                    source=args.source if args.source != 'all' else None
+                )
+            stats = manager.get_stats()
+            logger.info(
+                "[*] 代理池就绪: 可用 %d 个 (总计 %d 个)，爬虫任务开始，后台验证继续运行...",
+                stats['working'], stats['total']
+            )
     else:
         logger.info("[*] 网络代理: 未启用代理 (直连模式)")
 
@@ -447,6 +477,16 @@ def main():
         return
 
     backfiller.run(records)
+
+    # 爬虫补全结束后，触发一次代理缓存保存，落盘后台新验证的代理
+    if config.is_proxy_manager_enabled():
+        try:
+            from utils.proxy_manager import get_proxy_manager
+            mgr = get_proxy_manager()
+            if mgr:
+                mgr._save_cache()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

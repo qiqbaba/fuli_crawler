@@ -50,6 +50,8 @@ class ProxyVerifier:
         force: bool = False,
         max_workers: Optional[int] = None,
         target_count: int = 1000,
+        start_threshold: Optional[int] = None,
+        post_start_workers: Optional[int] = None,
         test_url: Optional[str] = None,
         expected_content: Optional[str] = None,
         on_proxy_valid: Optional[Callable] = None,
@@ -63,6 +65,8 @@ class ProxyVerifier:
             force: 是否强制重新验证
             max_workers: 并发验证协程数，默认使用 config 中的 PROXY_VERIFY_WORKERS
             target_count: 目标可用代理数量，达到后提前退出
+            start_threshold: 启动阈值（达到此数量后触发动态降速）
+            post_start_workers: 达到启动阈值后保留的并发协程数（默认从配置读取）
             test_url: 可选。用于测试的网址
             expected_content: 可选。验证页面内是否包含此内容
             on_proxy_valid: 可选。验证成功的回调函数
@@ -78,6 +82,10 @@ class ProxyVerifier:
             from config import get_proxy_verify_workers
             max_workers = get_proxy_verify_workers()
 
+        if post_start_workers is None:
+            from config import get_proxy_verify_post_start_workers
+            post_start_workers = get_proxy_verify_post_start_workers()
+
         # 验证超时取配置值，但不超过 5 秒以加速验证
         from config import PROXY_VERIFY_TIMEOUT, PROXY_VERIFY_SSL
         verify_timeout = min(PROXY_VERIFY_TIMEOUT, 5)
@@ -88,7 +96,10 @@ class ProxyVerifier:
         # 在多协程验证队列开始前，将待校验代理按历史评分 score 降序排序，优先测试表现好的代理
         proxies.sort(key=lambda x: x.get("score", 0.0), reverse=True)
 
-        logger.info("开始异步验证 %s 个代理（并发: %s，超时: %ss，目标数: %s，测试目标: %s，源: %s）...", len(proxies), max_workers, verify_timeout, target_count, current_test_url, source or "global")
+        logger.info(
+            "开始异步验证 %s 个代理（冲刺并发: %s，降级并发: %s，超时: %ss，目标数: %s，测试目标: %s，源: %s）...",
+            len(proxies), max_workers, post_start_workers, verify_timeout, target_count, current_test_url, source or "global"
+        )
 
         working = []
         total = len(proxies)
@@ -103,16 +114,33 @@ class ProxyVerifier:
                 queue.put_nowait(p)
 
             workers = []
+            num_workers = min(max_workers, total)
+            active_workers = [num_workers]
+            throttled = [False]
 
             async def worker():
                 while not queue.empty() and not stop_event.is_set():
+                    # 动态自适应降并发：一旦达到启动阈值，多余的 worker 协程自动优雅退出，让出 CPU 与网络资源给爬虫
+                    if start_threshold and len(working) >= start_threshold:
+                        if active_workers[0] > post_start_workers:
+                            active_workers[0] -= 1
+                            if not throttled[0]:
+                                throttled[0] = True
+                                logger.info(
+                                    "[*] 可用代理已达 %s 个，触发动态降并发保护: %s -> %s，释放系统资源给爬虫！",
+                                    len(working), num_workers, post_start_workers
+                                )
+                            break
+
                     proxy = await queue.get()
                     protocol = proxy["protocol"].lower()
                     address = proxy["address"]
 
                     try:
-                        # 每次探测前加入随机延迟（50-300ms），打破扫描特征
-                        await asyncio.sleep(random.uniform(0.05, 0.3))
+                        # 探测前微延时：冲刺期 20-100ms，降速后 100-250ms
+                        sleep_min = 0.1 if throttled[0] else 0.02
+                        sleep_max = 0.25 if throttled[0] else 0.1
+                        await asyncio.sleep(random.uniform(sleep_min, sleep_max))
 
                         # 1. 快速 TCP 端口预检测
                         try:

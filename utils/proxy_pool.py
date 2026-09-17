@@ -180,16 +180,14 @@ class ProxyPool:
             columns = [row[1] for row in cursor.fetchall()]
             has_valid_sources = "valid_sources" in columns
 
-            if has_valid_sources:
-                cursor.execute(
-                    "SELECT protocol, address, source, success_count, fail_count, score, last_verified, valid_sources "
-                    "FROM proxy_cache WHERE last_verified > 0"
-                )
-            else:
-                cursor.execute(
-                    "SELECT protocol, address, source, success_count, fail_count, score, last_verified "
-                    "FROM proxy_cache WHERE last_verified > 0"
-                )
+            sql_select = (
+                "SELECT protocol, address, source, success_count, fail_count, score, last_verified, valid_sources "
+                "FROM proxy_cache"
+                if has_valid_sources else
+                "SELECT protocol, address, source, success_count, fail_count, score, last_verified "
+                "FROM proxy_cache"
+            )
+            cursor.execute(sql_select)
             self._proxies = []
             self._working_proxies = []
             for row in cursor.fetchall():
@@ -210,10 +208,11 @@ class ProxyPool:
                     "valid_sources": valid_sources_set
                 }
                 self._proxies.append(p)
-                self._working_proxies.append(p.copy())
+                if p["last_verified"] and p["last_verified"] > 0:
+                    self._working_proxies.append(p.copy())
 
             conn.close()
-            logger.info("从缓存加载了 %s 个已验证可用的代理", len(self._working_proxies))
+            logger.info("从缓存加载了 %s 个已验证可用的代理 (总候选代理 %s 个)", len(self._working_proxies), len(self._proxies))
         except Exception as e:
             logger.warning("加载缓存失败: %s", e)
             self._proxies = []
@@ -423,6 +422,7 @@ class ProxyPool:
         max_workers: Optional[int] = None,
         target_count: int = 1000,
         start_threshold: Optional[int] = None,
+        post_start_workers: Optional[int] = None,
         test_url: Optional[str] = None,
         expected_content: Optional[str] = None,
         source: Optional[str] = None
@@ -435,6 +435,7 @@ class ProxyPool:
             max_workers: 最大并发校验协程数
             target_count: 目标数量
             start_threshold: 可用代理达到此数量时，主线程提前返回（启动爬虫）。若为 None，则等同于 target_count（即同步阻塞直到完成）
+            post_start_workers: 达到启动阈值后后台保留的温和并发协程数
             test_url: 测试网页 URL
             expected_content: 期望包含的网页文本
             source: 针对的爬虫源名称（如 'u3c3', 'seju'）
@@ -447,10 +448,11 @@ class ProxyPool:
         if source and test_url:
             self._source_test_urls[source] = test_url
 
-        # 如果不是强制验证，且上次验证结果在 6 小时以内，直接使用
+        # 如果不是强制验证，且上次验证结果在 6 小时以内，且可用代理已经充足
         if not force and (now - self._last_verify_time) < 21600 and self._working_proxies:
-            logger.info("使用缓存的验证代理列表（%s 个，上次验证于 %s 分钟前）", len(self._working_proxies), int((now - self._last_verify_time)/60))
-            return len(self._working_proxies)
+            if start_threshold is None or len(self._working_proxies) >= target_count:
+                logger.info("使用缓存的验证代理列表（%s 个，上次验证于 %s 分钟前）", len(self._working_proxies), int((now - self._last_verify_time)/60))
+                return len(self._working_proxies)
 
         if not self._proxies:
             self.fetch_proxies()
@@ -472,7 +474,8 @@ class ProxyPool:
                 if self._is_verifying:
                     logger.info("已有代理校验线程在运行中，主线程进入等待...")
                 else:
-                    self._working_proxies = []
+                    if force:
+                        self._working_proxies = []
                     self._last_verify_time = time.time()
                     self._is_verifying = True
 
@@ -493,6 +496,8 @@ class ProxyPool:
                                 force=force,
                                 max_workers=max_workers,
                                 target_count=target_count,
+                                start_threshold=actual_start_threshold,
+                                post_start_workers=post_start_workers,
                                 test_url=test_url,
                                 expected_content=expected_content,
                                 on_proxy_valid=on_proxy_valid,
@@ -511,7 +516,7 @@ class ProxyPool:
 
             # 主线程循环等待直到可用代理达到 actual_start_threshold，或后台线程结束
             start_wait = time.time()
-            max_wait_seconds = 120.0  # 最多等待 2 分钟以防止代理源极其糟糕或失效
+            max_wait_seconds = 180.0  # 最多等待 3 分钟以防止代理源失效
             while True:
                 with self._lock:
                     current_count = len(self._working_proxies)

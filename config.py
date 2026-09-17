@@ -236,6 +236,10 @@ def get_proxy_verify_workers():
 
 def _compute_auto_workers(base_multiplier=30, max_limit=300, min_limit=50):
     try:
+        # 在 Linux 环境（如 GitHub Actions 容器）且非低内存情况下，提高并发基数充分压榨性能
+        if not sys.platform.startswith("win"):
+            base_multiplier = 100
+
         # 1. 获取 CPU 核心数
         cpu_count = os.cpu_count() or 1
         workers = cpu_count * base_multiplier
@@ -267,6 +271,17 @@ def _compute_auto_workers(base_multiplier=30, max_limit=300, min_limit=50):
         
     # 限制在安全区间内 [min_limit, max_limit]
     return max(min_limit, min(workers, max_limit))
+
+
+def get_proxy_verify_post_start_workers() -> int:
+    """获取达到启动阈值后，后台持续验证保留的温和并发数（默认 40，防止抢占爬虫资源）"""
+    env_val = os.environ.get("PROXY_VERIFY_POST_START_WORKERS")
+    if env_val:
+        try:
+            return max(10, min(int(env_val), 100))
+        except ValueError:
+            pass
+    return 40
 
 
 # ========== 运行时代理覆盖（由 main.py 命令行参数设置） ==========

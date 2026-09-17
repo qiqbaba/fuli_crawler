@@ -28,13 +28,24 @@ def get_proxy_manager() -> Optional[ProxyPool]:
     return _proxy_manager
 
 
-def init_proxy_manager(force_fetch=False, force_verify=False) -> Optional[ProxyPool]:
+def init_proxy_manager(
+    force_fetch: bool = False,
+    force_verify: bool = False,
+    target_count: int = 1000,
+    start_threshold: Optional[int] = None,
+    post_start_workers: Optional[int] = None,
+    source: Optional[str] = None
+) -> Optional[ProxyPool]:
     """
     初始化并预加载代理管理器
     
     Args:
         force_fetch: 是否强制获取新代理
         force_verify: 是否强制验证代理
+        target_count: 目标可用代理数量 (默认 1000)
+        start_threshold: 达到此数量后主线程提前返回，后台继续验证
+        post_start_workers: 达到启动阈值后后台保留的并发协程数（用于降速让路）
+        source: 针对的爬虫源名称
         
     Returns:
         ProxyPool 实例或 None
@@ -46,8 +57,14 @@ def init_proxy_manager(force_fetch=False, force_verify=False) -> Optional[ProxyP
     if force_fetch or len(manager._proxies) < 500:
         manager.fetch_proxies(force=force_fetch)
     
-    if force_verify or not manager._working_proxies:
-        manager.verify_proxies(force=force_verify)
+    if force_verify or not manager._working_proxies or (start_threshold and len(manager._working_proxies) < start_threshold):
+        manager.verify_proxies(
+            force=force_verify,
+            target_count=target_count,
+            start_threshold=start_threshold,
+            post_start_workers=post_start_workers,
+            source=source
+        )
     
     return manager
 
