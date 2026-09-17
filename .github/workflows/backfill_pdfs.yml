@@ -19,6 +19,10 @@ on:
         description: '检索起始日期 (格式 YYYY-MM-DD，默认 2026-09-12)'
         required: false
         default: '2026-09-12'
+      enable_proxy:
+        description: '是否启用代理 (开启后自动获取并轮换免费代理，复用主任务缓存)'
+        type: boolean
+        default: true
       dry_run:
         description: '仅检索并预览待补全记录，不实际生成与上传'
         type: boolean
@@ -40,10 +44,35 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: 恢复代理 IP 缓存（复用主任务共享缓存）
+        if: inputs.enable_proxy
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: temp_profiles/
+          key: proxy-cache-latest
+          restore-keys: |
+            proxy-cache-
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: 准备并验证代理池
+        if: inputs.enable_proxy
+        env:
+          ENABLE_PROXY_MANAGER: 'true'
+          CRAWLER_PROXY: ${{ secrets.CRAWLER_PROXY }}
+        run: |
+          python -c "
+          from utils.proxy_manager import init_proxy_manager
+          mgr = init_proxy_manager(force_fetch=False, force_verify=False)
+          if mgr:
+              stats = mgr.get_stats()
+              print(f'代理池就绪: 总计 {stats[\"total\"]} 个, 可用 {stats[\"working\"]} 个')
+          else:
+              print('代理管理器未启用')
+          "
 
       - name: Install Playwright Chromium & System Dependencies
         run: |
@@ -64,6 +93,8 @@ jobs:
           R2_CUSTOM_DOMAIN: ${{ secrets.R2_CUSTOM_DOMAIN }}
           RUN_MODE: cloud
           PDF_BASE_DIR: /tmp/pdf
+          ENABLE_PROXY_MANAGER: ${{ inputs.enable_proxy }}
+          CRAWLER_PROXY: ${{ secrets.CRAWLER_PROXY }}
         run: |
           DRY_RUN_ARG=""
           if [ "${{ inputs.dry_run }}" = "true" ]; then
@@ -77,7 +108,10 @@ jobs:
             --start-date "${{ inputs.start_date }}" \
             $DRY_RUN_ARG
 
-      - name: Cleanup Temp Directory
+      - name: Cleanup Temp Directory & Profiles
         if: always()
         run: |
           rm -rf /tmp/pdf
+          if [ -d temp_profiles ]; then
+            find temp_profiles -maxdepth 1 -type d -name 'profile_*' -exec rm -rf {} + || true
+          fi

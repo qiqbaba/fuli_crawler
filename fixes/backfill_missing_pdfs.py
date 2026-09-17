@@ -401,6 +401,13 @@ def main():
     if config.SUPABASE_URL and config.SUPABASE_KEY:
         config.set_run_mode('cloud')
 
+    if config.get_crawler_proxy():
+        logger.info("[*] 网络代理: 使用固定代理 %s", config.get_crawler_proxy())
+    elif config.is_proxy_manager_enabled():
+        logger.info("[*] 网络代理: 已启用自动代理池管理器")
+    else:
+        logger.info("[*] 网络代理: 未启用代理 (直连模式)")
+
     if not config.SUPABASE_URL or not config.SUPABASE_KEY:
         logger.error("[-] 错误: 未配置 SUPABASE_URL 或 SUPABASE_KEY 环境变量")
         sys.exit(1)
