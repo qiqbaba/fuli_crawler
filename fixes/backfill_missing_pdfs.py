@@ -204,11 +204,12 @@ CONFIG_MAP = {
 
 
 class PDFBackfiller:
-    def __init__(self, db_manager: SupabaseDBManager, r2_uploader, max_workers: int = 4, delay: float = 0.5):
+    def __init__(self, db_manager: SupabaseDBManager, r2_uploader, max_workers: int = 4, delay: float = 0.5, max_pdf_retries: int = 3):
         self.db = db_manager
         self.r2_uploader = r2_uploader
         self.max_workers = max_workers
         self.delay = delay
+        self.max_pdf_retries = max(1, max_pdf_retries)
         self.pdf_generator = PDFGenerator(r2_uploader=self.r2_uploader)
 
         self.lock = threading.Lock()
@@ -268,8 +269,96 @@ class PDFBackfiller:
 
         return all_records
 
+    def _generate_pdf_with_retry(self, url: str, publish_date: str, title: str, source: str, config_item: PDFRenderConfig) -> Optional[str]:
+        """对齐主任务 (BaseCrawler.retry_generate_pdf) 的高可靠生成机制
+        
+        1. 最多尝试 self.max_pdf_retries (默认 3) 次；
+        2. 前面几次使用当前线程绑定的独占代理；
+        3. 一旦某次尝试失败或超时，立即向代理池惩罚扣分 (report_failure) 并彻底销毁当前线程浏览器 (destroy_thread_resources)；
+        4. 下一次尝试自动从代理池无缝分配全新可用代理；
+        5. 最后一次尝试（第 3 次）降级为直连 (no_proxy=True)，作为最终高可靠兜底。
+        """
+        max_retries = self.max_pdf_retries
+        last_error = None
+        short_title = (title[:25] + '…') if len(title) > 26 else title
+
+        for attempt in range(1, max_retries + 1):
+            # 最后一次重试启用直连兜底 (若配置了多轮重试)
+            no_proxy = (attempt == max_retries and max_retries > 1)
+
+            if no_proxy:
+                logger.warning("[PDF-SAVE]   ⚠️ [第%d/%d次] 前%d次代理均失败，切换直连兜底: 《%s》 (%s)",
+                               attempt, max_retries, max_retries - 1, short_title, source)
+                # 切换直连前务必销毁旧的代理浏览器
+                try:
+                    browser_factory.destroy_thread_resources()
+                except Exception:
+                    pass
+
+            context = None
+            try:
+                _, _, context = browser_factory.create_browser_context(
+                    headless=True,
+                    source=source,
+                    no_proxy=no_proxy
+                )
+                r2_path = self.pdf_generator.generate_pdf(
+                    page_or_context=context,
+                    target_url_or_page=url,
+                    publish_date=publish_date,
+                    title=title,
+                    source_name=source,
+                    config=config_item
+                )
+
+                if r2_path:
+                    if attempt > 1:
+                        logger.info("[PDF-SAVE]   ✅ [第%d次重试成功] 《%s》 -> %s", attempt, short_title, r2_path)
+                    return r2_path
+                else:
+                    last_error = f"第 {attempt}/{max_retries} 次生成返回空"
+                    logger.warning("[PDF-SAVE]   ❌ 第%d/%d次生成返回空: 《%s》", attempt, max_retries, short_title)
+
+            except Exception as ex:
+                last_error = f"第 {attempt}/{max_retries} 次生成异常: %s" % ex
+                logger.warning("[PDF-SAVE]   ❌ 第%d/%d次生成异常: %s | 《%s》", attempt, max_retries, ex, short_title)
+
+            # 本次尝试失败且非最后一次时，惩罚死代理并销毁当前线程浏览器
+            if attempt < max_retries:
+                if not no_proxy:
+                    try:
+                        from utils.proxy_manager import get_proxy_manager
+                        from config import is_proxy_manager_enabled
+                        if is_proxy_manager_enabled():
+                            mgr = get_proxy_manager()
+                            if mgr:
+                                tid = threading.get_ident()
+                                with mgr._lock:
+                                    proxy_url = mgr._thread_proxy_map.get(tid)
+                                if proxy_url:
+                                    mgr.report_failure(proxy_url, source=source)
+                    except Exception:
+                        pass
+
+                    # 彻底销毁当前线程浏览器，确保下次循环创建新浏览器并绑定新代理
+                    try:
+                        browser_factory.destroy_thread_resources()
+                    except Exception as clean_err:
+                        logger.warning("清理当前线程浏览器异常: %s", clean_err)
+
+                time.sleep(random.uniform(1.0, 2.0))
+
+        # 全部重试均失败后，清理当前线程资源，确保不污染后续记录
+        try:
+            browser_factory.destroy_thread_resources()
+        except Exception:
+            pass
+
+        logger.error("[PDF-SAVE]   ❌❌ 《%s》 彻底失败 (共%d次均失败): %s", short_title, max_retries, last_error)
+        return None
+
     def process_record(self, record: dict) -> bool:
-        """处理单条记录：生成 PDF，上传 R2，更新 Supabase"""
+        """处理单条记录：生成 PDF（含多轮重试与代理轮换），上传 R2，更新 Supabase"""
         rec_id = record.get('id')
         title = record.get('title') or 'untitled'
         url = record.get('url') or ''
@@ -295,35 +384,28 @@ class PDFBackfiller:
 
         config_item = CONFIG_MAP.get(source, PDFRenderConfig())
         success = False
-        r2_path = None
 
-        try:
-            _, _, context = browser_factory.create_browser_context(headless=True, source=source)
-            r2_path = self.pdf_generator.generate_pdf(
-                page_or_context=context,
-                target_url_or_page=url,
-                publish_date=publish_date,
-                title=title,
-                source_name=source,
-                config=config_item
-            )
+        r2_path = self._generate_pdf_with_retry(
+            url=url,
+            publish_date=publish_date,
+            title=title,
+            source=source,
+            config_item=config_item
+        )
 
-            if r2_path:
-                # 更新 Supabase 记录中的 pdf_path (带重试)
-                for attempt in range(3):
-                    try:
-                        update_resp = self.db.client.table('resources').update({'pdf_path': r2_path}).eq('id', rec_id).execute()
-                        if update_resp.data or update_resp.count is None or update_resp.count > 0:
-                            success = True
-                        break
-                    except Exception as upd_err:
-                        if attempt < 2:
-                            time.sleep(1.5)
-                        else:
-                            logger.warning("[-] 更新 Supabase 失败 ID=%s: %s", rec_id, upd_err)
-
-        except Exception as e:
-            logger.warning("[-] 处理记录异常 ID=%s source=%s url=%s: %s", rec_id, source, url, e)
+        if r2_path:
+            # 更新 Supabase 记录中的 pdf_path (带重试)
+            for attempt in range(3):
+                try:
+                    update_resp = self.db.client.table('resources').update({'pdf_path': r2_path}).eq('id', rec_id).execute()
+                    if update_resp.data or update_resp.count is None or update_resp.count > 0:
+                        success = True
+                    break
+                except Exception as upd_err:
+                    if attempt < 2:
+                        time.sleep(1.5)
+                    else:
+                        logger.warning("[-] 更新 Supabase 失败 ID=%s: %s", rec_id, upd_err)
 
         with self.lock:
             self.processed += 1
@@ -396,6 +478,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="仅检索并显示待补全记录，不实际生成与上传")
     parser.add_argument("--proxy-start-threshold", type=int, default=250, help="代理池提前启动阈值 (默认 250)")
     parser.add_argument("--refresh-proxy", action="store_true", help="是否强制重新获取并验证代理")
+    parser.add_argument("--max-pdf-retries", type=int, default=3, help="单条记录最大 PDF 生成重试次数 (默认 3)")
+    parser.add_argument("--no-proxy", action="store_true", default=False, help="禁用所有代理 (直连模式)")
 
     args = parser.parse_args()
 
@@ -403,7 +487,11 @@ def main():
     if config.SUPABASE_URL and config.SUPABASE_KEY:
         config.set_run_mode('cloud')
 
-    if config.get_crawler_proxy():
+    if args.no_proxy:
+        from config import set_runtime_proxy
+        set_runtime_proxy(proxy_url=None, disable_proxy=True)
+        logger.info("[*] 网络代理: 已显式禁用代理 (直连模式)")
+    elif config.get_crawler_proxy():
         logger.info("[*] 网络代理: 使用固定代理 %s", config.get_crawler_proxy())
     elif config.is_proxy_manager_enabled():
         logger.info("[*] 网络代理: 已启用自动代理池管理器")
@@ -452,7 +540,8 @@ def main():
         db_manager=db,
         r2_uploader=r2_uploader,
         max_workers=args.workers,
-        delay=args.delay
+        delay=args.delay,
+        max_pdf_retries=args.max_pdf_retries
     )
 
     records = backfiller.query_missing_records(
