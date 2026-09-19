@@ -90,6 +90,9 @@ def get_browser_launch_args(
     args = [
         "--no-sandbox",
         "--disable-setuid-sandbox",
+        "--ignore-certificate-errors",
+        "--ignore-certificate-errors-spki-list",
+        "--allow-insecure-localhost",
     ]
 
     if browser_type == "chromium":

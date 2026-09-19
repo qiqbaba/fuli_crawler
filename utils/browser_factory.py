@@ -30,7 +30,8 @@ class BrowserFactory:
         viewport: Optional[dict] = None,
         locale: str = "zh-CN",
         timezone_id: str = "Asia/Shanghai",
-        source: Optional[str] = None
+        source: Optional[str] = None,
+        ignore_https_errors: bool = True
     ) -> Tuple[Playwright, Browser, BrowserContext]:
         """创建浏览器上下文，支持线程隔离和持久化模式"""
         
@@ -109,6 +110,7 @@ class BrowserFactory:
                         user_agent=ua,
                         viewport=viewport,
                         bypass_csp=True,
+                        ignore_https_errors=ignore_https_errors,
                         proxy=playwright_proxy,
                         locale=locale,
                         timezone_id=timezone_id
@@ -124,6 +126,7 @@ class BrowserFactory:
                         user_agent=ua,
                         viewport=viewport,
                         bypass_csp=True,
+                        ignore_https_errors=ignore_https_errors,
                         proxy=playwright_proxy,
                         locale=locale,
                         timezone_id=timezone_id
@@ -141,7 +144,9 @@ class BrowserFactory:
                     viewport=viewport,
                     locale=locale,
                     timezone_id=timezone_id,
-                    user_agent=ua
+                    user_agent=ua,
+                    ignore_https_errors=ignore_https_errors,
+                    bypass_csp=True
                 )
                 logger.debug("[+] 线程 %s 成功启动临时浏览器上下文", threading.get_ident())
                 

@@ -126,7 +126,7 @@ class PDFGenerator:
                                 "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
                             }
                             proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-                            resp = cffi_requests.get(real_url, headers=headers, proxies=proxies, timeout=15)
+                            resp = cffi_requests.get(real_url, headers=headers, proxies=proxies, timeout=15, verify=False)
                             if resp.status_code == 200:
                                 content_type = resp.headers.get("Content-Type", "image/jpeg")
                                 route.fulfill(
@@ -330,7 +330,16 @@ class PDFGenerator:
                 goto_args = {"timeout": 30000, "wait_until": wait_until_val}
                 if config.referer:
                     goto_args["referer"] = config.referer
-                page.goto(target_url, **goto_args)
+                try:
+                    page.goto(target_url, **goto_args)
+                except Exception as goto_err:
+                    if ("timeout" in str(goto_err).lower() or "Timeout" in type(goto_err).__name__) and goto_args.get("wait_until") == "load":
+                        logger.warning("页面 goto 超时，降级使用 domcontentloaded 重试: %s", target_url)
+                        goto_args["wait_until"] = "domcontentloaded"
+                        goto_args["timeout"] = 25000
+                        page.goto(target_url, **goto_args)
+                    else:
+                        raise goto_err
                 
                 # 延迟或滚动
                 if config.need_lazy_scroll:

@@ -133,6 +133,8 @@ R2_ACCESS_KEY_ID   = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_BUCKET_NAME     = os.environ.get("R2_BUCKET_NAME", "")
 R2_ENDPOINT_URL    = os.environ.get("R2_ENDPOINT_URL", "")
+if not R2_ENDPOINT_URL and R2_ACCOUNT_ID:
+    R2_ENDPOINT_URL = f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
 def use_r2():
     """判断是否使用 Cloudflare R2 存储 PDF"""
