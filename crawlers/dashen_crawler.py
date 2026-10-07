@@ -24,7 +24,7 @@ class DashenCrawler(DecryptSiteBaseCrawler):
             categories=["guochan", "oumei"],
             initial_domains=["exh.638552.xyz", "fst.896259.xyz", "ysp.399893.xyz"],
             main_domain="https://j4f4.com",
-            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         )
         super().__init__(db_manager, "dashen", config=config)
         self.current_class = "guochan"
@@ -194,34 +194,12 @@ class DashenCrawler(DecryptSiteBaseCrawler):
         if not list_page_content:
             return []
 
-        parsed_items = []
+        # 优先使用基类的状态机提取器解析新版 SPA 列表
+        spa_items = self.parse_spa_list_items(list_page_content)
+        if spa_items is not None:
+            return spa_items
 
-        # 1. 优先解析新版 SPA 内嵌数据: var __data__ = Object.assign({}, __shared_data__, {...});
-        match = re.search(r'var\s+__data__\s*=\s*Object\.assign\([^,]+,\s*[^,]+,\s*(\{.*?\})\s*\);', list_page_content, re.DOTALL)
-        if match:
-            try:
-                json_str = match.group(1)
-                data = json.loads(json_str)
-                list_items = data.get("list_items", [])
-                for item in list_items:
-                    link = item.get("link", "")
-                    if not link or "open.php" in link:
-                        continue
-                    url = urljoin(self.base_domain, link)
-                    title = self._decrypt_title(item.get("title_enc", ""))
-                    if not title:
-                        continue
-                    date_str = item.get("date", "")
-                    parsed_items.append({
-                        'title': title,
-                        'url': url,
-                        'date_str': date_str,
-                        'class_name': self.current_class
-                    })
-                if parsed_items:
-                    return parsed_items
-            except Exception as e:
-                self.log.warning("[!] 解析新版列表页 JSON 数据异常: %s", e)
+        parsed_items = []
 
         # 2. 兼容旧版 HTML DOM 解析: <ul class="list"><li>...</li></ul>
         soup = BeautifulSoup(list_page_content, "lxml")
@@ -386,21 +364,17 @@ class DashenCrawler(DecryptSiteBaseCrawler):
         title = raw_item.get('title', '')
 
         # 1. 优先从新版 SPA 详情页中的 var __data__ 提取元数据与磁力链接
-        d_match = re.search(r'var\s+__data__\s*=\s*Object\.assign\([^,]+,\s*[^,]+,\s*(\{.*?\})\s*\);', detail_html, re.DOTALL)
-        if d_match:
-            try:
-                d_data = json.loads(d_match.group(1))
-                magnet_link = d_data.get("magnet", "")
-                date_val = d_data.get("date", "")
-                if date_val:
-                    date_str = date_val
-                size_val = d_data.get("size", "")
-                res_format = d_data.get("resolution", "")
-                dec_title = self._decrypt_title(d_data.get("title_enc", ""))
-                if dec_title:
-                    title = dec_title
-            except Exception as e:
-                self.log.warning("[!] 解析新版详情页 __data__ 异常: %s", e)
+        d_data = self.extract_spa_data(detail_html)
+        if d_data:
+            magnet_link = d_data.get("magnet", "")
+            date_val = d_data.get("date", "")
+            if date_val:
+                date_str = date_val
+            size_val = d_data.get("size", "")
+            res_format = d_data.get("resolution", "")
+            dec_title = self._decrypt_title(d_data.get("title_enc", "")) or self.decrypt_title(d_data.get("title_enc", ""))
+            if dec_title:
+                title = dec_title
 
         # 2. 如果新版未提取到磁力，兼容旧版详情页：从详情页提取下载跳转链接并请求获取磁力
         if not magnet_link:

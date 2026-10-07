@@ -15,7 +15,7 @@ class DatangCrawler(DecryptSiteBaseCrawler):
             source_name="datang",
             categories=["guochan", "wuma", "oumei"],
             main_domain="https://dtbt7.com",
-            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         )
         super().__init__(db_manager, "datang", config=config)
         self.current_class = "guochan"
@@ -49,10 +49,14 @@ class DatangCrawler(DecryptSiteBaseCrawler):
 
     def _is_valid_list_page(self, html):
         """判断 Playwright 兜底时页面是否有效"""
-        return "class=\"bt_ul\"" in html or "class='bt_ul'" in html or "bt_ul" in html
+        return "var __data__" in html or "list_items" in html or "class=\"bt_ul\"" in html or "class='bt_ul'" in html or "bt_ul" in html
 
     def parse_list_page(self, list_page_content, page_num):
         """解析解密后的列表页，提取条目信息"""
+        spa_items = self.parse_spa_list_items(list_page_content)
+        if spa_items is not None:
+            return spa_items
+
         soup = BeautifulSoup(list_page_content, "lxml")
         ul = soup.find('ul', class_='bt_ul')
         if not ul:
@@ -104,7 +108,7 @@ class DatangCrawler(DecryptSiteBaseCrawler):
 
     def _is_valid_detail_page(self, html):
         """判断 Playwright 兜底时详情页是否有效"""
-        return "video-description" in html or "class=\"video-description\"" in html
+        return "var __data__" in html or "magnet:?" in html or "video-description" in html or "class=\"video-description\"" in html
 
     def _should_rewrite_url(self, netloc):
         """包含旧域名 685835.xyz 的 URL 重写判断"""

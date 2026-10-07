@@ -16,7 +16,7 @@ class TaoseCrawler(DecryptSiteBaseCrawler):
             categories=["guochan", "oumei"],
             initial_domains=["pdr.292368.xyz", "udt.399695.xyz", "miy.282969.xyz"],
             main_domain="https://taosebt.com",
-            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         )
         super().__init__(db_manager, "taose", config=config)
         self.current_class = "guochan"
@@ -69,10 +69,14 @@ class TaoseCrawler(DecryptSiteBaseCrawler):
 
     def _is_valid_list_page(self, html):
         """判断 Playwright 兜底时页面是否有效"""
-        return 'class="movie_list"' in html or 'class="list"' in html or "class='list'" in html or "桃色BT" in html or "list.php" in html
+        return 'var __data__' in html or 'list_items' in html or 'class="movie_list"' in html or 'class="list"' in html or "class='list'" in html or "桃色BT" in html or "list.php" in html
 
     def parse_list_page(self, list_page_content, page_num):
         """解析解密后的列表页，提取条目信息"""
+        spa_items = self.parse_spa_list_items(list_page_content)
+        if spa_items is not None:
+            return spa_items
+
         soup = BeautifulSoup(list_page_content, "lxml")
         
         # 1. 优先按传统类名查找
@@ -149,7 +153,7 @@ class TaoseCrawler(DecryptSiteBaseCrawler):
 
     def _is_valid_detail_page(self, html):
         """判断 Playwright 兜底时详情页是否有效"""
-        return "【发布时间】" in html or "【影片格式】" in html or "magnet:?" in html
+        return "var __data__" in html or "【发布时间】" in html or "【影片格式】" in html or "magnet:?" in html
 
     def _should_rewrite_url(self, netloc):
         """判断是否应使用当前域名重写 URL"""

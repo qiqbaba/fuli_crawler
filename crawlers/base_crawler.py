@@ -57,7 +57,7 @@ class CrawlConfig:
     categories: List[str] = field(default_factory=list)
     initial_domains: List[str] = field(default_factory=list)
     main_domain: str = ""
-    domain_pattern: str = r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)'
+    domain_pattern: str = r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})'
     list_url_template: str = "{base}/list.php?class={cat}&page={page}"
     check_resource_link: bool = True
     max_consecutive_existing: Optional[int] = 15
@@ -1480,7 +1480,7 @@ class DomainRotationMixin:
         
         import re
         import base64
-        pattern = getattr(self, "domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)')
+        pattern = getattr(self, "domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})')
         found_domains = set()
 
         # 1. 直接明文正则匹配
@@ -1529,7 +1529,7 @@ class DomainRotationMixin:
             self.base_list_url = template.format(base=self.base_domain, cat="{cat}", page="{page}")
         elif getattr(self, "base_list_url", None):
             import re
-            pattern = getattr(self, "domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)')
+            pattern = getattr(self, "domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})')
             if re.search(pattern, self.base_list_url):
                 self.base_list_url = re.sub(pattern, self.domains[self.current_domain_idx], self.base_list_url)
             else:
@@ -1547,7 +1547,7 @@ class DomainRotationMixin:
                 if isinstance(cached, list) and len(cached) > 0:
                     # 验证缓存中的域名格式
                     import re
-                    pattern = getattr(self, "domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)')
+                    pattern = getattr(self, "domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})')
                     valid = [d for d in cached if re.search(pattern, d)]
                     if valid:
                         with self._domain_lock:
@@ -1668,6 +1668,23 @@ class DomainRotationMixin:
         
         return True
 
+    def _decode_main_station_html(self, raw_html: str) -> str:
+        """解密主站可能返回的动态混淆/反爬包装 HTML"""
+        if not raw_html:
+            return ""
+        import re
+        import base64
+        # 匹配 <script> ... var x = fn('...'.split('').reverse().join('')); document.write(x)
+        m = re.search(r"var\s+\w+\s*=\s*\w+\(\s*'([^']+)'\.split\(''\)\.reverse\(\)\.join\(''\)\)", raw_html)
+        if m:
+            try:
+                b64_str = m.group(1)[::-1]
+                raw_bytes = base64.b64decode(b64_str)
+                return raw_bytes.decode('utf-8', errors='replace')
+            except Exception:
+                pass
+        return raw_html
+
     def _fetch_domains_from_main_station(self):
         """从主站域名动态获取最新可用镜像域名列表"""
         if not getattr(self, "main_domain", None):
@@ -1761,12 +1778,13 @@ class DomainRotationMixin:
             self.log.warning("[!] 无法从主站 %s 获取到页面内容", self.main_domain)
             return False
             
-        # 4. 尝试解密 HTML
-        decrypted = None
+        # 4. 尝试解密 HTML（优先解密混淆 landing 脚本，再尝试常规 decrypt_html）
+        decoded_html = self._decode_main_station_html(html)
+        content_to_parse = decoded_html if decoded_html else html
         if hasattr(self, "decrypt_html"):
-            decrypted = self.decrypt_html(html)
-            
-        content_to_parse = decrypted if decrypted else html
+            decrypted = self.decrypt_html(content_to_parse)
+            if decrypted:
+                content_to_parse = decrypted
         
         # 5. 提取域名（支持明文与 Base64 编码）
         new_domains = self._extract_domains_from_text(content_to_parse)
@@ -1803,8 +1821,123 @@ class DomainRotationMixin:
 
 
 class DecryptMixin:
+    def decrypt_title(self, encrypted_title_b64: str) -> str:
+        """解密详情页或列表页的加密标题：优先支持新版倒序 Base64 UTF-8，兼容旧版正序 Base64"""
+        if not encrypted_title_b64:
+            return ""
+        import base64
+        # 1. 优先尝试新版倒序 Base64 解密 (atob(reversed))
+        try:
+            rev_b64 = encrypted_title_b64[::-1]
+            raw_bytes = base64.b64decode(rev_b64)
+            dec = raw_bytes.decode('utf-8', errors='ignore')
+            if dec:
+                return self._clean_text_with_spans(dec)
+        except Exception:
+            pass
+        # 2. 尝试旧版正序 Base64 解密
+        try:
+            raw_bytes = base64.b64decode(encrypted_title_b64)
+            dec = raw_bytes.decode('utf-8', errors='ignore')
+            if dec:
+                return self._clean_text_with_spans(dec)
+        except Exception:
+            pass
+        return encrypted_title_b64.strip()
+
+    def _clean_text_with_spans(self, text_html: str) -> str:
+        """清除带有 display:none 的混淆 span 标签"""
+        if not text_html:
+            return ""
+        if "<span" not in text_html:
+            return text_html
+        try:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(text_html, "lxml")
+            for span in soup.find_all("span"):
+                style = span.get("style", "")
+                if "display:none" in style.replace(" ", "").lower():
+                    span.decompose()
+            return soup.get_text().strip()
+        except Exception:
+            return text_html
+
+    def extract_spa_data(self, html: str) -> Optional[dict]:
+        """从页面 HTML 中提取 var __data__ = Object.assign(...) 内嵌的 JSON 数据字典"""
+        if not html:
+            return None
+        pos = html.find('var __data__')
+        if pos == -1:
+            return None
+
+        candidates = ['{"current_page"', '{"title_enc"', '{"title"']
+        start_pos = -1
+        for cand in candidates:
+            idx = html.find(cand, pos)
+            if idx != -1 and (start_pos == -1 or idx < start_pos):
+                start_pos = idx
+
+        if start_pos == -1:
+            assign_pos = html.find('Object.assign(', pos)
+            if assign_pos != -1:
+                p = assign_pos
+                comma_count = 0
+                while p < len(html) and comma_count < 2:
+                    if html[p] == ',':
+                        comma_count += 1
+                    p += 1
+                if comma_count == 2:
+                    while p < len(html) and html[p] in ' \t\r\n':
+                        p += 1
+                    if p < len(html) and html[p] == '{':
+                        start_pos = p
+
+        if start_pos == -1:
+            return None
+
+        depth = 0
+        end_pos = -1
+        in_string = False
+        escape = False
+        quote_char = None
+
+        for i in range(start_pos, len(html)):
+            c = html[i]
+            if in_string:
+                if escape:
+                    escape = False
+                elif c == '\\':
+                    escape = True
+                elif c == quote_char:
+                    in_string = False
+            else:
+                if c in ('"', "'"):
+                    in_string = True
+                    quote_char = c
+                elif c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end_pos = i + 1
+                        break
+
+        if end_pos != -1:
+            raw_json = html[start_pos:end_pos]
+            try:
+                import json
+                return json.loads(raw_json)
+            except Exception:
+                return None
+        return None
+
     def decrypt_html(self, raw_html):
-        """解密目标网站动态混淆的 HTML"""
+        """解密目标网站动态混淆的 HTML，支持新版 SPA 页面直通"""
+        if not raw_html:
+            return ""
+        if "var __data__" in raw_html or "__shared_data__" in raw_html or "list_items" in raw_html:
+            return raw_html
+
         import base64
         import re
         candidates = re.findall(r'''['""]([A-Za-z0-9+/=]{1000,})['"]''', raw_html)
@@ -1819,15 +1952,6 @@ class DecryptMixin:
         except Exception as e:
             self.log.error("[-] HTML 解密失败: %s", e)
             return None
-
-    def decrypt_title(self, encrypted_title_b64):
-        """解密详情页或列表页的加密标题"""
-        import base64
-        try:
-            return base64.b64decode(encrypted_title_b64).decode('utf-8')
-        except Exception as e:
-            self.log.error("[-] 标题解密失败: %s", e)
-            return ""
 
 
 class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMixin):
@@ -1913,6 +2037,8 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 try:
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
                     if response.status_code == 200:
+                        if "var __data__" in response.text or "list_items" in response.text:
+                            return response.text
                         decrypted = self.decrypt_html(response.text)
                         if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                             return decrypted
@@ -1961,7 +2087,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 time.sleep(random.uniform(2.0, 4.0))
                 html = page.content()
                 page.close()
-                if self._is_valid_list_page(html):
+                if "var __data__" in html or "list_items" in html or self._is_valid_list_page(html):
                     return html
                 decrypted = self.decrypt_html(html)
                 if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
@@ -1998,7 +2124,41 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
 
     def _is_valid_list_page(self, html):
         """子类覆盖：判断 Playwright 兜底时页面是否有效"""
-        return bool(html)
+        if not html:
+            return False
+        return "var __data__" in html or "list_items" in html or 'class="movie_list"' in html or 'class="videos-list"' in html or 'class="list"' in html or "class='list'" in html or 'class="bt_ul"' in html or "list.php" in html
+
+    def parse_spa_list_items(self, list_page_content: str) -> Optional[List[dict]]:
+        """从新版 SPA 列表页中解析条目，若非 SPA 页面返回 None"""
+        spa_data = self.extract_spa_data(list_page_content)
+        if not spa_data or "list_items" not in spa_data:
+            return None
+        items = spa_data.get("list_items", [])
+        parsed_items = []
+        from urllib.parse import urljoin
+        for item in items:
+            link = item.get("link", "")
+            if not link or "open.php" in link:
+                continue
+            url = urljoin(self.base_domain, link)
+            title = self.decrypt_title(item.get("title_enc", "")) or item.get("title", "")
+            if not title:
+                continue
+            date_str = item.get("date", "")
+            parsed_items.append({
+                'title': title,
+                'url': url,
+                'date_str': date_str,
+                'class_name': self.current_class
+            })
+        return parsed_items
+
+    def parse_list_page(self, list_page_content, page_num):
+        """通用列表页解析：优先解析新版 SPA JSON 数据"""
+        items = self.parse_spa_list_items(list_page_content)
+        if items is not None:
+            return items
+        return []
 
     def get_categories(self):
         """返回要爬取的分类列表，覆盖父类"""
@@ -2029,7 +2189,9 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
 
     def _is_valid_detail_page(self, html):
         """子类覆盖：判断 Playwright 兜底时详情页是否有效"""
-        return True
+        if not html:
+            return False
+        return "var __data__" in html or "magnet:?" in html or "【发布时间】" in html or "【影片格式】" in html or "torrent-description" in html or "panel-title" in html or "download.php" in html
 
     def _should_rewrite_url(self, netloc):
         """子类覆盖：判断是否应使用当前域名重写 URL（用于域名轮换）"""
@@ -2128,6 +2290,9 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                 try:
                     response = requests.get(url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
                     if response.status_code == 200:
+                        if "var __data__" in response.text or "magnet:?" in response.text:
+                            detail_html = response.text
+                            break
                         decrypted = self.decrypt_html(response.text)
                         if decrypted and "正在检测" not in decrypted and "403 Forbidden" not in decrypted:
                             detail_html = decrypted
@@ -2158,7 +2323,7 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
                     time.sleep(random.uniform(2.0, 4.0))
                     html = page.content()
                     page.close()
-                    if self._is_valid_detail_page(html):
+                    if "var __data__" in html or "magnet:?" in html or self._is_valid_detail_page(html):
                         detail_html = html
                         break
                     else:
@@ -2188,21 +2353,55 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
             self.log.error("[%s] ❌ 详情页抓取失败 (最终 URL: %s)", idx, url)
             return False, None
 
-        # 提取磁力链接
+        # 提取磁力链接与元数据
+        spa_data = self.extract_spa_data(detail_html)
         magnet_link = ""
-        magnet_match = re.search(r"magnet:\?xt=urn:btih:[A-Za-z0-9]+", detail_html)
-        if magnet_match:
-            magnet_link = magnet_match.group(0)
-        else:
-            magnet_match = re.search(r"magnet:\?[^\s'\"<>\)]+", detail_html)
+        date_str = raw_item.get('date_str', '')
+        size_val = ""
+        res_format = ""
+        title = raw_item.get('title', '')
+
+        if spa_data:
+            magnet_link = spa_data.get("magnet", "")
+            date_val = spa_data.get("date", "")
+            if date_val:
+                date_str = date_val
+            size_val = spa_data.get("size", "")
+            res_format = spa_data.get("resolution", "")
+            dec_title = self.decrypt_title(spa_data.get("title_enc", ""))
+            if dec_title:
+                title = dec_title
+                raw_item['title'] = dec_title
+
+        if not magnet_link:
+            magnet_match = re.search(r"magnet:\?xt=urn:btih:[A-Za-z0-9]+", detail_html)
             if magnet_match:
                 magnet_link = magnet_match.group(0)
+            else:
+                magnet_match = re.search(r"magnet:\?[^\s'\"<>\)]+", detail_html)
+                if magnet_match:
+                    magnet_link = magnet_match.group(0)
+
+        if not magnet_link:
+            # 兼容 download.php 跳转提取磁力
+            download_match = re.search(r'href=["\'](/download\.php\?[^"\']+)["\']', detail_html)
+            if download_match and hasattr(self, '_fetch_magnet_from_download_page'):
+                from urllib.parse import urljoin
+                download_url = urljoin(url, download_match.group(1))
+                magnet_link = self._fetch_magnet_from_download_page(download_url, url)
 
         if not magnet_link:
             self.log.error("[%s] ❌ 详情页未找到磁力链接: %s", idx, original_url)
             return False, None
 
-        date_str, size_val, res_format = self._extract_detail_metadata(detail_html, raw_item)
+        if not size_val or not res_format:
+            d_str, s_val, r_fmt = self._extract_detail_metadata(detail_html, raw_item)
+            if not date_str and d_str:
+                date_str = d_str
+            if not size_val and s_val:
+                size_val = s_val
+            if not res_format and r_fmt:
+                res_format = r_fmt
 
         category_map = self._get_category_map()
         category = category_map.get(raw_item['class_name'], raw_item['class_name'])

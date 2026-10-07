@@ -16,7 +16,7 @@ class MadouCrawler(DecryptSiteBaseCrawler):
             categories=["guochan", "oumei"],
             initial_domains=["hfc.232668.xyz"],
             main_domain="http://ypb.295282.xyz",
-            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+            domain_pattern=r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         )
         super().__init__(db_manager, "madou", config=config)
         self.current_class = "guochan"
@@ -36,10 +36,14 @@ class MadouCrawler(DecryptSiteBaseCrawler):
 
     def _is_valid_list_page(self, html):
         """判断 Playwright 兜底时页面是否有效"""
-        return "torrent-list" in html or "class=\"torrent-list\"" in html
+        return "var __data__" in html or "list_items" in html or "torrent-list" in html or "class=\"torrent-list\"" in html
 
     def parse_list_page(self, list_page_content, page_num):
         """解析解密后的列表页，提取条目信息"""
+        spa_items = self.parse_spa_list_items(list_page_content)
+        if spa_items is not None:
+            return spa_items
+
         soup = BeautifulSoup(list_page_content, "lxml")
         table = soup.find('table', class_='torrent-list')
         if not table:
@@ -96,7 +100,7 @@ class MadouCrawler(DecryptSiteBaseCrawler):
 
     def _is_valid_detail_page(self, html):
         """判断 Playwright 兜底时详情页是否有效"""
-        return "panel-title" in html or "torrent-description" in html
+        return "var __data__" in html or "magnet:?" in html or "panel-title" in html or "torrent-description" in html
 
     def _extract_detail_metadata(self, detail_html, raw_item):
         """从详情页提取发布时间、大小、格式（麻豆兼容两种 HTML 结构）"""

@@ -114,42 +114,42 @@ date_regex = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 SITE_CONFIG = {
     "datang": {
         "main_domain": "https://dtbt7.com",
-        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         "cache_name": "datang_domains.json",
     },
     "dashen": {
         "main_domain": "https://j4f4.com",
-        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         "cache_name": "dashen_domains.json",
     },
     "jingpin": {
         "main_domain": "https://jpbt3.com",
-        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         "cache_name": "jingpin_domains.json",
     },
     "tanhua": {
         "main_domain": "https://thbt8.com",
-        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         "cache_name": "tanhua_domains.json",
     },
     "taose": {
         "main_domain": "https://taosebt.com",
-        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         "cache_name": "taose_domains.json",
     },
     "mianfei_guochan": {
         "main_domain": "https://mfgc3.com",
-        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         "cache_name": "mianfei_guochan_domains.json",
     },
     "madou": {
         "main_domain": "http://ypb.295282.xyz",
-        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         "cache_name": "madou_domains.json",
     },
     "jingpin_toupai": {
         "main_domain": "",
-        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)',
+        "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         "cache_name": "jingpin_toupai_domains.json",
     },
 }
@@ -495,7 +495,7 @@ def infer_source(source, url="", pdf_path="", title=""):
     return "datang"
 
 
-def extract_domains_from_text(content: str, pattern: str = r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)') -> list:
+def extract_domains_from_text(content: str, pattern: str = r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})') -> list:
     """从 HTML 或文本中提取镜像域名，支持明文正则与 Base64 编码"""
     if not content:
         return []
@@ -555,14 +555,19 @@ def fetch_domains_from_permanent(source: str) -> list:
     if not cfg or not cfg.get("main_domain"):
         return []
     main_domain = cfg["main_domain"]
-    pattern = cfg.get("domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.xyz)')
+    pattern = cfg.get("domain_pattern", r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})')
     print(f"  [*] 正在从 {source.upper()} 永久主站 {main_domain} 动态拉取最新镜像域名...")
     try:
         from curl_cffi import requests as cffi_requests
         from crawlers.base_crawler import DecryptMixin
         resp = cffi_requests.get(main_domain, timeout=15, impersonate="chrome120")
         if resp.status_code == 200:
-            decrypted = DecryptMixin().decrypt_html(resp.text)
+            mixin = DecryptMixin()
+            decoded_main = getattr(mixin, "_decode_main_station_html", None)
+            if callable(decoded_main):
+                decrypted = decoded_main(resp.text)
+            else:
+                decrypted = mixin.decrypt_html(resp.text)
             content_to_parse = decrypted if decrypted else resp.text
             new_domains = extract_domains_from_text(content_to_parse, pattern)
             unique = [d for d in dict.fromkeys(new_domains) if d not in main_domain]
