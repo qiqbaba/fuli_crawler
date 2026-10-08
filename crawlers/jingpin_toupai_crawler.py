@@ -22,24 +22,37 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         super().__init__(db_manager, "jingpin_toupai")
         self.check_resource_link = True  # 启用磁力链接二次去重
         self.domains = [
-            "pms.532862.xyz"
+            "rjt.259298.com",
+            "jdb.935283.com",
+            "scb.868362.com",
+            "pms.532862.xyz",
         ]
+        self.main_domain = "https://www.532862.xyz"
+        self.domain_pattern = r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})'
         self.current_domain_idx = 0
         self.base_domain = f"https://{self.domains[self.current_domain_idx]}"
         self.list_url_template = "{base}/list/{cat}-{page}.html"
         self.base_list_url = f"{self.base_domain}/list/{{cat}}-{{page}}.html"
-        self.current_class = "2935277"
+        self.current_class = "19920497"
         self.max_consecutive_existing = 15  # 连续抓到历史数据时早停
         self.category_map = {
+            # 新版统一集群分类 (rjt.259298.com, jdb.935283.com, scb.868362.com)
+            "19920497": "国产", 
+            "19950497": "欧美", 
+            "19960497": "国产",
+            # 旧版独立站分类 (pms.532862.xyz 兼容)
             "2935277": "国产", 
             "2965277": "欧美", 
-            "2975277": "国产"
+            "2975277": "国产",
         }
         
         # 域名冷却机制
         self._domain_cooldown = {}
         self._cooldown_seconds = 60
         self._domain_lock = threading.Lock()
+
+        # 尝试从本地缓存加载之前发现的最新域名
+        self._load_domains_from_cache()
 
         from utils.pdf_generator import PDFRenderConfig
         self.pdf_config = PDFRenderConfig(
@@ -83,7 +96,7 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
     # _save_pdf 逻辑已抽象到 base_crawler.py 和 utils/pdf_generator.py 中
 
     def fetch_list_page(self, page_num):
-        """拉取列表页 HTML 并解码（解密全页倒序 Base64）"""
+        """拉取列表页 HTML 并解码（解密全页倒序 Base64），支持多域名轮换与跳转页面检测"""
         for _ in range(len(self.domains)):
             url = self._format_list_url(self.current_class, page_num)
             headers = self._build_headers()
@@ -101,8 +114,20 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     r = requests.get(url, headers=headers, impersonate="chrome120", timeout=20, proxies=proxies)
                     r.encoding = 'utf-8'
                     if r.status_code == 200:
+                        # 检查是否为检测跳转页面
+                        if "正在检测" in r.text or "页面跳转中" in r.text:
+                            if self._update_domains_from_redirect(r.text):
+                                self.log.info("[+] 检测到跳转线路更新，重新拉取列表页...")
+                                url = self._format_list_url(self.current_class, page_num)
+                                continue
+
                         decrypted = self.decrypt_html(r.text)
                         if decrypted:
+                            if "正在检测" in decrypted or "页面跳转中" in decrypted:
+                                if self._update_domains_from_redirect(decrypted):
+                                    self.log.info("[+] 检测到解密跳转线路更新，重新拉取列表页...")
+                                    url = self._format_list_url(self.current_class, page_num)
+                                    continue
                             return decrypted
                         else:
                             self.log.error("[-] 列表页解密失败")
@@ -161,6 +186,14 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
     def process_sub_page_if_needed(self, raw_item, idx):
         """提取详情页数据并进行解密和 PDF 渲染"""
         sub_url = raw_item['url'] if isinstance(raw_item, dict) else raw_item
+        
+        # 确保详情页 URL 与当前可用域名同步
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(sub_url)
+        current_netloc = urlparse(self.base_domain).netloc
+        if parsed.netloc != current_netloc:
+            sub_url = urlunparse(parsed._replace(netloc=current_netloc))
+
         headers = self._build_headers(referer=self.base_domain + "/")
         
         html_text = None
@@ -179,6 +212,11 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
                     html_text = self.decrypt_html(r.text)
                     if html_text:
                         break
+                elif r.status_code == 404 and len(self.domains) > 1:
+                    # 若当前域名返回 404，尝试切换其它域名重试该详情页
+                    self._rotate_domain()
+                    current_netloc = urlparse(self.base_domain).netloc
+                    sub_url = urlunparse(parsed._replace(netloc=current_netloc))
             except Exception:
                 pass
             if attempt < max_retries - 1:
@@ -266,12 +304,25 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
             return False, None
 
     def get_categories(self):
-        """返回要爬取的分类列表"""
-        return ["2935277", "2965277", "2975277"]
+        """返回要爬取的分类列表，根据当前主域名自适应匹配分类 ID"""
+        if "532862.xyz" in self.base_domain:
+            return ["2935277", "2965277", "2975277"]
+        return ["19920497", "19950497", "19960497"]
 
     def before_category_crawl(self, category):
         """爬取分类前的准备工作"""
         self.current_class = category
+        # 若切换到 532862.xyz 分类，确保 base_domain 兼容
+        if category in ["2935277", "2965277", "2975277"] and "532862.xyz" not in self.base_domain:
+            for idx, dom in enumerate(self.domains):
+                if "532862.xyz" in dom:
+                    self._update_base_domain(idx)
+                    break
+        elif category in ["19920497", "19950497", "19960497"] and "532862.xyz" in self.base_domain:
+            for idx, dom in enumerate(self.domains):
+                if "532862.xyz" not in dom:
+                    self._update_base_domain(idx)
+                    break
 
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """爬虫流程入口，使用基类的多板块爬取逻辑"""

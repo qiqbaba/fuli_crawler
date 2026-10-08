@@ -55,8 +55,10 @@ proxies.txt
 stats/circuit_break_crawlers.txt
 
 # 缓存
-cache/
-.cache/
+cache/*
+!cache/*_domains.json
+.cache/*
+!cache/*_domains.json
 
 temp_profiles/
 /upload_to_dynamodb.py

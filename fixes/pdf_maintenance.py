@@ -148,7 +148,7 @@ SITE_CONFIG = {
         "cache_name": "madou_domains.json",
     },
     "jingpin_toupai": {
-        "main_domain": "",
+        "main_domain": "https://www.532862.xyz",
         "domain_pattern": r'([a-z0-9]{2,10}\.\d{5,7}\.[a-z]{2,4})',
         "cache_name": "jingpin_toupai_domains.json",
     },
