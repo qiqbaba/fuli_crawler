@@ -224,6 +224,9 @@ def render_operation_result(
     3. 展示精炼、高价值的核心业务结果
     4. 将底层完整技术日志置于默认收起的折叠栏中 (st.expander)，保持界面极简清爽
     """
+    # 维护操作可能新增/修复/删除了本地 PDF，通知主页面下一轮清理路径与预览缓存
+    st.session_state["pdf_cache_dirty"] = True
+
     if not raw_text or not raw_text.strip():
         st.info(T(f"{default_label}，无日志输出。"))
         return

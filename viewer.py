@@ -62,12 +62,21 @@ st.markdown(f'<style>\n{get_asset_content("viewer_base.css")}\n</style>', unsafe
 
 
 
+def safe_text(value) -> str:
+    """将数据库/DataFrame 中的缺失值 (None / NaN / NA / NaT) 统一转换为空字符串。"""
+    if value is None or value is pd.NA or value is pd.NaT:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    return str(value)
+
+
 @functools.lru_cache(maxsize=4096)
 def resolve_pdf_path(raw_path: str) -> str:
     """
     智能解析 PDF 本地真实路径（兼容相对路径、绝对路径及历史目录）
     """
-    if not raw_path:
+    if not raw_path or not isinstance(raw_path, str):
         return ""
     
     # 1. 尝试直接作为绝对路径
@@ -259,6 +268,109 @@ def delete_single_record(
             pass
         
     return db_deleted, pdf_deleted, "，".join(messages)
+
+
+def apply_deleted_record_to_cache(
+    item_id,
+    row: dict,
+    resolved_pdf: str,
+    raw_pdf_path: str,
+    db_path: str
+) -> list:
+    """删除成功后同步更新 session_state 中的列表、总数、统计与重复项缓存。"""
+    if "deleted_ids" not in st.session_state:
+        st.session_state.deleted_ids = set()
+    st.session_state.deleted_ids.add(str(item_id))
+
+    auto_removed_ids = []
+    fix_filter = st.session_state.get("f_fix_filter", "全部")
+    fix_field_map = {
+        "标题完全重复": "title",
+        "PDF路径重复": "pdf_path",
+        "磁力链接重复": "resource_link",
+        "URL 地址重复": "url",
+    }
+
+    if fix_filter in fix_field_map and not str(item_id).startswith("ORPHAN-"):
+        dup_col = fix_field_map[fix_filter]
+        dup_val = safe_text(row.get(dup_col)).strip()
+        if dup_val:
+            try:
+                with sqlite3.connect(db_path, timeout=10.0) as check_conn:
+                    cursor = check_conn.cursor()
+                    cursor.execute(f"SELECT id FROM resources WHERE {dup_col} = ?", (dup_val,))
+                    remaining_ids = [str(r[0]) for r in cursor.fetchall()]
+
+                remaining_cnt = len(remaining_ids)
+                if remaining_cnt <= 1:
+                    # 剩余记录数 <= 1，说明在数据库中已成为唯一记录，不再属于重复项
+                    auto_removed_ids = remaining_ids
+                    for rid in remaining_ids:
+                        st.session_state.deleted_ids.add(str(rid))
+                    if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
+                        ids_to_remove = set([str(item_id)] + remaining_ids)
+                        st.session_state.cached_df = st.session_state.cached_df[
+                            ~st.session_state.cached_df["id"].astype(str).isin(ids_to_remove)
+                        ]
+                    if "cached_total_records" in st.session_state:
+                        st.session_state.cached_total_records = max(
+                            0, st.session_state.cached_total_records - 1 - len(remaining_ids)
+                        )
+                else:
+                    # 剩余记录仍然重复，更新内存中对应记录的 dup_cnt
+                    if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
+                        st.session_state.cached_df = st.session_state.cached_df[
+                            st.session_state.cached_df["id"].astype(str) != str(item_id)
+                        ]
+                        st.session_state.cached_df.loc[
+                            st.session_state.cached_df["id"].astype(str).isin(remaining_ids), "dup_cnt"
+                        ] = remaining_cnt
+                    if "cached_total_records" in st.session_state and st.session_state.cached_total_records > 0:
+                        st.session_state.cached_total_records -= 1
+            except Exception:
+                if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
+                    st.session_state.cached_df = st.session_state.cached_df[
+                        st.session_state.cached_df["id"].astype(str) != str(item_id)
+                    ]
+                if "cached_total_records" in st.session_state and st.session_state.cached_total_records > 0:
+                    st.session_state.cached_total_records -= 1
+        else:
+            if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
+                st.session_state.cached_df = st.session_state.cached_df[
+                    st.session_state.cached_df["id"].astype(str) != str(item_id)
+                ]
+            if "cached_total_records" in st.session_state and st.session_state.cached_total_records > 0:
+                st.session_state.cached_total_records -= 1
+    else:
+        # 常规模式直接剔除已删除行
+        if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
+            st.session_state.cached_df = st.session_state.cached_df[
+                st.session_state.cached_df["id"].astype(str) != str(item_id)
+            ]
+        if "cached_total_records" in st.session_state and st.session_state.cached_total_records > 0:
+            st.session_state.cached_total_records -= 1
+
+    # 同步递减统计数字：孤儿是磁盘文件，不属于数据库总数与 PDF 镜像统计
+    if "cached_stats" in st.session_state:
+        if str(item_id).startswith("ORPHAN-"):
+            st.session_state.cached_stats["orphan_count"] = max(
+                0, st.session_state.cached_stats.get("orphan_count", 0) - 1
+            )
+        else:
+            st.session_state.cached_stats["total"] = max(
+                0, st.session_state.cached_stats.get("total", 0) - 1
+            )
+            if raw_pdf_path:
+                st.session_state.cached_stats["has_pdf_record"] = max(
+                    0, st.session_state.cached_stats.get("has_pdf_record", 0) - 1
+                )
+
+    # 当前页数据已全部删除完毕时重置查询签名，以便自动加载后续数据
+    if "cached_df" in st.session_state and st.session_state.cached_df.empty:
+        st.session_state.cached_query_sig = ""
+        st.session_state.pop("cached_df", None)
+
+    return auto_removed_ids
 
 
 # ==================== fixes 维护与质检缓存扫描函数 ====================
@@ -1104,11 +1216,26 @@ class DBReader:
             
             columns = ["id", "title", "category", "source", "size", "format", "url", "resource_link", "pikpak_link", "pdf_path", "publish_time", "dup_cnt"]
             df = pd.DataFrame(rows, columns=columns)
+            # SQLite 的 NULL 经 pandas 转换后可能是 None 或 NaN，统一填充为空字符串，
+            # 避免下游 `value or ""`、`str.strip()`、`st.link_button` 等收到浮点 NaN 而崩溃
+            text_columns = ["title", "category", "source", "size", "format", "url", "resource_link", "pikpak_link", "pdf_path", "publish_time"]
+            for col in text_columns:
+                df[col] = df[col].fillna("")
             return filtered_count, df
 
 
 # ==================== 主流程 ====================
 db_path = get_db_path()
+
+# 维护操作完成后的下一轮会话中清理全部数据缓存并强制重新统计/查询，
+# 确保新增、修复、清理后的 PDF 与数据库记录立即可见
+_pdf_cache_dirty = st.session_state.pop("pdf_cache_dirty", False)
+if _pdf_cache_dirty:
+    resolve_pdf_path.cache_clear()
+    st.cache_data.clear()
+    st.session_state.pop("cached_stats", None)
+    st.session_state.cached_query_sig = ""
+    st.session_state.pop("cached_df", None)
 
 if not os.path.exists(db_path):
     st.error(T(f"找不到数据库文件: `{db_path}`，请确认数据库路径配置！"))
@@ -1312,13 +1439,13 @@ if (
             
             def calc_page_dup_cnt(row):
                 cnts = [1]
-                t = (row.get("title") or "").strip()
+                t = safe_text(row.get("title")).strip()
                 if t and t in title_counts:
                     cnts.append(title_counts[t])
-                l = (row.get("resource_link") or "").strip()
+                l = safe_text(row.get("resource_link")).strip()
                 if l and l in link_counts:
                     cnts.append(link_counts[l])
-                p = (row.get("pdf_path") or "").strip()
+                p = safe_text(row.get("pdf_path")).strip()
                 if p and p in pdf_counts:
                     cnts.append(pdf_counts[p])
                 return max(cnts)
@@ -1362,10 +1489,14 @@ class PDFRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/pdf_page":
             query = urllib.parse.parse_qs(parsed.query)
             file_path = query.get("path", [""])[0]
-            page_num = int(query.get("page", ["0"])[0])
+            try:
+                page_num = int(query.get("page", ["0"])[0])
+                dpi = max(30, min(int(query.get("dpi", ["105"])[0]), 300))
+                quality = max(30, min(int(query.get("quality", ["75"])[0]), 95))
+            except (TypeError, ValueError):
+                self.send_error(400, "Invalid numeric parameter")
+                return
             mtime = query.get("mtime", ["0"])[0]
-            dpi = int(query.get("dpi", ["105"])[0])
-            quality = int(query.get("quality", ["75"])[0])
 
             if not file_path or not os.path.exists(file_path):
                 self.send_error(404, "File not found")
@@ -1425,8 +1556,16 @@ def ensure_pdf_server_started(start_port=8515) -> int:
                 return p
             except OSError:
                 continue
-        _PDF_SERVER_PORT = start_port
-        return start_port
+        # 所有预设端口均被占用时，回退到系统分配的空闲端口
+        try:
+            server = ThreadingHTTPServer(('127.0.0.1', 0), PDFRequestHandler)
+            t = threading.Thread(target=server.serve_forever, daemon=True)
+            t.start()
+            _PDF_SERVER_PORT = server.server_address[1]
+            return _PDF_SERVER_PORT
+        except OSError:
+            _PDF_SERVER_PORT = 0
+            return 0
 
 
 @st.cache_data(max_entries=3000, ttl=3600, show_spinner=False)
@@ -1454,16 +1593,16 @@ def load_pdf_as_base64(file_path: str, mtime: float) -> str:
 def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0):
     """渲染单条记录卡片（无外层背景框，结构清晰解耦）"""
     item_id = row.get("id")
-    title = row.get("title") or "（无标题）"
-    source = row.get("source") or "未知"
-    category = row.get("category") or "未分类"
-    publish_time = row.get("publish_time") or "-"
-    size = row.get("size") or "-"
-    fmt = row.get("format") or "-"
-    url = row.get("url") or ""
-    resource_link = row.get("resource_link") or ""
-    pikpak_link = row.get("pikpak_link") or ""
-    raw_pdf_path = row.get("pdf_path") or ""
+    title = safe_text(row.get("title")) or "（无标题）"
+    source = safe_text(row.get("source")) or "未知"
+    category = safe_text(row.get("category")) or "未分类"
+    publish_time = safe_text(row.get("publish_time")) or "-"
+    size = safe_text(row.get("size")) or "-"
+    fmt = safe_text(row.get("format")) or "-"
+    url = safe_text(row.get("url"))
+    resource_link = safe_text(row.get("resource_link"))
+    pikpak_link = safe_text(row.get("pikpak_link"))
+    raw_pdf_path = safe_text(row.get("pdf_path"))
     
     resolved_pdf = resolve_pdf_path(raw_pdf_path)
     
@@ -1508,8 +1647,11 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
     if fmt and fmt != "-":
         badge_list.append(f'<span class="badge badge-format" title="{fmt_esc}">{fmt_esc}</span>')
     
-    dup_cnt = row.get("dup_cnt", 1)
-    if dup_cnt and int(dup_cnt) > 1:
+    try:
+        dup_cnt = int(row.get("dup_cnt", 1))
+    except (TypeError, ValueError):
+        dup_cnt = 1
+    if dup_cnt > 1:
         badge_list.append(f'<span class="badge badge-duplicate" title="包含 {dup_cnt} 条相同重复记录（已按组相邻排列）">重复 ({dup_cnt}条)</span>')
     
     badges_str = "".join(badge_list)
@@ -1563,93 +1705,14 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
                                 raw_pdf_path=raw_pdf_path,
                                 abs_path=row.get("_abs_path", "")
                             )
-                            # 1. 记录已删除 ID 到 session_state
-                            if "deleted_ids" not in st.session_state:
-                                st.session_state.deleted_ids = set()
-                            st.session_state.deleted_ids.add(str(item_id))
-                            
-                            # 2. 检查当前质检模式下的重复关联项（若删除后关联记录已不再重复，则自动移出重复列表）
-                            fix_filter = st.session_state.get("f_fix_filter", "全部")
-                            fix_field_map = {
-                                "标题完全重复": "title",
-                                "PDF路径重复": "pdf_path",
-                                "磁力链接重复": "resource_link",
-                                "URL 地址重复": "url"
-                            }
-                            
-                            auto_removed_ids = []
-                            if fix_filter in fix_field_map and not str(item_id).startswith("ORPHAN-"):
-                                dup_col = fix_field_map[fix_filter]
-                                dup_val = (row.get(dup_col) or "").strip()
-                                if dup_val:
-                                    try:
-                                        with sqlite3.connect(db_path, timeout=10.0) as check_conn:
-                                            cursor = check_conn.cursor()
-                                            cursor.execute(f"SELECT id FROM resources WHERE {dup_col} = ?", (dup_val,))
-                                            remaining_ids = [str(r[0]) for r in cursor.fetchall()]
-                                        
-                                        remaining_cnt = len(remaining_ids)
-                                        if remaining_cnt <= 1:
-                                            # 剩余记录数 <= 1，说明在数据库中已成为唯一记录，不再属于重复项！
-                                            # 在当前重复质检视图中自动将剩余记录一并移出当前页面
-                                            auto_removed_ids = remaining_ids
-                                            for rid in remaining_ids:
-                                                st.session_state.deleted_ids.add(str(rid))
-                                            
-                                            if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
-                                                ids_to_remove = set([str(item_id)] + remaining_ids)
-                                                st.session_state.cached_df = st.session_state.cached_df[
-                                                    ~st.session_state.cached_df["id"].astype(str).isin(ids_to_remove)
-                                                ]
-                                            if "cached_total_records" in st.session_state:
-                                                st.session_state.cached_total_records = max(0, st.session_state.cached_total_records - 1 - len(remaining_ids))
-                                        else:
-                                            # 剩余记录仍然重复（例如原 3 条删了 1 条剩 2 条），更新内存中对应记录的 dup_cnt
-                                            if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
-                                                st.session_state.cached_df = st.session_state.cached_df[
-                                                    st.session_state.cached_df["id"].astype(str) != str(item_id)
-                                                ]
-                                                st.session_state.cached_df.loc[
-                                                    st.session_state.cached_df["id"].astype(str).isin(remaining_ids), "dup_cnt"
-                                                ] = remaining_cnt
-                                            if "cached_total_records" in st.session_state and st.session_state.cached_total_records > 0:
-                                                st.session_state.cached_total_records -= 1
-                                    except Exception:
-                                        if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
-                                            st.session_state.cached_df = st.session_state.cached_df[
-                                                st.session_state.cached_df["id"].astype(str) != str(item_id)
-                                            ]
-                                        if "cached_total_records" in st.session_state and st.session_state.cached_total_records > 0:
-                                            st.session_state.cached_total_records -= 1
-                                else:
-                                    if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
-                                        st.session_state.cached_df = st.session_state.cached_df[
-                                            st.session_state.cached_df["id"].astype(str) != str(item_id)
-                                        ]
-                                    if "cached_total_records" in st.session_state and st.session_state.cached_total_records > 0:
-                                        st.session_state.cached_total_records -= 1
-                            else:
-                                # 常规模式直接剔除已删除行
-                                if "cached_df" in st.session_state and not st.session_state.cached_df.empty:
-                                    st.session_state.cached_df = st.session_state.cached_df[
-                                        st.session_state.cached_df["id"].astype(str) != str(item_id)
-                                    ]
-                                if "cached_total_records" in st.session_state and st.session_state.cached_total_records > 0:
-                                    st.session_state.cached_total_records -= 1
-                            
-                            # 3. 内存直接同步递减统计数字
-                            if "cached_stats" in st.session_state:
-                                st.session_state.cached_stats["total"] = max(0, st.session_state.cached_stats.get("total", 0) - 1)
-                                if resolved_pdf:
-                                    st.session_state.cached_stats["has_pdf_record"] = max(0, st.session_state.cached_stats.get("has_pdf_record", 0) - 1)
-                                if str(item_id).startswith("ORPHAN-"):
-                                    st.session_state.cached_stats["orphan_count"] = max(0, st.session_state.cached_stats.get("orphan_count", 0) - 1)
-                            
-                            # 4. 如果当前页数据已全部删除完毕（cached_df 为空），重置查询签名与缓存，以便自动加载后续数据
-                            if "cached_df" in st.session_state and st.session_state.cached_df.empty:
-                                st.session_state.cached_query_sig = ""
-                                st.session_state.pop("cached_df", None)
-
+                            is_orphan = str(item_id).startswith("ORPHAN-")
+                            delete_ok = pdf_del if is_orphan else db_del
+                            if not delete_ok:
+                                st.session_state["delete_error"] = msg
+                                st.rerun()
+                            auto_removed_ids = apply_deleted_record_to_cache(
+                                item_id, row, resolved_pdf, raw_pdf_path, db_path
+                            )
                             if auto_removed_ids:
                                 removed_labels = "、".join([f"#{rid}" for rid in auto_removed_ids])
                                 st.toast(T(f"#{item_id} 已删除，关联记录 {removed_labels} 已无重复并自动移出重复列表"))
@@ -1887,6 +1950,9 @@ with st.container():
 
 
 # ==================== 顶部主导航 Tab 与多维筛选工具栏 ====================
+
+if "delete_error" in st.session_state:
+    st.error(T(f"删除失败：{st.session_state.pop('delete_error')}"))
 
 main_tab_gallery, main_tab_maintenance, main_tab_sync = st.tabs([
     T("画廊浏览"),

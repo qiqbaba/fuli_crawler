@@ -13,3 +13,4 @@ lingua-language-detector
 flask
 streamlit
 pandas
+pymupdf

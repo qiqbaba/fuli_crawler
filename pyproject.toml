@@ -19,6 +19,7 @@ dependencies = [
     "flask",
     "streamlit",
     "pandas",
+    "pymupdf",
 ]
 
 [tool.uv]

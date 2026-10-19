@@ -2518,7 +2518,14 @@ setInterval(injectHeaderMetadata, 3000);
                     }
                 });
 
-                // 2. 当 Streamlit 处于 running 状态且有展开的状态微件时，确保状态微件在视口内平滑可见
+                // 2. 外层容器不应存在滚动余量：一旦被程序化滚动，顶部 Header 会连同固定导航条
+                //    一起被推出视口，造成导航栏与功能卡片重叠，这里做一次兜底复位
+                const outerContainer = pDoc.querySelector('[data-testid="stAppViewContainer"]');
+                if (outerContainer && outerContainer.scrollTop) {
+                    outerContainer.scrollTop = 0;
+                }
+
+                // 3. 当 Streamlit 处于 running 状态且有展开的状态微件时，确保状态微件在视口内平滑可见
                 const isRunning = pDoc.querySelector('.stApp[data-test-script-state="running"]');
                 if (isRunning) {
                     const expanders = pDoc.querySelectorAll('[data-testid="stExpander"]');
@@ -2526,9 +2533,9 @@ setInterval(injectHeaderMetadata, 3000);
                         const activeExpander = expanders[expanders.length - 1];
                         const rect = activeExpander.getBoundingClientRect();
                         const windowHeight = window.innerHeight || pDoc.documentElement.clientHeight;
-                        // 如果状态微件下边缘超出可视区下方，轻柔随动滚动
+                        // 如果状态微件下边缘超出可视区下方，轻柔随动滚动（滚动真正的内层容器 stMain）
                         if (rect.bottom > windowHeight - 15 && rect.top > 0) {
-                            const scrollContainer = pDoc.querySelector('[data-testid="stAppViewContainer"]') || window;
+                            const scrollContainer = pDoc.querySelector('[data-testid="stMain"]') || window;
                             if (scrollContainer.scrollBy) {
                                 scrollContainer.scrollBy({ top: Math.min(rect.bottom - windowHeight + 35, 60), behavior: 'smooth' });
                             }

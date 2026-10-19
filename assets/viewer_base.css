@@ -414,6 +414,19 @@
         z-index: 9999 !important;
         overflow: visible !important;
     }
+    /* 锁定主滚动区高度：严格扣除顶部 Header 高度，使外层 stAppViewContainer 不再产生
+       42px 的可滚动余量。否则任何程序化 scrollBy（如日志吸底逻辑）都会把 Header 连同
+       其上的固定导航条滚出视口，导致导航栏与下方功能卡片重叠 */
+    [data-testid="stMain"],
+    .stMain {
+        height: calc(100vh - 2.65rem) !important;
+        min-height: 0 !important;
+        max-height: calc(100vh - 2.65rem) !important;
+    }
+    [data-testid="stAppViewContainer"],
+    .stAppViewContainer {
+        overflow: hidden !important;
+    }
     div[data-testid="stToolbar"] {
         position: static !important;
         display: flex !important;

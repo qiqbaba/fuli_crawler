@@ -93,7 +93,15 @@
         try {
             const pDoc = (window.parent && window.parent.document) || document;
             if (!window._pdfMutationObserver && pDoc && pDoc.body) {
-                window._pdfMutationObserver = new MutationObserver(initPdfViewportLazyLoading);
+                // 合并同一帧内的多次 DOM 变更，避免 Streamlit 重绘时全量扫描造成卡顿
+                window._pdfMutationObserver = new MutationObserver(() => {
+                    if (window._pdfLazyScheduled) return;
+                    window._pdfLazyScheduled = true;
+                    requestAnimationFrame(() => {
+                        window._pdfLazyScheduled = false;
+                        initPdfViewportLazyLoading();
+                    });
+                });
                 window._pdfMutationObserver.observe(pDoc.body, { childList: true, subtree: true });
             }
         } catch(e) {}
