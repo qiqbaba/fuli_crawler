@@ -20,8 +20,8 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         self.base_url = "https://gcbt.net/"
         self.target_domain = "gcbt.net"
         self.use_persistent_context = True
-        self.proxy_test_url = "https://gcbt.net/download/8067.html"
-        self.proxy_expected_content = "90231538e5368bb8422500604f01cb25edfeedb4"
+        self.proxy_test_url = "https://gcbt.net/"
+        self.proxy_expected_content = "GCBT"
         self.check_resource_link = True  # 启用磁力链接二次去重
         # 默认早停阈值为连续 20 条已存在记录
         self.max_consecutive_existing = 20
@@ -52,7 +52,7 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         """获取指定页码的列表页 URL"""
         if page_num == 1:
             return self.base_url
-        return urljoin(self.base_url, f"page/{page_num}")
+        return urljoin(self.base_url, f"page/{page_num}/")
 
     # _http_get 继承自 BaseCrawler，无需重复实现
 
@@ -136,12 +136,12 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         article_text = article.text if article else ""
         
         size = ""
-        size_match = re.search(r'【影片大小】\s*[:：]\s*([a-zA-Z0-9\.\s]+)', article_text)
+        size_match = re.search(r'[【\[]?(?:影片|文件)大小[】\]]?\s*[:：]\s*([a-zA-Z0-9\.\s]+)', article_text)
         if size_match:
             size = size_match.group(1).strip()
             
         fmt = ""
-        fmt_match = re.search(r'【影片格式】\s*[:：]\s*([a-zA-Z0-9]+)', article_text)
+        fmt_match = re.search(r'[【\[]?(?:影片|文件)格式[】\]]?\s*[:：]\s*([a-zA-Z0-9]+)', article_text)
         if fmt_match:
             fmt = fmt_match.group(1).strip()
             
