@@ -24,15 +24,8 @@ class MadouCrawler(DecryptSiteBaseCrawler):
         # 尝试从本地缓存加载之前发现的最新域名
         self._load_domains_from_cache()
 
-        from utils.pdf_generator import PDFRenderConfig
-        self.pdf_config = PDFRenderConfig(
-            ad_selectors=[
-                'div[style*="height:60px"]',
-                'div[style*="height:55px"]',
-                'div[style*="height:70px"]',
-                '#bottom_float'
-            ]
-        )
+        from utils.pdf_generator import build_pdf_render_config
+        self.pdf_config = build_pdf_render_config("madou")
 
     def _is_valid_list_page(self, html):
         """判断 Playwright 兜底时页面是否有效"""

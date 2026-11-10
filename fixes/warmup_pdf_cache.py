@@ -33,17 +33,18 @@ def resolve_pdf_path(raw_path: str) -> str:
         return raw_path
     
     clean_rel = raw_path.replace("\\", "/").lstrip("/")
+    # 数据库历史路径常带 'pdf/' 前缀，而 PDF_BASE_DIR 本身已是 PDF 根目录，需剥离
+    stripped = clean_rel[4:] if clean_rel.startswith("pdf/") else None
     candidates = [
+        os.path.join(PDF_BASE_DIR, stripped or clean_rel),
         os.path.join(PROJECT_ROOT, clean_rel),
         os.path.join(PDF_BASE_DIR, clean_rel),
         os.path.join(PROJECT_ROOT, "pdf", clean_rel),
         os.path.join(PROJECT_ROOT, "..", "seju", clean_rel),
         os.path.join(PROJECT_ROOT, "..", clean_rel),
     ]
-    if clean_rel.startswith("pdf/"):
-        stripped = clean_rel[4:]
+    if stripped is not None:
         candidates.extend([
-            os.path.join(PDF_BASE_DIR, stripped),
             os.path.join(PROJECT_ROOT, "pdf", stripped),
             os.path.join(PROJECT_ROOT, "..", "seju", "pdf", stripped),
         ])

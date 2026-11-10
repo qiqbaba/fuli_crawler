@@ -66,3 +66,6 @@ temp_profiles/
 # 临时排查脚本
 scratch_*
 scratch/
+
+# 前端工作台
+node_modules/

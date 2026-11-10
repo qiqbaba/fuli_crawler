@@ -26,10 +26,8 @@ class SejuCrawler(PlaywrightBaseCrawler):
         self.proxy_test_url = "https://seju.life/"
         self.thread_local = threading.local()
         
-        from utils.pdf_generator import PDFRenderConfig
-        self.pdf_config = PDFRenderConfig(
-            margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"}
-        )
+        from utils.pdf_generator import build_pdf_render_config
+        self.pdf_config = build_pdf_render_config("seju")
 
     def get_list_url(self, page_num):
         """获取指定页码的列表页 URL，针对第一页避免 301 重定向"""

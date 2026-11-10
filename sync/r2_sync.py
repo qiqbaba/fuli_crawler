@@ -7,7 +7,7 @@
 1. 多线程并发下载与智能断点续传:
    - 目录并行扫描: 自动按年份前缀 (pdf/2024/、pdf/2025/ 等) 开启多线程并行检索清单，极大加速海量对象列举过程。
    - 智能断点续传: 默认开启 --resume，下载前比对本地文件与云端文件大小，自动跳过已完整下载的文件，节省带宽与时间。
-   - 实时进度监控: 独立后台监控线程实时输出已下载/跳过/失败数、传输速率 (文件数/秒 与 MB/s) 及动态预估剩余时间 (ETA)。
+   - 实时进度监控: 独立后台监控线程按采样窗口输出已下载/跳过/失败数、实时传输速率 (文件数/秒 与 MB/s) 及动态预估剩余时间 (ETA)。
    - 自定义并发与路径: 支持通过 --workers 调节下载并发数（默认 30 并发），支持通过 --output 指定本地存储目标路径。
 
 2. 本地副本比对与安全批量删除:
@@ -52,7 +52,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from config import R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_ENDPOINT_URL
+from config import R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME, R2_ENDPOINT_URL, PDF_BASE_DIR
 from utils import setup_console_utf8
 
 
@@ -149,12 +149,20 @@ def list_all_pdfs(client, prefix="pdf/", max_keys=None):
 
 
 def format_size(size_bytes):
-    """格式化文件大小"""
-    if size_bytes > 1024 * 1024:
-        return f"{size_bytes / (1024 * 1024):.1f} MB"
-    elif size_bytes > 1024:
-        return f"{size_bytes / 1024:.0f} KB"
-    return f"{size_bytes} B"
+    """按二进制单位格式化文件体积 (B / KiB / MiB / GiB / TiB)"""
+    for unit, factor in (("TiB", 1024 ** 4), ("GiB", 1024 ** 3),
+                         ("MiB", 1024 ** 2), ("KiB", 1024)):
+        if size_bytes >= factor:
+            return f"{size_bytes / factor:.1f} {unit}"
+    return f"{int(size_bytes)} B"
+
+
+def format_rate(bytes_per_sec):
+    """按 SI 十进制单位格式化传输速率 (B/s / kB/s / MB/s / GB/s)"""
+    for unit, factor in (("GB/s", 1e9), ("MB/s", 1e6), ("kB/s", 1e3)):
+        if bytes_per_sec >= factor:
+            return f"{bytes_per_sec / factor:.1f} {unit}"
+    return f"{bytes_per_sec:.0f} B/s"
 
 
 def format_eta(seconds):
@@ -190,6 +198,9 @@ def format_duration(seconds):
 _counter_lock = threading.Lock()
 _counter = {"success": 0, "skipped": 0, "failed": 0, "total_bytes": 0, "done": 0}
 
+_REPORT_INTERVAL = 5.0   # 进度采样窗口 (秒)
+_RATE_SMOOTHING = 0.5    # 实时速率 EMA 权重，越大越贴近最新窗口
+
 
 def _download_one(pdf, output_dir, resume):
     """下载单个文件"""
@@ -209,11 +220,16 @@ def _download_one(pdf, output_dir, resume):
     client = _get_thread_client()
     try:
         client.download_file(R2_BUCKET_NAME, key, local_path)
+        # 以实际落盘字节数统计吞吐，避免云端元数据与实际写入不一致
+        try:
+            written = os.path.getsize(local_path)
+        except OSError:
+            written = pdf["size"]
         with _counter_lock:
             _counter["success"] += 1
-            _counter["total_bytes"] += pdf["size"]
+            _counter["total_bytes"] += written
             _counter["done"] += 1
-        return "ok", relative_path, pdf["size"]
+        return "ok", relative_path, written
     except ClientError as e:
         with _counter_lock:
             _counter["failed"] += 1
@@ -222,33 +238,63 @@ def _download_one(pdf, output_dir, resume):
 
 
 def _progress_reporter(total, stop_event, start_time):
-    """后台进度报告"""
+    """后台进度报告: 按采样窗口增量计算实时速率，速度口径统一为成功下载的文件"""
+    last_time = start_time
+    last_done = 0
+    last_success = 0
+    last_bytes = 0
+    rate_files = 0.0       # 实时下载速率 (成功文件数/秒)
+    rate_bytes = 0.0       # 实时有效吞吐 (字节/秒)
+    rate_processed = 0.0   # 实时处理速率 (含跳过/失败，仅用于 ETA)
+    has_rate = False
+
     while not stop_event.is_set():
+        if stop_event.wait(_REPORT_INTERVAL):
+            break
+
+        now = time.time()
+        dt = now - last_time
         with _counter_lock:
             done = _counter["done"]
             s = _counter["success"]
             sk = _counter["skipped"]
             f = _counter["failed"]
             tb = _counter["total_bytes"]
+
+        delta_done = max(done - last_done, 0)
+        delta_success = max(s - last_success, 0)
+        delta_bytes = max(tb - last_bytes, 0)
+        last_time, last_done, last_success, last_bytes = now, done, s, tb
+
+        # 只用本窗口新增量，不再用全程累计平均；EMA 平滑抑制单窗口抖动，
+        # 无新增完成时按 0 参与平滑，使停滞也能如实反映为速率衰减
+        if dt > 0 and (delta_done > 0 or has_rate):
+            inst_files = delta_success / dt
+            inst_bytes = delta_bytes / dt
+            inst_processed = delta_done / dt
+            if not has_rate:
+                rate_files, rate_bytes, rate_processed = inst_files, inst_bytes, inst_processed
+                has_rate = True
+            else:
+                a = _RATE_SMOOTHING
+                rate_files = a * inst_files + (1 - a) * rate_files
+                rate_bytes = a * inst_bytes + (1 - a) * rate_bytes
+                rate_processed = a * inst_processed + (1 - a) * rate_processed
+
         if done >= total:
             break
 
-        elapsed = time.time() - start_time
         pct = done / total * 100
-
-        if elapsed > 0 and done > 0:
-            rate_files = done / elapsed
-            rate_bytes = tb / elapsed
-            remaining_files = total - done
-            eta_secs = remaining_files / rate_files if rate_files > 0 else 0
-            speed_str = f"{rate_files:.1f} 个/秒 ({format_size(rate_bytes)}/s)"
+        if has_rate:
+            speed_str = f"{rate_files:.1f} 个/秒 ({format_rate(rate_bytes)})"
+            # 剩余文件中可能包含会被快速跳过/失败的对象，故 ETA 用实际处理速率
+            eta_secs = (total - done) / rate_processed if rate_processed > 0 else 0
             eta_str = format_eta(eta_secs)
         else:
             speed_str = "计算中..."
             eta_str = "计算中..."
 
         print(f"  [{done}/{total}] ✅ {s} | ⏭ {sk} | ❌ {f} ({pct:.0f}%) | 速度: {speed_str} | 预计剩余: {eta_str}")
-        stop_event.wait(10)
 
     with _counter_lock:
         s = _counter["success"]
@@ -395,6 +441,8 @@ def delete_all_objects(client, objects, dry_run=False, max_workers=10):
     last_reported = 0
     report_interval = 5000
     start_time = time.time()
+    last_report_time = start_time
+    last_report_count = 0
 
     workers = min(max_workers, max(1, len(batches)))
     print(f"[*] 开始多线程批量删除 ({len(batches)} 个批次, 并发线程数: {workers})...")
@@ -413,8 +461,11 @@ def delete_all_objects(client, objects, dry_run=False, max_workers=10):
             done_count += b_len
             if (done_count // report_interval > last_reported // report_interval) or (done_count == total):
                 pct = done_count / total * 100
-                elapsed = time.time() - start_time
-                rate = done_count / elapsed if elapsed > 0 else 0
+                now = time.time()
+                window = now - last_report_time
+                # 仅统计距上次上报这段窗口内的删除量，避免全程平均掩盖实时速率
+                rate = (done_count - last_report_count) / window if window > 0 else 0
+                last_report_time, last_report_count = now, done_count
                 remaining = total - done_count
                 eta = remaining / rate if rate > 0 else 0
                 eta_str = format_eta(eta) if (remaining > 0 and eta > 0) else "0秒"
@@ -425,8 +476,40 @@ def delete_all_objects(client, objects, dry_run=False, max_workers=10):
     return deleted, failed
 
 
-def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, show_details=True, extra_search_dirs=None):
-    """执行删除流程"""
+def classify_delete_candidates(delete_candidates, output_dir, extra_search_dirs=None):
+    """按本地是否存在有效副本，把待删除对象拆分为 (local_have, local_missing)。
+
+    CLI 删除流程与 Web 预检交互共用同一份比对逻辑，避免两处判定不一致。
+    """
+    local_have = []
+    local_missing = []
+    search_dirs = [output_dir]
+    if extra_search_dirs:
+        search_dirs.extend(extra_search_dirs)
+
+    for obj in delete_candidates:
+        relative_path = _strip_pdf_prefix(obj["key"])
+        found_local = False
+        for sd in search_dirs:
+            local_path = os.path.join(sd, relative_path)
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+                found_local = True
+                break
+        if found_local:
+            local_have.append(obj)
+        else:
+            local_missing.append(obj)
+
+    return local_have, local_missing
+
+
+def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args,
+                    show_details=True, extra_search_dirs=None, missing_decision=None):
+    """执行删除流程。
+
+    missing_decision: Web 端传入的交互决策 (True=删除本地无副本文件 / False=跳过)。
+    非 None 时完全跳过终端 input()，CLI 调用不传该参数时保持原交互式行为。
+    """
     flow_start_time = time.time()
     total_size = sum(obj["size"] for obj in delete_candidates)
 
@@ -441,25 +524,7 @@ def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, sho
         print(f"\n[*] 模拟运行完成，共 {len(delete_candidates)} 个文件将被删除")
         return
 
-    local_have = []
-    local_missing = []
-    search_dirs = [output_dir]
-    if extra_search_dirs:
-        search_dirs.extend(extra_search_dirs)
-
-    for obj in delete_candidates:
-        key = obj["key"]
-        relative_path = _strip_pdf_prefix(key)
-        found_local = False
-        for sd in search_dirs:
-            local_path = os.path.join(sd, relative_path)
-            if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
-                found_local = True
-                break
-        if found_local:
-            local_have.append(obj)
-        else:
-            local_missing.append(obj)
+    local_have, local_missing = classify_delete_candidates(delete_candidates, output_dir, extra_search_dirs)
 
     if local_have:
         print(f"\n[*] 检测到 {len(local_have)} 个文件在本地已有副本，自动从 R2 删除...")
@@ -486,7 +551,12 @@ def run_delete_flow(client, output_dir, delete_candidates, del_prefix, args, sho
         print(f"{'=' * 50}")
 
         should_delete_missing = False
-        if args.delete_force:
+        if missing_decision is not None:
+            # Web 端已在页面上完成 y/N 选择，这里直接执行决策，绝不阻塞等待终端输入
+            should_delete_missing = bool(missing_decision)
+            action = "删除" if should_delete_missing else "跳过"
+            print(f"\n[*] 已按网页交互决策{action} {len(local_missing)} 个本地无副本的文件")
+        elif args.delete_force:
             should_delete_missing = True
         else:
             try:
@@ -533,7 +603,7 @@ def main():
     script_start_time = time.time()
     parser = argparse.ArgumentParser(description="Cloudflare R2 对象存储数据同步与管理工具")
     parser.add_argument("--output", "-o", default=None,
-                        help="本地输出目录 (默认: 项目根目录下的 pdf/)")
+                        help="本地输出目录 (默认: config.PDF_BASE_DIR，Windows 下为 E:\\hide\\fuli_pdf)")
     parser.add_argument("--year", "-y", default=None,
                         help="只操作指定年份 (如 2025)")
     parser.add_argument("--max", "-m", type=int, default=None,
@@ -556,7 +626,7 @@ def main():
                         help="仅执行删除操作，不下载")
     args = parser.parse_args()
 
-    pdf_dir = os.path.join(PROJECT_ROOT, "pdf")
+    pdf_dir = PDF_BASE_DIR
     output_dir = args.output if args.output else pdf_dir
 
     if not args.delete_only and not args.delete:

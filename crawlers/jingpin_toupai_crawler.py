@@ -54,42 +54,8 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
         # 尝试从本地缓存加载之前发现的最新域名
         self._load_domains_from_cache()
 
-        from utils.pdf_generator import PDFRenderConfig
-        self.pdf_config = PDFRenderConfig(
-            emulate_media="screen",
-            ad_selectors=[
-                'div[style*="height:60px"]', 
-                'div[style*="height:55px"]', 
-                'div[style*="height:70px"]',
-                '#bottom_float',
-                '.layui-layer',
-                '.layui-layer-shade',
-                '[id*="layui-layer"]',
-                '.modal',
-                '.modal-backdrop'
-            ],
-            ad_block_js="""() => {
-                document.querySelectorAll('iframe').forEach(iframe => iframe.remove());
-                if (document.body) document.body.style.overflow = 'auto';
-                if (document.documentElement) document.documentElement.style.overflow = 'auto';
-            }""",
-            ad_url_patterns=[
-                # 通用广告联盟/统计
-                r'(?:doubleclick|googleads|googlesyndication|google-analytics)\.com',
-                r'(?:adservice|pagead2|partnerads)\.googlesyndication',
-                r'(?:cas\.pm|syndication|adsystem)\.com',
-                r'(?:googleadservices|googletagmanager)\.com',
-                r'\.css\?ver=.*&(?:ad|ads|banner)',
-                # 弹窗/浮层广告
-                r'(?:popup|pop-under|popunder)',
-                r'(?:layer|float)_?(?:ad|adv|ads)',
-                r'/ad(?:s|sense|unit|server|frame|script)\.',
-                r'(?:s\d+\.cnzz|cnzz\.com|h5\.cnzz)',
-                r'(?:hm\.baidu|posbaidu|cpro\.baidu)',
-                r'(?:tanx|alimama|mmstat)\.com',
-                r'(?:qzs\.qq|qq\.com)/ad',
-            ]
-        )
+        from utils.pdf_generator import build_pdf_render_config
+        self.pdf_config = build_pdf_render_config("jingpin_toupai")
 
     # _build_headers 已提取到 BaseCrawler 基类中
 

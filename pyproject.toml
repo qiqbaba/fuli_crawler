@@ -20,6 +20,8 @@ dependencies = [
     "streamlit",
     "pandas",
     "pymupdf",
+    "fastapi>=0.162.2",
+    "uvicorn>=0.53.0",
 ]
 
 [tool.uv]

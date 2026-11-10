@@ -661,6 +661,47 @@ def render_tab_supabase_sync():
 # 3. 面板三：Cloudflare R2 对象存储 PDF 管理 (sync/r2_sync.py)
 # ===================================================================
 
+@contextlib.contextmanager
+def web_input_guard(default_answer="n"):
+    """Web 兜底：拦截底层脚本残留的 input()，按安全默认值应答，避免阻塞 Streamlit 脚本。"""
+    import builtins
+
+    original_input = builtins.input
+
+    def _auto_answer(prompt=""):
+        print(f"[*] Web 交互兜底：终端提示「{str(prompt).strip()}」已按 '{default_answer}' 自动应答")
+        return default_answer
+
+    builtins.input = _auto_answer
+    try:
+        yield
+    finally:
+        builtins.input = original_input
+
+
+def call_web_delete_flow(client, output_dir, candidates, prefix, *, dry_run=False,
+                         delete_force=False, missing_decision, show_details=True,
+                         extra_search_dirs=None):
+    """Web 端统一调用 R2 删除流程：显式携带网页交互决策，全程屏蔽终端 input()。"""
+    import importlib
+    import sync.r2_sync
+    importlib.reload(sync.r2_sync)
+    from sync.r2_sync import run_delete_flow
+
+    args_mock = argparse.Namespace(dry_run=dry_run, delete_force=delete_force)
+    with web_input_guard("n"):
+        run_delete_flow(
+            client,
+            output_dir=output_dir,
+            delete_candidates=candidates,
+            del_prefix=prefix,
+            args=args_mock,
+            show_details=show_details,
+            extra_search_dirs=extra_search_dirs,
+            missing_decision=missing_decision,
+        )
+
+
 def render_tab_r2_sync():
     st.markdown(T("#### Cloudflare R2 对象存储 PDF 管理与生命周期 (r2_sync.py)"))
     st.info(T("Cloudflare R2 对象存储与本地磁盘之间 PDF 的并发下载、断点续传与本地副本智能安全比对清理。"))
@@ -686,12 +727,23 @@ def render_tab_r2_sync():
 
         c4, c5 = st.columns([3, 1], vertical_alignment="bottom")
         with c4:
-            default_out = os.path.join(PROJECT_ROOT, "pdf")
+            default_out = PDF_BASE_DIR
             dl_output = st.text_input(T("本地保存路径"), value=default_out, key="r2_dl_output")
         with c5:
             dl_resume = st.checkbox(T("启用断点续传"), value=True, key="r2_dl_resume", help=T("比对本地已有文件大小，完全一致则自动跳过"))
 
         dl_delete_after = st.checkbox(T("下载完成后安全清理云端已有本地副本的文件"), value=False, key="r2_dl_del_after")
+
+        # 下载耗时可能很长，删除流程中的 y/N 询问改为启动前在网页上预先选择
+        dl_missing_policy = T("跳过（等同回答 N，推荐）")
+        if dl_delete_after:
+            dl_missing_policy = st.radio(
+                T("若检测到本地无副本的云端文件"),
+                [T("跳过（等同回答 N，推荐）"), T("一并删除（等同回答 y）")],
+                horizontal=True,
+                key="r2_dl_missing_policy",
+                help=T("在网页上预先决定删除流程的 y/N 询问，执行时不会再等待终端输入")
+            )
 
         btn_dl = st.button(T("开始执行 R2 并发下载"), type="primary")
 
@@ -704,7 +756,7 @@ def render_tab_r2_sync():
                 import importlib
                 import sync.r2_sync
                 importlib.reload(sync.r2_sync)
-                from sync.r2_sync import get_r2_client, list_all_pdfs, download_all_pdfs, list_all_objects, run_delete_flow
+                from sync.r2_sync import get_r2_client, list_all_pdfs, download_all_pdfs
                 
                 selected_year = None if dl_year == "全部年份" else dl_year
                 prefix = f"pdf/{selected_year}/" if selected_year else "pdf/"
@@ -724,8 +776,14 @@ def render_tab_r2_sync():
 
                     if dl_delete_after and pdfs:
                         print("\n[*] 正在执行下载后联动删除流程...")
-                        args_mock = argparse.Namespace(dry_run=False, delete_force=False)
-                        run_delete_flow(client, out_dir, pdfs, prefix, args_mock, show_details=False)
+                        call_web_delete_flow(
+                            client,
+                            output_dir=out_dir,
+                            candidates=pdfs,
+                            prefix=prefix,
+                            missing_decision=("一并删除" in dl_missing_policy),
+                            show_details=False,
+                        )
 
                 except Exception as e:
                     print(f"[-] 下载过程中断异常: {e}")
@@ -753,13 +811,13 @@ def render_tab_r2_sync():
 
     # ---------------- 模式 2: 清理 R2 云端文件 ----------------
     else:
-        st.warning(T("安全保护机制：系统会自动比对本地磁盘目录，仅自动清理本地已有有效副本的文件。若检测到本地无副本的文件将强制保护或要求人工二次确认。"))
+        st.warning(T("安全保护机制：先只读预检并比对本地副本，网页会列出本地无副本的文件清单，由你在页面点选「跳过 / 仍删除」后才会执行清理，全程无需终端输入。"))
 
         c1, c2 = st.columns([2, 2])
         with c1:
             del_prefix = st.text_input(T("待清理的 R2 前缀 (如 pdf/2024/ 或 pdf/)"), value="pdf/", key="r2_del_prefix")
         with c2:
-            local_check_dir = st.text_input(T("本地比对目录 (用于检测是否存在副本)"), value=os.path.join(PROJECT_ROOT, "pdf"), key="r2_local_check_dir")
+            local_check_dir = st.text_input(T("本地比对目录 (用于检测是否存在副本)"), value=PDF_BASE_DIR, key="r2_local_check_dir")
 
         # 保证互斥联动：初始化与状态回调（勾选一个自动取消另一个）
         if "r2_del_dry_run" not in st.session_state:
@@ -792,45 +850,108 @@ def render_tab_r2_sync():
                 T("删除本地无副本的孤立文件 (谨慎)"),
                 key="r2_del_force",
                 on_change=_on_r2_del_force_change,
-                help=T("勾选将自动切换为正式清理（自动取消模拟预览），并连同本地无备份的云端孤立文件一并清理；未勾选时将强制保护本地无副本的文件。（与「仅模拟预览」互斥联动）")
+                help=T("勾选将自动切换为正式清理（自动取消模拟预览），并跳过网页二次确认、直接连同本地无副本的云端孤立文件一并清理；未勾选时会在预检后由网页交互确认。（与「仅模拟预览」互斥联动）")
             )
 
         btn_del = st.button(T("执行 R2 云端文件清理"), type="primary")
+        st.caption(T("点击后先进行只读预检，列出本地无副本的文件清单；在下方网页确认区做出选择后才会真正删除，全程无需终端输入。"))
 
-        if btn_del:
+        pending = st.session_state.get("r2_cleanup_pending")
+        choice = st.session_state.pop("r2_cleanup_choice", None)
+
+        def _set_cleanup_choice(value):
+            st.session_state["r2_cleanup_choice"] = value
+
+        def _render_cleanup_confirm(p):
+            st.markdown(T("##### 预检结果 · 请在网页上确认处理方式"))
+            m_cols = st.columns(3)
+            m_cols[0].metric(T("候选对象"), f"{len(p['candidates']):,} 个")
+            m_cols[1].metric(T("本地已有副本"), f"{p['have_count']:,} 个")
+            m_cols[2].metric(T("本地无副本"), f"{p['missing_count']:,} 个")
+
+            if p["missing_count"]:
+                st.warning(T(
+                    f"检测到 {p['missing_count']} 个文件在本地没有副本（共 {format_bytes_human(p['missing_size'])}）。"
+                    "这些是云端孤本，删除后无法恢复，请逐项核对后再选择。"
+                ))
+                preview = p["missing_preview"][:200]
+                st.dataframe(pd.DataFrame(preview), use_container_width=True, hide_index=True)
+                if len(p["missing_preview"]) > len(preview):
+                    st.caption(T(f"仅展示前 200 条，共 {len(p['missing_preview'])} 个无副本文件"))
+            else:
+                st.success(T("所有候选对象在本地均有有效副本，可安全清理。"))
+
+            if p["dry_run"]:
+                st.info(T("当前为模拟预览 (dry-run)：确认后只输出待删除清单，不会真正删除。"))
+
+            b_cols = st.columns([1.4, 1.4, 0.8])
+            with b_cols[0]:
+                st.button(
+                    T("跳过无副本文件，仅清理有副本的"),
+                    type="primary",
+                    use_container_width=True,
+                    key="r2_cleanup_btn_skip",
+                    on_click=_set_cleanup_choice,
+                    args=("skip",),
+                    help=T("等同于终端输入 N，本地无副本的文件会被保留")
+                )
+            with b_cols[1]:
+                need_risky = p["missing_count"] > 0 and not p["dry_run"] and not p["force"]
+                risky_ok = True
+                if need_risky:
+                    risky_ok = st.checkbox(
+                        T("我已知晓风险，确认删除这些无副本文件"),
+                        key=f"r2_cleanup_risky_{p['token']}"
+                    )
+                st.button(
+                    T("连同无副本文件一并删除"),
+                    use_container_width=True,
+                    key="r2_cleanup_btn_delete",
+                    disabled=(p["dry_run"] or p["missing_count"] == 0 or not risky_ok),
+                    on_click=_set_cleanup_choice,
+                    args=("delete",),
+                    help=T("等同于终端输入 y")
+                )
+            with b_cols[2]:
+                st.button(
+                    T("取消"),
+                    use_container_width=True,
+                    key="r2_cleanup_btn_cancel",
+                    on_click=_set_cleanup_choice,
+                    args=("cancel",)
+                )
+
+        # ---- 阶段 2：用户在网页上做出选择后，按该选择执行清理 ----
+        if pending and choice == "cancel":
+            st.session_state.pop("r2_cleanup_pending", None)
+            st.info(T("已取消本次清理，未删除任何云端文件。"))
+
+        elif pending and choice in ("skip", "delete"):
             with live_sync_status(
-                running_label=T("正在扫描 R2 对象并比对本地物理文件..."),
+                running_label=T("正在按网页确认结果执行 R2 云端文件清理..."),
                 complete_label=T("R2 文件清理完成"),
                 error_label=T("R2 文件清理中断或异常")
             ) as runner:
-                import importlib
-                import sync.r2_sync
-                importlib.reload(sync.r2_sync)
-                from sync.r2_sync import get_r2_client, list_all_objects, run_delete_flow
-
+                from sync.r2_sync import get_r2_client
                 try:
                     client = get_r2_client()
-                    p = del_prefix.strip()
-                    print(f"[*] 正在扫描前缀 '{p}' 下的全部对象...")
-                    cands = list_all_objects(client, prefix=p)
-                    print(f"[+] 找到 {len(cands)} 个候选对象")
-
-                    if cands:
-                        args_mock = argparse.Namespace(dry_run=del_dry_run, delete_force=del_force)
-                        run_delete_flow(
-                            client,
-                            output_dir=local_check_dir.strip(),
-                            delete_candidates=cands,
-                            del_prefix=p,
-                            args=args_mock,
-                            show_details=False,
-                            extra_search_dirs=[os.path.join(PROJECT_ROOT, "pdf")]
-                        )
+                    print(f"[*] 基于预检清单执行（候选 {len(pending['candidates'])} 个，前缀 '{pending['prefix']}'）...")
+                    call_web_delete_flow(
+                        client,
+                        output_dir=pending["output_dir"],
+                        candidates=pending["candidates"],
+                        prefix=pending["prefix"],
+                        dry_run=pending["dry_run"],
+                        delete_force=pending["force"],
+                        missing_decision=(choice == "delete"),
+                        show_details=True,
+                        extra_search_dirs=[PDF_BASE_DIR],
+                    )
                 except Exception as e:
                     print(f"[-] 清理执行异常: {e}")
 
+            st.session_state.pop("r2_cleanup_pending", None)
             raw_text = runner.get_text()
-            dur = runner.get_duration()
             metrics = {}
 
             m_tot = re.search(r'找到\s*(\d+)\s*个文件', raw_text)
@@ -843,9 +964,72 @@ def render_tab_r2_sync():
                 metrics["成功删除"] = f"{int(m_ok.group(1)):,} 个"
             if m_fail:
                 metrics["删除失败"] = f"{int(m_fail.group(1)):,} 个"
-            metrics["总耗时"] = f"{dur:.2f} 秒"
+            metrics["总耗时"] = f"{runner.get_duration():.2f} 秒"
 
-            render_sync_result(raw_text, default_label="R2 文件清理完成", custom_metrics=metrics)
+            default_lbl = "R2 文件清理模拟预览完成" if pending["dry_run"] else "R2 文件清理完成"
+            render_sync_result(raw_text, default_label=default_lbl, custom_metrics=metrics)
+
+        # ---- 阶段 1：只读预检，扫描 R2 并比对本地副本，不删除任何对象 ----
+        elif btn_del:
+            st.session_state.pop("r2_cleanup_pending", None)
+            with live_sync_status(
+                running_label=T("正在扫描 R2 对象并比对本地物理文件（只读预检）..."),
+                complete_label=T("R2 清理预检完成"),
+                error_label=T("R2 清理预检中断或异常")
+            ) as runner:
+                import importlib
+                import sync.r2_sync
+                importlib.reload(sync.r2_sync)
+                from sync.r2_sync import get_r2_client, list_all_objects, classify_delete_candidates
+
+                try:
+                    client = get_r2_client()
+                    p = del_prefix.strip()
+                    out_dir = local_check_dir.strip()
+                    print(f"[*] 正在扫描前缀 '{p}' 下的全部对象...")
+                    # 只保留网页确认与删除流程需要的字段，避免把 datetime 等对象存入 session_state
+                    cands = [
+                        {"key": o["key"], "size": o.get("size", 0)}
+                        for o in list_all_objects(client, prefix=p)
+                    ]
+                    print(f"[+] 找到 {len(cands)} 个候选对象")
+
+                    if cands:
+                        have, missing = classify_delete_candidates(
+                            cands, out_dir, extra_search_dirs=[PDF_BASE_DIR]
+                        )
+                        print(f"[*] 本地已有副本: {len(have)} 个（可安全清理）")
+                        print(f"[*] 本地无副本: {len(missing)} 个（需在网页上确认处理方式）")
+                        st.session_state["r2_cleanup_pending"] = {
+                            "prefix": p,
+                            "output_dir": out_dir,
+                            "candidates": cands,
+                            "have_count": len(have),
+                            "missing_count": len(missing),
+                            "missing_size": sum(o["size"] for o in missing),
+                            "missing_preview": [
+                                {"R2 文件": o["key"], "大小": format_bytes_human(o["size"])}
+                                for o in missing
+                            ],
+                            "dry_run": bool(del_dry_run),
+                            "force": bool(del_force),
+                            "token": int(time.time() * 1000),
+                        }
+                        print("[*] 预检完成，本次尚未删除任何文件，请在下方网页确认区选择处理方式")
+                    else:
+                        print("[*] 没有需要清理的对象")
+                except Exception as e:
+                    print(f"[-] 预检异常: {e}")
+
+            with st.expander(T("查看预检日志"), expanded=False):
+                st.code(clean_sync_log(runner.get_text()), language="text")
+
+            if st.session_state.get("r2_cleanup_pending"):
+                _render_cleanup_confirm(st.session_state["r2_cleanup_pending"])
+
+        # ---- 后续 rerun（如勾选风险确认复选框）时保持确认区可见 ----
+        elif pending:
+            _render_cleanup_confirm(pending)
 
 
 # ===================================================================

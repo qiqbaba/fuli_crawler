@@ -143,6 +143,13 @@ def use_r2():
     return bool(R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY and R2_BUCKET_NAME and R2_ENDPOINT_URL)
 
 # PDF 本地存储目录
+# Windows 本地默认统一存放到 E:\hide\fuli_pdf；其它平台或 E 盘不可用时回退到项目内 pdf/
+DEFAULT_PDF_BASE_DIR = (
+    r"E:\hide\fuli_pdf"
+    if sys.platform.startswith("win") and os.path.isdir("E:\\")
+    else os.path.join(PROJECT_ROOT, "pdf")
+)
+
 def _get_default_pdf_base_dir():
     pdf_dir = os.environ.get("PDF_BASE_DIR")
     if pdf_dir:
@@ -157,14 +164,15 @@ def _get_default_pdf_base_dir():
             logger.warning("PDF_BASE_DIR 环境变量指向的目录不可用 (%s)，回退到默认路径: %s", e, pdf_dir)
     # 否则，如果是本地模式，检查默认的几个备选路径（相对于项目根目录）
     _LOCAL_PDF_PATHS = [
+        DEFAULT_PDF_BASE_DIR,
         os.path.join(PROJECT_ROOT, "..", "seju", "pdf"),
         os.path.join(PROJECT_ROOT, "..", "..", "seju", "pdf")
     ]
     for path in _LOCAL_PDF_PATHS:
         if os.path.exists(path):
             return path
-    # 默认 fallback 到当前目录下的 pdf 子目录，确保目录存在
-    default_path = os.path.join(PROJECT_ROOT, "pdf")
+    # 默认 fallback 到统一的 PDF 目录，确保目录存在
+    default_path = DEFAULT_PDF_BASE_DIR
     os.makedirs(default_path, exist_ok=True)
     return default_path
 

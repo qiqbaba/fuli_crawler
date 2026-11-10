@@ -23,29 +23,8 @@ class DatangCrawler(DecryptSiteBaseCrawler):
         # 尝试从本地缓存加载之前发现的最新域名
         self._load_domains_from_cache()
 
-        from utils.pdf_generator import PDFRenderConfig
-        self.pdf_config = PDFRenderConfig(
-            ad_block_js="""() => {
-                const breadcrumbs = document.querySelector('.breadcrumbs');
-                if (breadcrumbs) {
-                    let prev = breadcrumbs.previousElementSibling;
-                    while (prev) {
-                        if (prev.classList.contains('gs-isgood') && 
-                            !prev.textContent.includes('永久地址') && 
-                            !prev.textContent.includes('永久')) {
-                            prev.remove();
-                        }
-                        prev = prev.previousElementSibling;
-                    }
-                }
-                const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
-                adDivs.forEach(div => div.remove());
-                const bottomFloat = document.getElementById('bottom_float');
-                if (bottomFloat) {
-                    bottomFloat.remove();
-                }
-            }"""
-        )
+        from utils.pdf_generator import build_pdf_render_config
+        self.pdf_config = build_pdf_render_config("datang")
 
     def _is_valid_list_page(self, html):
         """判断 Playwright 兜底时页面是否有效"""

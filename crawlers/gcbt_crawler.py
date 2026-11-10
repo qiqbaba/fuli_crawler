@@ -27,25 +27,8 @@ class GcbtCrawler(PlaywrightBaseCrawler):
         self.max_consecutive_existing = 20
         self.max_consecutive_duplicate_pages = 3
 
-        from utils.pdf_generator import PDFRenderConfig
-        self.pdf_config = PDFRenderConfig(
-            need_img_proxy=False,
-            wait_until="domcontentloaded",
-            pre_access_url=None,
-            referer="https://gcbt.net/",
-            need_lazy_scroll=True,
-            emulate_media="screen",
-            ad_selectors=[
-                '.layui-layer', '.layui-layer-shade',
-                '.modal', '.modal-backdrop',
-                '.swal-overlay', '.swal-modal', '.swal2-container',
-                '[id*="layui-layer"]'
-            ],
-            ad_block_js="""() => {
-                if (document.body) document.body.style.overflow = 'auto';
-                if (document.documentElement) document.documentElement.style.overflow = 'auto';
-            }"""
-        )
+        from utils.pdf_generator import build_pdf_render_config
+        self.pdf_config = build_pdf_render_config("gcbt")
 
 
     def get_list_url(self, page_num):

@@ -7,6 +7,93 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+# ---------------------------------------------------------------------------
+# 通用广告过滤规则：在保存 PDF 前注入执行，所有站点共享同一份
+# ---------------------------------------------------------------------------
+
+# 传统广告联盟 / 统计 / 弹窗脚本：在 goto 之前注册路由，从网络层阻止下载
+COMMON_AD_URL_PATTERNS = [
+    r'(?:doubleclick|googleads|googlesyndication|google-analytics)\.com',
+    r'(?:adservice|pagead2|partnerads)\.googlesyndication',
+    r'(?:cas\.pm|syndication|adsystem)\.com',
+    r'(?:googleadservices|googletagmanager)\.com',
+    r'\.css\?ver=.*&(?:ad|ads|banner)',
+    r'(?:popup|pop-under|popunder)',
+    r'(?:layer|float)_?(?:ad|adv|ads)',
+    r'/ad(?:s|sense|unit|server|frame|script)\.',
+    r'(?:s\d+\.cnzz|cnzz\.com|h5\.cnzz)',
+    r'(?:hm\.baidu|posbaidu|cpro\.baidu)',
+    r'(?:tanx|alimama|mmstat)\.com',
+    r'(?:qzs\.qq|qq\.com)/ad',
+]
+
+# 新型博彩广告：页面顶部的全宽 <a><img> 横幅，旧的固定高度选择器无法匹配。
+# 同一份规则同时用于网络层 URL 拦截和 DOM 层链接特征识别，避免两套规则不同步。
+GAMBLING_AD_URL_PATTERNS = [
+    r'\bok\.\d+\.cc\b',
+    r'\b\d+\.cc:\d+/88\.html',
+    r'\b(?:607|5538|3641|40|20|079|2080489|4080387|6077394|553880604)\.cc\b',
+    r'\b(?:5538|3641)\.com\b',
+    r'\b9929\.tv\b',
+    r'hot\d+\.shop',
+    r'rydsbj\.com/ry\d+',
+    r'n8p9zk\.com',
+    r'uidrvyc\.cn',
+    r'ebjg6ty6\.cyou',
+    r'gtjinshangshoppingcenter',
+    r'(?:\?|&)channelCode=(?:med|mfd)',
+]
+
+AD_URL_PATTERNS = COMMON_AD_URL_PATTERNS + GAMBLING_AD_URL_PATTERNS
+
+
+def _js_regex_array(patterns):
+    """把 Python 正则列表转换成 JS 正则字面量数组源码（供注入脚本使用）"""
+    return "[" + ", ".join("/" + p.replace("/", r"\/") + "/i" for p in patterns) + "]"
+
+
+_GAMBLING_AD_BLOCK_JS_BODY = """
+    // 新型博彩广告：<a><img> 全宽横幅，按链接 / 图片 URL 特征识别并移除
+    const adHostPatterns = __AD_PATTERNS__;
+    const isAdUrl = (url) => !!url && adHostPatterns.some(p => p.test(url));
+
+    // 1. 指向博彩站点的链接；含图片横幅时连带移除只包了它的容器
+    document.querySelectorAll('a[href]').forEach(a => {
+        if (!isAdUrl(a.href)) return;
+        const parent = a.parentElement;
+        if (a.querySelector('img') && parent && parent.children.length === 1) {
+            parent.remove();
+        } else {
+            a.remove();
+        }
+    });
+
+    // 2. 广告图片本身（含懒加载占位属性）
+    document.querySelectorAll('img').forEach(img => {
+        const src = img.getAttribute('src') || '';
+        const lazy = img.getAttribute('data-src') || img.getAttribute('data-original') || '';
+        if (!isAdUrl(src) && !isAdUrl(lazy)) return;
+        const link = img.closest('a');
+        (link || img).remove();
+    });
+
+    // 3. 解除浮层广告常用的滚动锁定
+    if (document.body) document.body.style.overflow = 'auto';
+    if (document.documentElement) document.documentElement.style.overflow = 'auto';
+""".replace("__AD_PATTERNS__", _js_regex_array(GAMBLING_AD_URL_PATTERNS))
+
+
+def _merge_ad_block_js(site_js=None):
+    """把通用广告过滤 JS 与站点自定义 JS 合并成一个箭头函数"""
+    body = _GAMBLING_AD_BLOCK_JS_BODY
+    if site_js:
+        s = site_js.strip()
+        if "=>" in s and "{" in s and s.rstrip().endswith("}"):
+            s = s[s.index("{") + 1:s.rindex("}")]
+        body += "\n" + s
+    return "() => {\n" + body + "\n}"
+
+
 class PDFRenderConfig:
     """PDF 渲染配置类，控制每个站点在生成 PDF 时的特异化行为"""
     def __init__(self, 
@@ -20,11 +107,18 @@ class PDFRenderConfig:
                  need_img_proxy=False, 
                  referer=None, 
                  pre_access_url=None,
-                 wait_until="load"):
+                 wait_until="load",
+                 use_common_ad_block=True):
         self.ad_selectors = ad_selectors or []
-        self.ad_block_js = ad_block_js
+        # 广告 JS：通用新型博彩广告规则自动合并站点自定义规则，在保存 PDF 前执行
+        self.ad_block_js = _merge_ad_block_js(ad_block_js) if use_common_ad_block else ad_block_js
         # 广告 URL 正则模式列表——在 goto 前注册路由拦截，从网络层阻止广告资源下载
-        self.ad_url_patterns = ad_url_patterns or []
+        if use_common_ad_block:
+            self.ad_url_patterns = list(dict.fromkeys(
+                list(ad_url_patterns or []) + COMMON_AD_URL_PATTERNS + GAMBLING_AD_URL_PATTERNS
+            ))
+        else:
+            self.ad_url_patterns = ad_url_patterns or []
         self.emulate_media = emulate_media
         self.scale = scale
         # 默认使用 15mm 边距
@@ -386,3 +480,152 @@ class PDFGenerator:
             return ""
 
         return self._upload_or_return_pdf_path(local_path, publish_date, source_name)
+
+
+# ---------------------------------------------------------------------------
+# 各站点 PDF 渲染配置
+# 爬虫、fixes/backfill_missing_pdfs.py、fixes/pdf_maintenance.py 共用这一份，
+# 避免同一站点的广告过滤规则在多处重复维护导致不一致。
+# ---------------------------------------------------------------------------
+
+# 共用同一套站点模板：广告容器、弹层与底飘结构一致
+TEMPLATE_SITE_SOURCES = (
+    "taose", "tanhua", "jingpin", "jingpin_toupai", "mianfei_guochan", "madou",
+)
+
+TEMPLATE_SITE_AD_SELECTORS = [
+    'div[style*="height:60px"]',
+    'div[style*="height:55px"]',
+    'div[style*="height:70px"]',
+    '#bottom_float',
+    '.bottom_float',
+    '.layui-layer',
+    '.layui-layer-shade',
+    '[id*="layui-layer"]',
+    '.modal',
+    '.modal-backdrop',
+    '.swal-overlay',
+    '.swal-modal',
+    '.swal2-container',
+]
+
+_TEMPLATE_SITE_AD_JS = r"""() => {
+    // 旧版 iframe / 固定高度广告 / 底飘
+    document.querySelectorAll('iframe').forEach(el => el.remove());
+    const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"], div[style*="height:70px"]');
+    adDivs.forEach(div => div.remove());
+    const bottomFloat = document.getElementById('bottom_float') || document.querySelector('.bottom_float');
+    if (bottomFloat) bottomFloat.remove();
+}"""
+
+_DATANG_AD_JS = r"""() => {
+    // 旧逻辑只清理 .breadcrumbs 之前的 .gs-isgood，新版布局把广告移到了下载区/页脚
+    document.querySelectorAll('.gs-isgood').forEach(el => {
+        if (!el.textContent.includes('永久')) el.remove();
+    });
+    const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:55px"]');
+    adDivs.forEach(div => div.remove());
+    const bottomFloat = document.getElementById('bottom_float');
+    if (bottomFloat) bottomFloat.remove();
+}"""
+
+_DASHEN_AD_SELECTORS = [
+    '.hf-container', '#hf-container', '.hf-link', '.hf-img',
+    '.dp-container', '#dp-container', '.dp-link', '.dp-img',
+    '.partner-grid', '.partner-links', '.site-footer', 'footer.site-footer',
+    'div[style*="height:60px"]', 'div[style*="height:140px"]', 'div[style*="height:150px"]',
+    'div[style*="height:55px"]', 'div[style*="height:70px"]', 'div[style*="height:80px"]',
+    'div[style*="height:95px"]', '#bottom_float', '.bottom_float',
+    '.layui-layer', '.layui-layer-shade', '[id*="layui-layer"]',
+    '.modal', '.modal-backdrop', '.swal-overlay', '.swal-modal', '.swal2-container',
+]
+
+_DASHEN_AD_JS = r"""() => {
+    document.querySelectorAll('iframe').forEach(el => el.remove());
+    document.querySelectorAll('.hf-container, #hf-container, .hf-link, .hf-img, .dp-container, #dp-container, .dp-link, .dp-img').forEach(el => el.remove());
+    document.querySelectorAll('.partner-grid, .partner-links').forEach(el => {
+        const card = el.closest('.info-card') || el;
+        card.remove();
+    });
+    document.querySelectorAll('.site-footer, footer.site-footer').forEach(el => el.remove());
+    const adDivs = document.querySelectorAll('div[style*="height:60px"], div[style*="height:140px"], div[style*="height:150px"], div[style*="height:55px"], div[style*="height:70px"], div[style*="height:80px"], div[style*="height:95px"]');
+    adDivs.forEach(div => div.remove());
+    const bottomFloat = document.getElementById('bottom_float') || document.querySelector('.bottom_float');
+    if (bottomFloat) bottomFloat.remove();
+    document.querySelectorAll('.layui-layer, .layui-layer-shade, [id*="layui-layer"], .modal, .modal-backdrop, .swal-overlay, .swal-modal, .swal2-container').forEach(el => el.remove());
+}"""
+
+_GCBT_AD_SELECTORS = [
+    '.layui-layer', '.layui-layer-shade',
+    '.modal', '.modal-backdrop',
+    '.swal-overlay', '.swal-modal', '.swal2-container',
+    '[id*="layui-layer"]',
+]
+
+_SEJU_AD_SELECTORS = [
+    'aside.sidebar',
+    'div.d_textbanner',
+    'form#commentform',
+    '.comt-author',
+    '.article-footer',
+    'footer.footer',
+    '.wp-block-search',
+]
+
+_SEJU_AD_JS = r"""() => {
+    // 侧边栏推广、评论区与页脚
+    document.querySelectorAll('aside.sidebar, div.d_textbanner, form#commentform, .comt-author, .article-footer, footer.footer, .wp-block-search').forEach(el => el.remove());
+    // 相关推荐区中指向外部广告站点的链接
+    const externalAdPatterns = [/ent\.unxty\.shop/i, /afengy\.app/i];
+    document.querySelectorAll('a[href]').forEach(a => {
+        if (externalAdPatterns.some(p => p.test(a.href))) a.remove();
+    });
+}"""
+
+
+def build_pdf_render_config(source):
+    """按站点标识构建 PDF 渲染配置，爬虫与维护脚本共用同一份规则"""
+    if source == "gcbt":
+        return PDFRenderConfig(
+            need_img_proxy=False,
+            wait_until="domcontentloaded",
+            pre_access_url=None,
+            referer="https://gcbt.net/",
+            need_lazy_scroll=True,
+            emulate_media="screen",
+            ad_selectors=list(_GCBT_AD_SELECTORS),
+        )
+    if source == "seju":
+        return PDFRenderConfig(
+            margin={"top": "20mm", "bottom": "20mm", "left": "20mm", "right": "20mm"},
+            need_lazy_scroll=True,
+            ad_selectors=list(_SEJU_AD_SELECTORS),
+            ad_block_js=_SEJU_AD_JS,
+        )
+    if source == "datang":
+        return PDFRenderConfig(
+            ad_selectors=list(TEMPLATE_SITE_AD_SELECTORS),
+            ad_block_js=_DATANG_AD_JS,
+        )
+    if source == "dashen":
+        return PDFRenderConfig(
+            emulate_media="screen",
+            ad_selectors=list(_DASHEN_AD_SELECTORS),
+            ad_block_js=_DASHEN_AD_JS,
+        )
+    if source in TEMPLATE_SITE_SOURCES:
+        return PDFRenderConfig(
+            emulate_media="screen",
+            ad_selectors=list(TEMPLATE_SITE_AD_SELECTORS),
+            ad_block_js=_TEMPLATE_SITE_AD_JS,
+        )
+    return PDFRenderConfig()
+
+
+def build_pdf_config_map():
+    """生成一份独立的站点配置映射，每个调用方持有自己的实例"""
+    sources = (
+        "seju", "gcbt", "madou", "datang", "dashen",
+        "jingpin", "tanhua", "taose", "mianfei_guochan", "jingpin_toupai",
+    )
+    return {s: build_pdf_render_config(s) for s in sources}

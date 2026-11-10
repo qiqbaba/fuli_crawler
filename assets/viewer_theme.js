@@ -2486,6 +2486,70 @@ setInterval(injectHeaderMetadata, 3000);
         const pDoc = (window.parent && window.parent.document) || document;
         if (!pDoc) return;
 
+        // 本脚本由 st.iframe 注入到 1x1 的隐藏 iframe 中，window 指向 iframe 而非主页面。
+        // 视口高度与定时器必须取父窗口，否则 innerHeight≈1 会让「随动滚动」判定恒成立，
+        // 每 80ms 把主页面往下拽 60px，导致用户上滑查看顶部功能卡片时被不断拉回。
+        const pWin = pDoc.defaultView || window.parent || window;
+
+        const USER_SCROLL_LOCK_MS = 10000;      // 用户主动滚动后暂停页面级自动滚动的时长
+        const FOLLOW_SCROLL_INTERVAL_MS = 1200; // 随动滚动最小间隔，避免 smooth 滚动叠加
+
+        function markUserScroll(direction) {
+            pDoc._viewerUserScrollUntil = Date.now() + USER_SCROLL_LOCK_MS;
+            // 主动向上查看历史时，本次运行周期内不再把页面向下拉回，
+            // 直到用户滚回底部或脚本运行结束（下一次运行会重置）。
+            if (direction < 0) pDoc._viewerFollowDisabled = true;
+        }
+
+        function markProgrammaticScroll() {
+            pDoc._viewerProgrammaticScrollAt = Date.now();
+        }
+
+        // 状态挂在父文档上共享：Streamlit 每次 rerun 都会重新注入本 iframe，
+        // 监听器只绑定一次，避免闭包指向已销毁 iframe 的状态变量。
+        if (!pDoc._viewerScrollGuardBound) {
+            pDoc._viewerScrollGuardBound = true;
+
+            ['wheel', 'touchmove', 'keydown'].forEach(evt => {
+                pDoc.addEventListener(evt, (e) => {
+                    let direction = 0;
+                    if (evt === 'wheel') {
+                        direction = e.deltaY < 0 ? -1 : (e.deltaY > 0 ? 1 : 0);
+                    } else if (evt === 'keydown') {
+                        const navKeys = ['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '];
+                        if (!navKeys.includes(e.key)) return;
+                        const el = e.target;
+                        const tag = (el && el.tagName || '').toLowerCase();
+                        if (tag === 'input' || tag === 'textarea' || (el && el.isContentEditable)) return;
+                        direction = ['ArrowUp', 'PageUp', 'Home'].includes(e.key) ? -1 : 1;
+                    }
+                    markUserScroll(direction);
+                }, { passive: true, capture: true });
+            });
+
+            // 覆盖鼠标拖拽滚动条的场景：只把「页面滚动位置明确上移」视作用户主动查看历史
+            let lastPageScrollTop = null;
+            pDoc.addEventListener('scroll', (e) => {
+                const t = e.target;
+                const isPageScroll = !t || t === pDoc || t === pDoc.documentElement || t === pDoc.body ||
+                    (t.dataset && (t.dataset.testid === 'stMain' || t.dataset.testid === 'stAppViewContainer'));
+                if (!isPageScroll || Date.now() - (pDoc._viewerProgrammaticScrollAt || 0) < 1500) return;
+
+                const sc = pDoc.querySelector('[data-testid="stMain"]') || pDoc.scrollingElement;
+                const cur = sc ? sc.scrollTop : 0;
+                if (lastPageScrollTop !== null && cur < lastPageScrollTop - 5) {
+                    pDoc._viewerFollowDisabled = true;
+                    pDoc._viewerUserScrollUntil = Date.now() + USER_SCROLL_LOCK_MS;
+                }
+                // 用户主动滚回页面底部时恢复日志跟随
+                if (sc && sc.scrollHeight > sc.clientHeight &&
+                    cur + sc.clientHeight >= sc.scrollHeight - 40) {
+                    pDoc._viewerFollowDisabled = false;
+                }
+                lastPageScrollTop = cur;
+            }, { passive: true, capture: true });
+        }
+
         let isAutoScrolling = false;
 
         function autoScrollConsole() {
@@ -2518,28 +2582,44 @@ setInterval(injectHeaderMetadata, 3000);
                     }
                 });
 
+                const now = Date.now();
+                // 用户正在手动浏览页面时，绝不触碰页面级滚动
+                if (now < (pDoc._viewerUserScrollUntil || 0)) return;
+
                 // 2. 外层容器不应存在滚动余量：一旦被程序化滚动，顶部 Header 会连同固定导航条
                 //    一起被推出视口，造成导航栏与功能卡片重叠，这里做一次兜底复位
                 const outerContainer = pDoc.querySelector('[data-testid="stAppViewContainer"]');
-                if (outerContainer && outerContainer.scrollTop) {
+                // 只复位小幅的程序化偏移；用户已主动滚动过位置时不再强行归零
+                if (outerContainer && outerContainer.scrollTop > 0 &&
+                    outerContainer.scrollTop <= 60 && !pDoc._viewerFollowDisabled) {
+                    markProgrammaticScroll();
                     outerContainer.scrollTop = 0;
                 }
 
                 // 3. 当 Streamlit 处于 running 状态且有展开的状态微件时，确保状态微件在视口内平滑可见
                 const isRunning = pDoc.querySelector('.stApp[data-test-script-state="running"]');
-                if (isRunning) {
-                    const expanders = pDoc.querySelectorAll('[data-testid="stExpander"]');
-                    if (expanders.length > 0) {
-                        const activeExpander = expanders[expanders.length - 1];
-                        const rect = activeExpander.getBoundingClientRect();
-                        const windowHeight = window.innerHeight || pDoc.documentElement.clientHeight;
-                        // 如果状态微件下边缘超出可视区下方，轻柔随动滚动（滚动真正的内层容器 stMain）
-                        if (rect.bottom > windowHeight - 15 && rect.top > 0) {
-                            const scrollContainer = pDoc.querySelector('[data-testid="stMain"]') || window;
-                            if (scrollContainer.scrollBy) {
-                                scrollContainer.scrollBy({ top: Math.min(rect.bottom - windowHeight + 35, 60), behavior: 'smooth' });
-                            }
-                        }
+                if (!isRunning) pDoc._viewerFollowDisabled = false;
+                if (!isRunning || pDoc._viewerFollowDisabled ||
+                    now - (pDoc._viewerLastFollowScroll || 0) < FOLLOW_SCROLL_INTERVAL_MS) return;
+
+                const expanders = pDoc.querySelectorAll('[data-testid="stExpander"]');
+                if (expanders.length === 0) return;
+
+                const activeExpander = expanders[expanders.length - 1];
+                if (!activeExpander.querySelector('[data-testid="stExpanderDetails"]')) return;
+
+                const rect = activeExpander.getBoundingClientRect();
+                const windowHeight = pWin.innerHeight || pDoc.documentElement.clientHeight;
+                // 只有状态微件下边缘确实超出主页面视口时才轻柔随动滚动
+                if (rect.bottom > windowHeight - 15 && rect.top > 0) {
+                    const scrollContainer = pDoc.querySelector('[data-testid="stMain"]') || pWin;
+                    if (scrollContainer.scrollBy) {
+                        pDoc._viewerLastFollowScroll = now;
+                        markProgrammaticScroll();
+                        scrollContainer.scrollBy({
+                            top: Math.min(rect.bottom - windowHeight + 35, 60),
+                            behavior: 'smooth'
+                        });
                     }
                 }
             } catch(e) {
@@ -2548,11 +2628,14 @@ setInterval(injectHeaderMetadata, 3000);
             }
         }
 
-        // 定时轮询：采用 macrotask 级别的 setInterval (80ms)，完全脱离 React 微任务与虚拟 DOM 周期，100% 零冲突
+        // 定时器挂在父窗口并只保留一个实例，避免 rerun 后多份 iframe 定时器互相拉扯
         if (window._syncConsoleScrollTimer) {
             clearInterval(window._syncConsoleScrollTimer);
         }
-        window._syncConsoleScrollTimer = setInterval(autoScrollConsole, 80);
+        if (pDoc._viewerConsoleScrollTimer) {
+            pWin.clearInterval(pDoc._viewerConsoleScrollTimer);
+        }
+        pDoc._viewerConsoleScrollTimer = pWin.setInterval(autoScrollConsole, 80);
     } catch(err) {}
 })();
 

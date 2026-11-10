@@ -85,9 +85,12 @@ def resolve_pdf_path(raw_path: str) -> str:
     
     # 规范化路径分隔符
     clean_rel = raw_path.replace("\\", "/").lstrip("/")
+    # 数据库历史路径常带 'pdf/' 前缀，而 PDF_BASE_DIR 本身已是 PDF 根目录，需剥离
+    stripped = clean_rel[4:] if clean_rel.startswith("pdf/") else None
     
-    # 2. 尝试从项目根目录及各常用目录解析
+    # 2. 优先从统一 PDF 目录解析，再兼容项目内历史目录
     candidates = [
+        os.path.join(PDF_BASE_DIR, stripped or clean_rel),
         os.path.join(PROJECT_ROOT, clean_rel),
         os.path.join(PDF_BASE_DIR, clean_rel),
         os.path.join(PROJECT_ROOT, "pdf", clean_rel),
@@ -95,11 +98,8 @@ def resolve_pdf_path(raw_path: str) -> str:
         os.path.join(PROJECT_ROOT, "..", clean_rel),
     ]
     
-    # 针对 raw_path 中含有 'pdf/' 开头的情况做剥离重试
-    if clean_rel.startswith("pdf/"):
-        stripped = clean_rel[4:]
+    if stripped is not None:
         candidates.extend([
-            os.path.join(PDF_BASE_DIR, stripped),
             os.path.join(PROJECT_ROOT, "pdf", stripped),
             os.path.join(PROJECT_ROOT, "..", "seju", "pdf", stripped),
         ])
@@ -1254,9 +1254,15 @@ stats = st.session_state.cached_stats
 # 全局元数据与主题初始化
 
 # 动态将数据库元数据概览注入至顶部 Header（与 Deploy 按钮在同一行平铺），并激活全局高能加载/计算状态指示器
+# 跨盘符时 os.path.relpath 会抛 ValueError，直接回退展示绝对目录
+try:
+    pdf_dir_display = os.path.relpath(PDF_BASE_DIR, PROJECT_ROOT)
+except ValueError:
+    pdf_dir_display = PDF_BASE_DIR
+
 header_meta_json = json.dumps({
     "dbName": os.path.basename(db_path),
-    "pdfDir": os.path.relpath(PDF_BASE_DIR, PROJECT_ROOT),
+    "pdfDir": pdf_dir_display,
     "total": f"{stats['total']:,}",
     "hasPdf": f"{stats['has_pdf_record']:,}",
     "orphans": f"{stats.get('orphan_count', 0):,}",
@@ -1590,7 +1596,7 @@ def load_pdf_as_base64(file_path: str, mtime: float) -> str:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
-def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0):
+def render_record_card(row: dict, card_index: int = 0):
     """渲染单条记录卡片（无外层背景框，结构清晰解耦）"""
     item_id = row.get("id")
     title = safe_text(row.get("title")) or "（无标题）"
@@ -1746,8 +1752,9 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
                             f'<img id="{img_id}" data-item-id="{item_id}" class="pdf-page-img lazy-pdf-img" src="{placeholder_pixel}" data-src="{img_url}" loading="lazy" />'
                         )
                 imgs_html = "".join(imgs_html_list)
+                # 预览区高度由 CSS 按列宽自适应（aspect-ratio: 210/297），此处不再写死 px
                 pdf_display = f'''
-                <div class="pdf-scroll-container" id="pdf_scroll_{item_id}" data-item-id="{item_id}" style="height: {iframe_height}px;">
+                <div class="pdf-scroll-container" id="pdf_scroll_{item_id}" data-item-id="{item_id}">
                     {imgs_html}
                 </div>
                 '''
@@ -1756,32 +1763,30 @@ def render_record_card(row: dict, iframe_height: int = 520, card_index: int = 0)
                 # 备用方案：若图片解析异常则走原 iframe 预览
                 base64_pdf = load_pdf_as_base64(resolved_pdf, mtime)
                 st.markdown(f'''
-                <div class="pdf-scroll-container" id="pdf_scroll_{item_id}" data-item-id="{item_id}" style="height: {iframe_height}px;">
+                <div class="pdf-scroll-container" id="pdf_scroll_{item_id}" data-item-id="{item_id}">
                     <iframe src="data:application/pdf;base64,{base64_pdf}#toolbar=0&navpanes=0" 
                             loading="lazy"
-                            width="100%" 
-                            height="{iframe_height}px" 
                             type="application/pdf"
-                            style="border: none; display: block; height: {iframe_height}px;">
+                            style="border: none; display: block; width: 100%; height: 100%;">
                     </iframe>
                 </div>
                 ''', unsafe_allow_html=True)
         except Exception:
-            # 读取失败时也展示固定高度占位容器，不用 st.error 出错误框（高度不定会打乱卡片布局）
-            st.markdown(f'''
-            <div class="pdf-empty-placeholder" style="height: {iframe_height}px;">
+            # 读取失败时也展示同尺寸占位容器，不用 st.error 出错误框（高度不定会打乱卡片布局）
+            st.markdown('''
+            <div class="pdf-empty-placeholder">
                 <div class="empty-title">PDF 读取失败</div>
             </div>
             ''', unsafe_allow_html=True)
     else:
-        # 空状态占位：高度严格与 iframe_height 统一（无论是否有本地 PDF）
+        # 空状态占位：尺寸与 PDF 预览容器完全一致（无论是否有本地 PDF）
         if raw_pdf_path:
             status_title = T("本地 PDF 文件缺失")
         else:
             status_title = T("未关联本地 PDF 快照")
 
         placeholder_html = f'''
-        <div class="pdf-empty-placeholder" style="height: {iframe_height}px;">
+        <div class="pdf-empty-placeholder">
             <div class="empty-title">{status_title}</div>
         </div>
         '''
@@ -2053,7 +2058,7 @@ with main_tab_gallery:
                 for idx, row in df.reset_index(drop=True).iterrows():
                     if idx > 0:
                         st.markdown('<div class="grid-row-divider"></div>', unsafe_allow_html=True)
-                    render_record_card(row.to_dict(), iframe_height=650, card_index=idx)
+                    render_record_card(row.to_dict(), card_index=idx)
             elif layout_mode == "三列紧凑":
                 # 三列网格画廊（行间单线分隔，列间单线分隔）
                 rows_list = df.to_dict("records")
@@ -2064,7 +2069,7 @@ with main_tab_gallery:
                     for j in range(3):
                         if i + j < len(rows_list):
                             with cols[j]:
-                                render_record_card(rows_list[i + j], iframe_height=420, card_index=i + j)
+                                render_record_card(rows_list[i + j], card_index=i + j)
             else:
                 # 默认：双列网格画廊（行间单线分隔，列间单线分隔）
                 rows_list = df.to_dict("records")
@@ -2075,7 +2080,7 @@ with main_tab_gallery:
                     for j in range(2):
                         if i + j < len(rows_list):
                             with cols[j]:
-                                render_record_card(rows_list[i + j], iframe_height=520, card_index=i + j)
+                                render_record_card(rows_list[i + j], card_index=i + j)
 
         # 底部单线分隔与翻页器
         st.markdown('<div class="grid-row-divider" style="margin: 20px 0 12px 0;"></div>', unsafe_allow_html=True)

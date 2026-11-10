@@ -1479,6 +1479,17 @@
         vertical-align: middle !important;
     }
 
+    /* PDF 预览区高度：按列宽自适应（页面为 A4，210:297 比例即一页完整可见，
+       双列/单列/三列无需各自写死像素），并限制上下限，避免三列过矮、超宽屏过高。
+       有 PDF 与无 PDF 占位符共用同一套尺寸，保证卡片高度严格一致 */
+    .pdf-scroll-container,
+    .pdf-empty-placeholder {
+        height: auto !important;
+        aspect-ratio: 210 / 297;
+        min-height: 460px;
+        max-height: 1200px;
+    }
+
     /* PDF 预览滚动容器：初始自动上滑 200px，且支持鼠标自由上下滑动查看完整内容 */
     .pdf-scroll-container {
         position: relative !important;
