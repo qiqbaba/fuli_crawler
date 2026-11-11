@@ -132,7 +132,12 @@ def create_job(tool_id: str, raw_params: Dict[str, Any]) -> Job:
         )
         _JOBS[job.id] = job
 
-    threading.Thread(target=_execute, args=(job,), daemon=True).start()
+    try:
+        threading.Thread(target=_execute, args=(job,), daemon=True).start()
+    except Exception:
+        with _GLOBAL_LOCK:
+            _JOBS.pop(job.id, None)
+        raise
     return job
 
 
@@ -171,8 +176,15 @@ def _execute(job: Job) -> None:
 
     with job.lock:
         job.proc = proc
-        job.status = "running"
+        if job.status != "cancelling":
+            job.status = "running"
         job.started_at = time.time()
+
+    if job.status == "cancelling":
+        try:
+            proc.terminate()
+        except OSError:
+            pass
 
     code = -1
     try:
@@ -183,6 +195,13 @@ def _execute(job: Job) -> None:
     except Exception as exc:
         job.error = str(exc)
         job.append(f"[任务异常] {exc}")
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        code = proc.poll() if proc.poll() is not None else -1
     finally:
         with job.lock:
             cancelled = job.status == "cancelling"

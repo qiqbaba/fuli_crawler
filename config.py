@@ -55,15 +55,21 @@ def _sanitize_dead_proxies():
 
         if dead_proxies:
             logger.warning(
-                "检测到系统/环境代理已开启但目标端口未连通 %s，自动屏蔽失效代理以启用直连",
+                "检测到系统/环境代理已开启但目标端口未连通 %s，仅屏蔽失效代理",
                 dead_proxies,
             )
-            os.environ["NO_PROXY"] = "*"
-            os.environ["no_proxy"] = "*"
+            live_proxies = {
+                k: v for k, v in proxies.items()
+                if k not in dead_proxies and k != "no"
+            }
+            if not live_proxies:
+                os.environ["NO_PROXY"] = "*"
+                os.environ["no_proxy"] = "*"
 
-            for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
-                if var in os.environ:
-                    os.environ.pop(var, None)
+            for proto, proxy_url in dead_proxies.items():
+                for var in (proto.upper(), proto.lower()):
+                    if os.environ.get(var) == proxy_url:
+                        os.environ.pop(var, None)
 
             orig_getproxies = urllib.request.getproxies
 
@@ -223,10 +229,18 @@ CRAWLER_PROXY = os.environ.get("CRAWLER_PROXY", "")
 # ========== 代理IP管理器配置 ==========
 # 是否启用自动代理管理（从免费代理源获取并轮换代理）
 ENABLE_PROXY_MANAGER = os.environ.get("ENABLE_PROXY_MANAGER", "false").lower() == "true"
+def _env_int(name: str, default: int) -> int:
+    """安全解析整型环境变量，非法值回退默认值"""
+    try:
+        return int(str(os.environ.get(name, default)).strip())
+    except (TypeError, ValueError):
+        return default
+
+
 # 代理缓存有效期（秒），默认12小时（43200秒）
-PROXY_CACHE_TTL = int(os.environ.get("PROXY_CACHE_TTL", "43200"))
+PROXY_CACHE_TTL = _env_int("PROXY_CACHE_TTL", 43200)
 # 代理验证超时时间（秒）
-PROXY_VERIFY_TIMEOUT = int(os.environ.get("PROXY_VERIFY_TIMEOUT", "10"))
+PROXY_VERIFY_TIMEOUT = _env_int("PROXY_VERIFY_TIMEOUT", 10)
 # 代理验证时是否校验 SSL 证书（默认 True，关闭存在 MITM 风险）
 PROXY_VERIFY_SSL = os.environ.get("PROXY_VERIFY_SSL", "true").lower() == "true"
 # 代理验证并发线程数（惰性求值，首次访问时根据环境变量或硬件计算）
@@ -303,10 +317,11 @@ _runtime_enable_proxy_manager = None
 def set_runtime_proxy(proxy_url, disable_proxy=False, enable_proxy_manager=None):
     """设置运行时代理参数（通常由 main.py 命令行参数指定）"""
     global _runtime_proxy_override, _runtime_disable_proxy, _runtime_enable_proxy_manager
-    # Bug 9 修复：只有当 proxy_url 不为 None 时才设置覆盖值，避免空字符串覆盖环境变量配置
-    if proxy_url is not None:
+    # 仅非空代理地址才覆盖环境变量配置
+    if proxy_url:
         _runtime_proxy_override = proxy_url
-    _runtime_disable_proxy = disable_proxy
+    if disable_proxy:
+        _runtime_disable_proxy = True
     if enable_proxy_manager is not None:
         _runtime_enable_proxy_manager = enable_proxy_manager
 

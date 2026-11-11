@@ -77,7 +77,10 @@ class SqlitePersistenceService:
                 except sqlite3.OperationalError:
                     pass
                 
-        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_url ON resources(url)")
+        try:
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_resource_url ON resources(url)")
+        except sqlite3.IntegrityError:
+            logger.warning("resources.url 存在重复值，已跳过唯一索引创建（不影响本次运行）")
         
         # 爬虫断点续爬状态表
         cursor.execute('''

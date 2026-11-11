@@ -191,12 +191,15 @@ class PDFGenerator:
         if self.r2_uploader:
             remote_key = f"pdf/{year}/{os.path.basename(local_path)}"
             result = self.r2_uploader.upload_pdf(local_path, remote_key)
-            if os.path.exists(local_path):
-                try:
-                    os.remove(local_path)
-                except Exception:
-                    pass
-            return result
+            if result:
+                if os.path.exists(local_path):
+                    try:
+                        os.remove(local_path)
+                    except Exception:
+                        pass
+                return result
+            # 上传失败时保留本地文件，返回相对路径避免数据丢失
+            return f"pdf/{year}/{os.path.basename(local_path)}"
         else:
             rel_path = f"pdf/{year}/{os.path.basename(local_path)}"
             return rel_path.replace('\\', '/')

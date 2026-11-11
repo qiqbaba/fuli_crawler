@@ -11,7 +11,7 @@ export default defineConfig({
     // 5173 落在 Windows 保留端口段 5109-5208，监听会 EACCES；改用 4173
     host: '127.0.0.1',
     port: 4173,
-    strictPort: false,
+    strictPort: true,
     proxy: {
       '/api': 'http://127.0.0.1:8000',
     },

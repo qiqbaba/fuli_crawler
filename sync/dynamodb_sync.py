@@ -205,6 +205,9 @@ def run_upload(args=None):
             except ClientError as e:
                 print(f"[-] 写入批次失败: {e}")
                 skipped += len(batch)
+            except Exception as e:
+                print(f"[-] 写入批次异常: {e}")
+                skipped += len(batch)
 
             batch = []
             batch_keys = []
@@ -265,40 +268,49 @@ def run_sync_keys(args=None):
             if rel_key and rel_key not in seen_keys:
                 seen_keys.add(rel_key)
                 items_to_put.append((rel_key, resource_link or ""))
-                service._url_bloom.add(rel_key)
-                service._url_bloom.add(url)
 
     conn.close()
     logger.info("[+] 提取完成，共生成 %s 个独立的相对路径去重键", len(items_to_put))
 
     def _write_batch_chunk(chunk):
-        request_items = {
-            service.table_name: [
-                {
-                    "PutRequest": {
-                        "Item": {
-                            "url": {"S": k},
-                            **({"resource_link": {"S": r}} if (r and len(r.encode('utf-8')) <= 2048) else {})
-                        }
-                    }
-                }
-                for k, r in chunk
-            ]
-        }
+        pending = list(chunk)
         max_retries = 5
         for attempt in range(max_retries):
+            if not pending:
+                break
+            request_items = {
+                service.table_name: [
+                    {
+                        "PutRequest": {
+                            "Item": {
+                                "url": {"S": k},
+                                **({"resource_link": {"S": r}} if (r and len(r.encode('utf-8')) <= 2048) else {})
+                            }
+                        }
+                    }
+                    for k, r in pending
+                ]
+            }
             try:
                 resp = service.client.batch_write_item(RequestItems=request_items)
                 unprocessed = resp.get("UnprocessedItems", {}).get(service.table_name, [])
                 if not unprocessed:
-                    return len(chunk)
-                request_items = {service.table_name: unprocessed}
+                    return pending
+                pending = [
+                    (
+                        item.get("PutRequest", {}).get("Item", {}).get("url", {}).get("S", ""),
+                        item.get("PutRequest", {}).get("Item", {}).get("resource_link", {}).get("S", ""),
+                    )
+                    for item in unprocessed
+                ]
+                pending = [(k, r) for k, r in pending if k]
                 time.sleep(0.5 * (attempt + 1))
             except Exception as e:
                 if attempt == max_retries - 1:
                     logger.warning("写入 DynamoDB 批次异常: %s", e)
                 time.sleep(1.0)
-        return len(chunk)
+        pending_keys = {k for k, _ in pending}
+        return [(k, r) for k, r in chunk if k not in pending_keys]
 
     chunks = [items_to_put[i:i + batch_size] for i in range(0, len(items_to_put), batch_size)]
     total_batches = len(chunks)
@@ -310,7 +322,12 @@ def run_sync_keys(args=None):
         interval = batch_size / qps
         for idx, chunk in enumerate(chunks, 1):
             t_chunk_start = time.time()
-            written_count += _write_batch_chunk(chunk)
+            ok_keys = _write_batch_chunk(chunk)
+            written_count += len(ok_keys)
+            for k, _ in ok_keys:
+                service._url_bloom.add(k)
+            if ok_keys:
+                service._bloom_dirty = True
             if idx % 10 == 0 or idx == total_batches:
                 elapsed = time.time() - start_time
                 pct = (idx / total_batches) * 100
@@ -328,7 +345,12 @@ def run_sync_keys(args=None):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = [executor.submit(_write_batch_chunk, c) for c in chunks]
             for idx, fut in enumerate(futures, 1):
-                written_count += fut.result()
+                ok_keys = fut.result()
+                written_count += len(ok_keys)
+                for k, _ in ok_keys:
+                    service._url_bloom.add(k)
+                if ok_keys:
+                    service._bloom_dirty = True
                 if idx % 50 == 0 or idx == total_batches:
                     elapsed = time.time() - start_time
                     pct = (idx / total_batches) * 100
@@ -340,7 +362,6 @@ def run_sync_keys(args=None):
                     if idx % 200 == 0 or idx == total_batches:
                         logger.info(msg)
 
-    service._bloom_dirty = True
     service._save_bloom_filter_sync()
     service.shutdown()
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import glob
+import json
 import os
 import sqlite3
 import time
@@ -83,17 +84,39 @@ def connect() -> sqlite3.Connection:
     return conn
 
 
-@functools.lru_cache(maxsize=1)
+_indexes_ready = False
+
+
 def _ensure_indexes() -> None:
-    if not os.path.exists(get_db_path()):
+    global _indexes_ready
+    if _indexes_ready or not os.path.exists(get_db_path()):
         return
     try:
         with connect() as conn:
             for stmt in _INDEX_STATEMENTS:
                 conn.execute(stmt)
             conn.commit()
+        _indexes_ready = True
     except sqlite3.Error:
         pass
+
+
+def _is_allowed_pdf_path(path: str) -> bool:
+    """只允许删除 PDF 根目录内的 .pdf 文件，防止 API 删除任意本地文件。"""
+    if not path or not path.lower().endswith(".pdf"):
+        return False
+    real_path = os.path.realpath(path)
+    roots = {
+        os.path.realpath(PDF_BASE_DIR),
+        os.path.realpath(os.path.join(PROJECT_ROOT, "pdf")),
+    }
+    for root in roots:
+        try:
+            if os.path.commonpath([real_path, root]) == root:
+                return True
+        except (ValueError, OSError):
+            continue
+    return False
 
 
 @functools.lru_cache(maxsize=8192)
@@ -316,17 +339,16 @@ def _build_filters(
         ids = states[key]
         if pdf == "本地 PDF 正常存在":
             if ids:
-                placeholders = ",".join("?" for _ in ids)
                 conditions.append(
-                    f"(r.pdf_path IS NOT NULL AND r.pdf_path != '' AND r.id NOT IN ({placeholders}))"
+                    "(r.pdf_path IS NOT NULL AND r.pdf_path != '' "
+                    "AND r.id NOT IN (SELECT value FROM json_each(?)))"
                 )
-                params.extend(ids)
+                params.append(json.dumps(list(ids)))
             else:
                 conditions.append("(r.pdf_path IS NOT NULL AND r.pdf_path != '')")
         elif ids:
-            placeholders = ",".join("?" for _ in ids)
-            conditions.append(f"r.id IN ({placeholders})")
-            params.extend(ids)
+            conditions.append("r.id IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(list(ids)))
         else:
             conditions.append("1 = 0")
     elif pdf == "数据库未关联 PDF":
@@ -347,9 +369,8 @@ def _build_filters(
     elif fix == "日本番号资源":
         ids = _fanhao_ids()
         if ids:
-            placeholders = ",".join("?" for _ in ids)
-            conditions.append(f"r.id IN ({placeholders})")
-            params.extend(ids)
+            conditions.append("r.id IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(list(ids)))
         else:
             conditions.append("1 = 0")
     elif fix == "资源链接为空":
@@ -359,9 +380,8 @@ def _build_filters(
     elif fix == "含推广广告噪声":
         ids = _noisy_link_ids()
         if ids:
-            placeholders = ",".join("?" for _ in ids)
-            conditions.append(f"r.id IN ({placeholders})")
-            params.extend(ids)
+            conditions.append("r.id IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(list(ids)))
         else:
             conditions.append("1 = 0")
 
@@ -527,8 +547,7 @@ def get_filter_options(
         "category", keyword=keyword, source=source, category=category,
         pdf_filter=pdf_filter, fix_filter=fix_filter, exclude="category",
     )
-    if pdf_filter == "全部" and "磁盘孤儿" not in categories:
-        categories.append("磁盘孤儿")
+    # 磁盘孤儿不属于 resources.category，由独立的 PDF 筛选器查询
     return {
         **base,
         "sources": ["全部", *sources],
@@ -761,7 +780,9 @@ def delete_record(record_id: Any, pdf_path: str = "") -> Dict[str, Any]:
         other_refs = count_other_pdf_references(record_id, pdf_path, target_pdf)
 
     if target_pdf and os.path.isfile(target_pdf):
-        if other_refs > 0:
+        if not _is_allowed_pdf_path(target_pdf):
+            messages.append("PDF 路径不在允许的目录内，已拒绝删除物理文件")
+        elif other_refs > 0:
             messages.append(f"本地 PDF 仍被其他 {other_refs} 条记录引用，已安全保留物理文件")
         else:
             try:

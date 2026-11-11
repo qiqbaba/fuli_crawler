@@ -349,23 +349,33 @@ def render_pdf_page(page, url: str, file_path: str, source: str, min_size_kb: fl
         margin = getattr(config, "margin", {"top": "15mm", "bottom": "15mm", "left": "15mm", "right": "15mm"})
         scale = getattr(config, "scale", 0.75)
 
+        tmp_path = f"{file_path}.{os.getpid()}.{time.time_ns()}.tmp"
         page.pdf(
-            path=file_path,
+            path=tmp_path,
             format="A4",
             scale=scale,
             print_background=True,
             margin=margin
         )
 
-        if os.path.exists(file_path):
-            new_size_kb = os.path.getsize(file_path) / 1024.0
+        if os.path.exists(tmp_path):
+            new_size_kb = os.path.getsize(tmp_path) / 1024.0
             if new_size_kb >= min_size_kb:
+                os.replace(tmp_path, file_path)
                 return True, new_size_kb, "成功", page_content
-            else:
-                return False, new_size_kb, f"体积依然过小 ({new_size_kb:.2f} KB < {min_size_kb} KB)", page_content
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            return False, new_size_kb, f"体积依然过小 ({new_size_kb:.2f} KB < {min_size_kb} KB)", page_content
         else:
             return False, 0.0, "PDF 文件未在本地生成", page_content
     except Exception as e:
+        try:
+            if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except OSError:
+            pass
         return False, 0.0, f"渲染异常: {e}", ""
 
 
@@ -856,6 +866,18 @@ def run_fix_names_and_paths(args):
 # ===================================================================
 # 功能 3: redownload - 重新下载体积小于 20KB 的 PDF
 # ===================================================================
+def _pdf_file_exists(pdf_path: str) -> bool:
+    """判断数据库中的 pdf_path 在本地是否真实存在（兼容绝对/相对路径）"""
+    if not pdf_path:
+        return False
+    normalized = str(pdf_path).replace("\\", "/").lstrip("/")
+    candidates = [str(pdf_path)]
+    candidates.append(os.path.join(PDF_BASE_DIR, normalized))
+    if normalized.startswith("pdf/"):
+        candidates.append(os.path.join(PDF_BASE_DIR, normalized[4:]))
+    return any(os.path.exists(p) for p in candidates)
+
+
 def run_redownload_small_pdfs(args):
     db_path = get_db_path()
     pdf_base = os.path.abspath(PDF_BASE_DIR)
@@ -1026,13 +1048,18 @@ def run_redownload_small_pdfs(args):
                                 print(f"  [+] 使用最新镜像域名 {cand} 重新生成成功! 新文件大小: {retry_size_kb:.2f} KB")
                                 if old_domain and cand != old_domain:
                                     cursor.execute(
-                                        "UPDATE resources SET url = REPLACE(url, ?, ?) WHERE url LIKE ?",
-                                        (old_domain, cand, f"%{old_domain}%")
+                                        "SELECT id, url FROM resources WHERE url LIKE ?",
+                                        (f"%{old_domain}%",)
                                     )
-                                    affected_rows = cursor.rowcount
+                                    affected_rows = 0
+                                    for rid, old_url in cursor.fetchall():
+                                        new_url = replace_domain_in_url(old_url, cand)
+                                        if new_url != old_url:
+                                            cursor.execute("UPDATE resources SET url = ? WHERE id = ?", (new_url, rid))
+                                            affected_rows += 1
                                     conn.commit()
                                     total_db_domain_updates += affected_rows
-                                    print(f"  [+] 数据库已批量更新失效域名: 将所有包含 '{old_domain}' 的记录 ({affected_rows} 条) 替换为 '{cand}'")
+                                    print(f"  [+] 数据库已更新失效域名: 精确替换 {affected_rows} 条记录的域名 '{old_domain}' -> '{cand}'")
 
                                     # 同步更新内存队列中后续记录的 URL
                                     for rem in to_download[idx:]:
@@ -1117,14 +1144,12 @@ class MissingPDFDownloader:
 
         try:
             os.makedirs(os.path.dirname(PROGRESS_FILE), exist_ok=True)
-            temp_file = PROGRESS_FILE + ".tmp"
+            temp_file = f"{PROGRESS_FILE}.{os.getpid()}.{time.time_ns()}.tmp"
             with open(temp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            if os.path.exists(PROGRESS_FILE):
-                os.remove(PROGRESS_FILE)
-            os.rename(temp_file, PROGRESS_FILE)
-        except Exception:
-            pass
+            os.replace(temp_file, PROGRESS_FILE)
+        except Exception as e:
+            print(f"[-] 进度文件写入失败: {e}", flush=True)
 
     def _db_update(self, sql: str, params: tuple):
         """线程安全的 SQLite 更新操作"""
@@ -1172,11 +1197,23 @@ class MissingPDFDownloader:
                     pass
 
             if is_404:
-                self._db_update("UPDATE resources SET pdf_path = '' WHERE id = ?", (r_id,))
+                pdf_rel = ""
+                try:
+                    with sqlite3.connect(self.db_path) as chk_conn:
+                        row = chk_conn.execute(
+                            "SELECT pdf_path FROM resources WHERE id = ?", (r_id,)
+                        ).fetchone()
+                        pdf_rel = (row[0] if row else "") or ""
+                except Exception:
+                    pdf_rel = ""
+                if _pdf_file_exists(pdf_rel):
+                    item_status = f"[-] 页面 404，但本地 PDF 仍存在，已保留 pdf_path ID={r_id} 来源={source}"
+                else:
+                    self._db_update("UPDATE resources SET pdf_path = '' WHERE id = ?", (r_id,))
+                    item_status = f"[-] 页面 404 (已清理 pdf_path) ID={r_id} 来源={source}"
                 with self.lock:
                     self.processed += 1
                     self.not_found += 1
-                item_status = f"[-] 页面 404 (已清理 pdf_path) ID={r_id} 来源={source}"
             else:
                 # 2. 正常渲染生成 PDF
                 rel_pdf_path = self.generator.generate_pdf(
@@ -1472,18 +1509,23 @@ def _move_orphans_to_root(db_path, pdf_base, args):
         else:
             truly_orphan.append((filename, full_path, year_folder))
 
-    # 4. 执行自动关联（将关联到的 pdf_path 写入数据库）
+    # 4. 执行自动关联（将关联到的 pdf_path 写入数据库，需显式 --run）
+    run_now = bool(getattr(args, "run", False))
     if associated:
-        print(f"\n[*] 发现 {len(associated)} 个PDF文件可通过标题匹配到数据库记录（pdf_path 为空），正在自动关联...")
-        for fn, full_path, yf, r_id, r_title, r_publish_time in associated:
-            try:
-                rel_pdf_path = to_relative_path(full_path)
-                cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (rel_pdf_path, r_id))
-                print(f"  [+] 已关联: {yf}/{fn} -> 记录ID={r_id}, 标题='{r_title}', pdf_path='{rel_pdf_path}'")
-            except Exception as e:
-                print(f"  [-] 关联失败 {fn}: {e}")
-        conn.commit()
-        print("[+] 自动关联完成。\n")
+        if not run_now:
+            print(f"\n[*] 【预览】发现 {len(associated)} 个PDF文件可通过标题匹配到数据库记录（pdf_path 为空），"
+                  f"如需自动关联请附加 --run。")
+        else:
+            print(f"\n[*] 发现 {len(associated)} 个PDF文件可通过标题匹配到数据库记录（pdf_path 为空），正在自动关联...")
+            for fn, full_path, yf, r_id, r_title, r_publish_time in associated:
+                try:
+                    rel_pdf_path = to_relative_path(full_path)
+                    cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (rel_pdf_path, r_id))
+                    print(f"  [+] 已关联: {yf}/{fn} -> 记录ID={r_id}, 标题='{r_title}', pdf_path='{rel_pdf_path}'")
+                except Exception as e:
+                    print(f"  [-] 关联失败 {fn}: {e}")
+            conn.commit()
+            print("[+] 自动关联完成。\n")
 
     # 5. 报告
     print("\n" + "=" * 60)
@@ -1494,11 +1536,11 @@ def _move_orphans_to_root(db_path, pdf_base, args):
     print(f"  完全无匹配(多余): {len(truly_orphan)}")
     print("=" * 60)
 
-    all_orphans = []
-    for item in warn_conflict:
-        all_orphans.append({"type": "warn", "filename": item[0], "path": item[1], "folder": item[2], "record": item[3]})
-    for item in truly_orphan:
-        all_orphans.append({"type": "orphan", "filename": item[0], "path": item[1], "folder": item[2]})
+    # 冲突文件（数据库已有 pdf_path）仅供人工确认，不能随孤儿文件一起移动
+    all_orphans = [
+        {"type": "orphan", "filename": item[0], "path": item[1], "folder": item[2]}
+        for item in truly_orphan
+    ]
 
     if not all_orphans:
         print("[*] 未发现多余PDF文件。")
@@ -1521,9 +1563,14 @@ def _move_orphans_to_root(db_path, pdf_base, args):
             print(f"  [{i}] {yf}/{fn}")
         print()
 
-    # 6. 询问是否移动多余PDF
+    # 6. 询问是否移动多余PDF（必须显式 --run，避免仅检查就改动物理文件）
+    if not run_now:
+        print(f"\n[*] 【预览模式】发现 {len(all_orphans)} 个多余PDF文件，如需移动请附加 --run。")
+        conn.close()
+        return
+
     try:
-        confirm = input(f"\n[*] 是否将这 {len(all_orphans)} 个多余/冲突PDF文件移动到 {pdf_base} 根目录？[y/N]: ").strip().lower()
+        confirm = input(f"\n[*] 是否将这 {len(all_orphans)} 个多余PDF文件移动到 {pdf_base} 根目录？[y/N]: ").strip().lower()
     except (KeyboardInterrupt, EOFError):
         print("\n[-] 操作已取消")
         conn.close()
@@ -1699,7 +1746,12 @@ def _restore_orphans_from_root(db_path, pdf_base, args):
         conn.close()
         return
 
-    # 5. 询问是否移动
+    # 5. 询问是否移动（必须显式 --run）
+    if not getattr(args, "run", False):
+        print(f"\n[*] 【预览模式】发现 {len(restore_plans)} 个可恢复文件，如需移动请附加 --run。")
+        conn.close()
+        return
+
     try:
         confirm = input(f"\n[*] 是否将这 {len(restore_plans)} 个文件移回对应年份文件夹？[y/N]: ").strip().lower()
     except (KeyboardInterrupt, EOFError):
@@ -2210,6 +2262,8 @@ def main():
 
     # orphan
     p_orphan = subparsers.add_parser("orphan", help="检查多余PDF或将多余PDF移回原处")
+    p_orphan.add_argument("--run", action="store_true", default=False,
+                          help="正式执行自动关联或文件移动，不加此参数时仅预览")
     p_orphan.set_defaults(func=run_orphan)
 
     # associate

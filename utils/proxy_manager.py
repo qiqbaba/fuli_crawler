@@ -2,6 +2,7 @@
 代理IP管理模块（兼容门面）
 向后兼容原 ProxyManager 的各种全局方法和常量
 """
+import threading
 from typing import Optional, Dict
 from utils.logger import get_logger
 
@@ -12,6 +13,7 @@ from utils.proxy_pool import ProxyPool
 
 # ========== 全局代理管理器实例 ==========
 _proxy_manager: Optional[ProxyPool] = None
+_proxy_manager_lock = threading.Lock()
 
 
 def get_proxy_manager() -> Optional[ProxyPool]:
@@ -20,12 +22,13 @@ def get_proxy_manager() -> Optional[ProxyPool]:
     from config import is_local_mode, is_proxy_manager_enabled, PROXY_CACHE_TTL
     local_on = is_local_mode()
     mgr_on = is_proxy_manager_enabled()
-    if _proxy_manager is None:
-        if local_on or mgr_on:
-            _proxy_manager = ProxyPool(cache_ttl=PROXY_CACHE_TTL)
-        else:
-            return None
-    return _proxy_manager
+    with _proxy_manager_lock:
+        if _proxy_manager is None:
+            if local_on or mgr_on:
+                _proxy_manager = ProxyPool(cache_ttl=PROXY_CACHE_TTL)
+            else:
+                return None
+        return _proxy_manager
 
 
 def init_proxy_manager(

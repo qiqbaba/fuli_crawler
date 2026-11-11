@@ -88,7 +88,7 @@ function shortLink(value: string): string {
 }
 
 // 与 /api/pdf-page 的 page 上限一致：按需滚动加载到文档末页，不再截断为前 30 页
-const MAX_PREVIEW_PAGES = 999
+const MAX_PREVIEW_PAGES = 1000
 const LOAD_AHEAD = 240
 
 function pageUrl(rawPath: string, page: number): string {
@@ -145,8 +145,9 @@ function PdfPreview({ path }: { path: string }) {
           alt={`PDF 第 ${index + 1} 页`}
           loading={index === 0 ? 'eager' : 'lazy'}
           onError={() => {
+            // 单页渲染失败（损坏页/临时网络错误）只暂停自动加载，稍后可继续下滑重试
             setEnded(true)
-            setPageCount((value) => Math.min(value, index))
+            window.setTimeout(() => setEnded(false), 3000)
           }}
         />
       ))}
@@ -206,7 +207,7 @@ function Card({
       </div>
 
       {item.has_pdf ? (
-        <PdfPreview path={item.pdf_path} />
+        <PdfPreview key={item.pdf_path} path={item.pdf_path} />
       ) : (
         <div className="card-preview">
           <div className="preview-empty">
@@ -518,6 +519,10 @@ export default function Gallery() {
     estimateSize: () => (layout === 'table' ? 1000 : ROW_ESTIMATE[layout]),
     overscan: 3,
   })
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
 
   useEffect(() => {
     setPage(1)

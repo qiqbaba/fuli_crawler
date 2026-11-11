@@ -400,6 +400,8 @@ def upgrade_single_database(db_path: str, is_run: bool = True) -> bool:
         conn.close()
         return True
 
+    backup_db(db_path, prefix_tag="upgrade_meta")
+
     # 提取并更新历史元数据
     print_step("正在扫描历史数据进行元数据提取（size/format/pikpak）...")
     cursor.execute("SELECT id, title, resource_link FROM resources")
@@ -425,7 +427,11 @@ def upgrade_single_database(db_path: str, is_run: bool = True) -> bool:
     if update_data:
         print_step("正在批量写入元数据...")
         cursor.executemany(
-            "UPDATE resources SET size = ?, resource_format = ?, pikpak_link = ? WHERE id = ?",
+            "UPDATE resources SET "
+            "size = COALESCE(NULLIF(?, ''), size), "
+            "resource_format = COALESCE(NULLIF(?, ''), resource_format), "
+            "pikpak_link = COALESCE(NULLIF(?, ''), pikpak_link) "
+            "WHERE id = ?",
             update_data,
         )
         conn.commit()

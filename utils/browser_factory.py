@@ -35,9 +35,18 @@ class BrowserFactory:
     ) -> Tuple[Playwright, Browser, BrowserContext]:
         """创建浏览器上下文，支持线程隔离和持久化模式"""
         
-        # 检查线程本地资源是否已存在
+        # 检查线程本地资源是否已存在且仍可用（可能已被 destroy_all_resources 关闭）
         if hasattr(self._thread_local, "context"):
-            return self._thread_local.playwright, self._thread_local.browser, self._thread_local.context
+            try:
+                browser = self._thread_local.browser
+                if browser is not None and browser.is_connected():
+                    return self._thread_local.playwright, browser, self._thread_local.context
+            except Exception:
+                pass
+            try:
+                self.destroy_thread_resources()
+            except Exception:
+                pass
 
         from playwright.sync_api import sync_playwright
         p = sync_playwright().start()

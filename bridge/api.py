@@ -200,7 +200,7 @@ def pdf_page(
     return Response(
         content=data,
         media_type="image/jpeg",
-        headers={"Cache-Control": "public, max-age=604800, immutable"},
+        headers={"Cache-Control": "public, max-age=300"},
     )
 
 

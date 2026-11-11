@@ -636,10 +636,13 @@ class ProxyPool:
         """
         current_thread_id = threading.get_ident()
         
-        # 先快速检查是否需要触发补给
+        # 先快速检查是否需要触发补给（在锁外执行，避免阻塞其他线程）
         with self._lock:
             need_replenish = self._should_replenish(source)
-            
+        if need_replenish:
+            self.check_and_replenish(threshold=200, target_count=1000, source=source)
+
+        with self._lock:
             if not self._working_proxies:
                 return None
             
@@ -708,10 +711,6 @@ class ProxyPool:
             self._current_proxy_idx += 1
             self._thread_proxy_map[current_thread_id] = selected_proxy
             return selected_proxy
-        
-        # 锁外执行补给，避免阻塞其他获取代理的线程
-        if need_replenish:
-            self.check_and_replenish(threshold=200, target_count=1000, source=source)
 
     def get_random_pool_proxy(self, source: Optional[str] = None) -> Optional[str]:
         """

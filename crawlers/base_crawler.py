@@ -492,8 +492,10 @@ class BaseCrawler:
 
     def _check_consecutive_subpage_stop(self, idx, is_existing, consecutive_subpage_count):
         """检查子页面级连续已存在计数，返回 (new_count, should_stop)"""
-        if not is_existing or self.max_consecutive_existing is None:
-            return consecutive_subpage_count, False
+        if self.max_consecutive_existing is None:
+            return 0, False
+        if not is_existing:
+            return 0, False
         consecutive_subpage_count += 1
         if not self.quiet:
             self.log.info("[%s] 子页面级去重跳过: 连续已存在计数: %s/%s",
@@ -890,13 +892,10 @@ class BaseCrawler:
                     else:
                         consecutive_duplicate_pages = 0
 
-                # === 步骤 3: 早停或无待处理项 ===
-                if not items_to_process or early_stop_triggered:
-                    if not items_to_process:
-                        self.log.info("页面 %s 所有项均已被跳过。", page_num)
-                        self.total_skipped_count += skipped_count
-                    else:
-                        self.log.info("页面 %s 触发早停，跳过 %s 条待处理项。", page_num, len(items_to_process))
+                # === 步骤 3: 无待处理项（早停时仍需先处理完本页已收集的新数据） ===
+                if not items_to_process:
+                    self.log.info("页面 %s 所有项均已被跳过。", page_num)
+                    self.total_skipped_count += skipped_count
                     if class_name is not None:
                         self._save_page_state(class_name, page_num + 1)
                     if early_stop_triggered or self._check_early_stop_condition(consecutive_count, consecutive_subpage_count):
@@ -943,12 +942,20 @@ class BaseCrawler:
                 self._sleep_between_pages(self.no_pdf)
             except Exception as e:
                 self.log.error("页面 %s 处理异常，已回滚未提交事务: %s", page_num, e)
+                consecutive_failed_pages += 1
+                self.total_failed_pages += 1
                 if page_num not in failed_list_pages:
                     failed_list_pages.append(page_num)
                 try:
                     self.db_manager.rollback()
                 except Exception as rb_e:
                     self.log.warning("回滚事务时出错: %s", rb_e)
+                if self._check_circuit_breaker(
+                    consecutive_failed_pages, page_num, class_name,
+                    is_multi_category=is_multi_category, fail_type="exception"
+                ):
+                    early_break = True
+                    break
             finally:
                 if is_gha:
                     print("::endgroup::", flush=True)
@@ -1186,8 +1193,10 @@ class BaseCrawler:
 
         except KeyboardInterrupt:
             self.log.warning("\n[中断] 检测到用户手动停止运行 (Ctrl+C)")
+            raise
         except Exception:
             self.log.exception("\n[致命错误] 运行中发生未捕获的异常")
+            raise
         finally:
             self.on_finish()
 
@@ -1583,37 +1592,46 @@ class DomainRotationMixin:
 
     def _rotate_domain(self):
         """轮换至下一个可用域名（带冷却机制），线程安全"""
+        next_idx = None
+        failed_idx = None
+        wait_time = 0.0
+
         with self._domain_lock:
-            failed_domain = self.domains[self.current_domain_idx]
+            failed_idx = self.current_domain_idx
+            failed_domain = self.domains[failed_idx]
             self._domain_cooldown[failed_domain] = time.time()
-            
+
             now = time.time()
             for i in range(1, len(self.domains) + 1):
-                candidate_idx = (self.current_domain_idx + i) % len(self.domains)
+                candidate_idx = (failed_idx + i) % len(self.domains)
                 candidate = self.domains[candidate_idx]
                 last_fail = self._domain_cooldown.get(candidate, 0)
                 if now - last_fail >= self._cooldown_seconds:
-                    self._update_base_domain(candidate_idx)
-                    self.log.warning("[!] %s 域名切换至: %s", self.source_name.upper(), self.base_domain)
-                    return
-            
-            # 所有域名都在冷却中
-            if len(self.domains) > 1:
-                min_wait = max(0, min(
-                    self._cooldown_seconds - (now - self._domain_cooldown.get(d, 0))
-                    for d in self.domains
-                ))
-                wait_time = max(min_wait, 10) + random.uniform(2, 5)
-                self.log.warning("[!] 所有域名均在冷却中，等待 %.1f 秒...", wait_time)
-                time.sleep(wait_time)
-            else:
-                wait_time = random.uniform(2, 5)
-                time.sleep(wait_time)
-                
-            next_idx = (self.current_domain_idx + 1) % len(self.domains)
+                    next_idx = candidate_idx
+                    break
+
+            if next_idx is None:
+                if len(self.domains) > 1:
+                    min_wait = max(0, min(
+                        self._cooldown_seconds - (now - self._domain_cooldown.get(d, 0))
+                        for d in self.domains
+                    ))
+                    wait_time = max(min_wait, 10) + random.uniform(2, 5)
+                else:
+                    wait_time = random.uniform(2, 5)
+
+        if next_idx is None:
+            self.log.warning("[!] 所有域名均在冷却中，等待 %.1f 秒...", wait_time)
+            time.sleep(wait_time)
+            with self._domain_lock:
+                failed_idx = self.current_domain_idx
+                next_idx = (failed_idx + 1) % len(self.domains)
+
+        with self._domain_lock:
             self._update_base_domain(next_idx)
-            self._domain_cooldown.pop(self.domains[self.current_domain_idx], None)
-            self.log.warning("[!] 冷却结束，%s 域名切换至: %s", self.source_name.upper(), self.base_domain)
+            if failed_idx is not None:
+                self._domain_cooldown.pop(self.domains[failed_idx], None)
+            self.log.warning("[!] %s 域名切换至: %s", self.source_name.upper(), self.base_domain)
 
     def _update_domains_from_redirect(self, content):
         """从'正在检测'跳转页面中提取最新域名并更新域名列表
@@ -2186,6 +2204,30 @@ class DecryptSiteBaseCrawler(PlaywrightBaseCrawler, DomainRotationMixin, Decrypt
     # ------------------------------------------------------------------ #
     #  以下为子类可覆盖的钩子方法，用于 process_sub_page_if_needed() 中的差异化逻辑
     # ------------------------------------------------------------------ #
+
+    def _fetch_magnet_from_download_page(self, download_url, referer_url):
+        """请求下载页并解密提取磁力链接（通用兜底实现）"""
+        headers = self._build_headers(referer=referer_url)
+        max_retries = self.max_retries
+        for attempt in range(max_retries):
+            proxies = None
+            if attempt < max_retries - 1:
+                from config import get_effective_proxy
+                proxies = get_effective_proxy()
+            try:
+                response = requests.get(download_url, headers=headers, timeout=15, proxies=proxies, impersonate="chrome120")
+                if response.status_code == 200:
+                    clean_html = self.decrypt_html(response.text)
+                    magnet_match = re.search(r"magnet:\?xt=urn:btih:[A-Za-z0-9]+", clean_html)
+                    if magnet_match:
+                        return magnet_match.group(0)
+                    magnet_match = re.search(r"magnet:\?[^\s'\"<>\)]+", clean_html)
+                    if magnet_match:
+                        return magnet_match.group(0)
+            except Exception as e:
+                self.log.warning("[!] 请求下载页面异常 (尝试 %s/%s): %s", attempt + 1, max_retries, e)
+            time.sleep(random.uniform(1.0, 2.5))
+        return ""
 
     def _is_valid_detail_page(self, html):
         """子类覆盖：判断 Playwright 兜底时详情页是否有效"""

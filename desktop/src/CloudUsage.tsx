@@ -11,6 +11,7 @@ export default function CloudUsage() {
   const [data, setData] = useState<CloudUsageData | null>(null)
   const query = useMutation({
     mutationFn: () => api.cloudUsage(params),
+    onMutate: () => setData(null),
     onSuccess: setData,
   })
 

@@ -119,7 +119,7 @@ class ProxyVerifier:
             throttled = [False]
 
             async def worker():
-                while not queue.empty() and not stop_event.is_set():
+                while not stop_event.is_set():
                     # 动态自适应降并发：一旦达到启动阈值，多余的 worker 协程自动优雅退出，让出 CPU 与网络资源给爬虫
                     if start_threshold and len(working) >= start_threshold:
                         if active_workers[0] > post_start_workers:
@@ -132,7 +132,10 @@ class ProxyVerifier:
                                 )
                             break
 
-                    proxy = await queue.get()
+                    try:
+                        proxy = queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
                     protocol = proxy["protocol"].lower()
                     address = proxy["address"]
 

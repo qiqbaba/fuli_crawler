@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { Component, lazy, Suspense, useEffect, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from './api'
 import Gallery from './Gallery'
@@ -6,6 +6,21 @@ import JobsPanel from './Jobs'
 import './panels.css'
 
 const Analytics = lazy(() => import('./Analytics'))
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  render() {
+    if (this.state.error) {
+      return <div className="empty">页面加载失败：{String(this.state.error)}</div>
+    }
+    return this.props.children
+  }
+}
 
 type Theme = 'dark' | 'light'
 type Tab = 'gallery' | 'maintenance' | 'sync' | 'analytics'
@@ -109,15 +124,17 @@ export default function App() {
         ))}
       </nav>
 
-      {tab === 'gallery' ? (
-        <Gallery />
-      ) : tab === 'analytics' ? (
-        <Suspense fallback={<div className="empty">正在加载统计大盘…</div>}>
-          <Analytics theme={theme} />
-        </Suspense>
-      ) : (
-        <JobsPanel group={tab} />
-      )}
+      {tab === 'gallery' ? <Gallery /> : null}
+      {tab === 'analytics' ? (
+        <ErrorBoundary>
+          <Suspense fallback={<div className="empty">正在加载统计大盘…</div>}>
+            <Analytics theme={theme} />
+          </Suspense>
+        </ErrorBoundary>
+      ) : null}
+      <div style={{ display: tab === 'maintenance' || tab === 'sync' ? undefined : 'none' }}>
+        <JobsPanel group={tab === 'sync' ? 'sync' : 'maintenance'} />
+      </div>
     </div>
   )
 }

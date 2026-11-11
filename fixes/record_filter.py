@@ -589,7 +589,9 @@ def run_duplicates_menu(args=None) -> None:
             total_del_bytes = 0
 
             for col_key, col_label, key_tag in targets:
-                recs = all_dup_data[key_tag]
+                # 每次都基于最新数据重新计算，避免多维度交叉重复时使用过期快照
+                recs = get_all_duplicates(conn, col_key, columns)
+                all_dup_data[key_tag] = recs
                 if not recs:
                     continue
                 d_rec, d_pdf, f_pdf, d_bytes = delete_duplicates_batch(
@@ -600,8 +602,6 @@ def run_duplicates_menu(args=None) -> None:
                 total_del_pdf += d_pdf
                 total_fail_pdf += f_pdf
                 total_del_bytes += d_bytes
-                # 刷新该项
-                all_dup_data[key_tag] = get_all_duplicates(conn, col_key, columns)
 
             if total_del_rec > 0:
                 vacuum_db(conn)
@@ -795,7 +795,11 @@ def delete_fanhao_records(
             print_step("已取消删除操作。")
             return
 
-    backup_db(get_db_path(), prefix_tag="fanhao_delete")
+    try:
+        backup_target = conn.execute("PRAGMA database_list").fetchone()[2]
+    except Exception:
+        backup_target = None
+    backup_db(backup_target or get_db_path(), prefix_tag="fanhao_delete")
 
     del_rec, del_pdf, fail_pdf, freed_bytes = delete_records_cascade_pdf(conn, ids_to_delete, project_root=PROJECT_ROOT)
     vacuum_db(conn)

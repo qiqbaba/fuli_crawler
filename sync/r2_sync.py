@@ -117,17 +117,40 @@ def _strip_pdf_prefix(key: str) -> str:
     return key
 
 
+def _safe_join(base_dir: str, relative_path: str):
+    """把对象相对路径安全地拼接到本地目录，拒绝 .. 越界"""
+    base = os.path.abspath(base_dir)
+    target = os.path.abspath(os.path.join(base, relative_path))
+    try:
+        if os.path.commonpath([base, target]) != base:
+            return None
+    except ValueError:
+        return None
+    return target
+
+
 def list_all_pdfs(client, prefix="pdf/", max_keys=None):
     """列出 R2 中的所有 PDF 文件（支持按年份/子目录并行并发检索）"""
+    root_pdfs = []
+    common_prefixes = []
     try:
-        resp = client.list_objects_v2(Bucket=R2_BUCKET_NAME, Prefix=prefix, Delimiter="/")
-        common_prefixes = [cp["Prefix"] for cp in resp.get("CommonPrefixes", [])]
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=R2_BUCKET_NAME, Prefix=prefix, Delimiter="/"):
+            common_prefixes.extend(cp["Prefix"] for cp in page.get("CommonPrefixes", []))
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                if key.lower().endswith(".pdf"):
+                    root_pdfs.append({
+                        "key": key,
+                        "size": obj.get("Size", 0),
+                        "last_modified": obj.get("LastModified", ""),
+                    })
     except Exception:
         common_prefixes = []
 
     if len(common_prefixes) > 1 and not max_keys:
         print(f"  [*] 检测到 {len(common_prefixes)} 个目录前缀，开启多线程并行检索清单...")
-        all_pdfs = []
+        all_pdfs = list(root_pdfs)
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(common_prefixes))) as executor:
             future_to_prefix = {
                 executor.submit(_list_single_prefix, None, p): p
@@ -206,7 +229,12 @@ def _download_one(pdf, output_dir, resume):
     """下载单个文件"""
     key = pdf["key"]
     relative_path = _strip_pdf_prefix(key)
-    local_path = os.path.join(output_dir, relative_path)
+    local_path = _safe_join(output_dir, relative_path)
+    if local_path is None:
+        with _counter_lock:
+            _counter["failed"] += 1
+            _counter["done"] += 1
+        return "fail", f"{relative_path} (非法对象路径)", 0
     local_dir = os.path.dirname(local_path)
 
     if resume and os.path.exists(local_path):
@@ -230,7 +258,7 @@ def _download_one(pdf, output_dir, resume):
             _counter["total_bytes"] += written
             _counter["done"] += 1
         return "ok", relative_path, written
-    except ClientError as e:
+    except Exception as e:
         with _counter_lock:
             _counter["failed"] += 1
             _counter["done"] += 1
@@ -323,7 +351,11 @@ def download_all_pdfs(output_dir, pdfs, resume=True, workers=30):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures = [executor.submit(_download_one, pdf, output_dir, resume) for pdf in pdfs]
-        concurrent.futures.wait(futures)
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                fut.result()
+            except Exception as e:
+                print(f"  [-] 下载任务异常: {e}")
 
     stop_event.set()
     reporter.join(timeout=1)
@@ -348,14 +380,23 @@ def download_all_pdfs(output_dir, pdfs, resume=True, workers=30):
 
 def list_all_objects(client, prefix=""):
     """列出 R2 桶中所有对象"""
+    root_objects = []
+    common_prefixes = []
     try:
-        resp = client.list_objects_v2(Bucket=R2_BUCKET_NAME, Prefix=prefix, Delimiter="/")
-        common_prefixes = [cp["Prefix"] for cp in resp.get("CommonPrefixes", [])]
+        paginator = client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=R2_BUCKET_NAME, Prefix=prefix, Delimiter="/"):
+            common_prefixes.extend(cp["Prefix"] for cp in page.get("CommonPrefixes", []))
+            for obj in page.get("Contents", []):
+                root_objects.append({
+                    "key": obj["Key"],
+                    "size": obj.get("Size", 0),
+                    "last_modified": obj.get("LastModified", ""),
+                })
     except Exception:
         common_prefixes = []
 
     if len(common_prefixes) > 1:
-        all_objects = []
+        all_objects = list(root_objects)
         def _fetch_objs(p):
             objs = []
             c = _get_thread_client()
@@ -484,8 +525,8 @@ def classify_delete_candidates(delete_candidates, output_dir, extra_search_dirs=
         relative_path = _strip_pdf_prefix(obj["key"])
         found_local = False
         for sd in search_dirs:
-            local_path = os.path.join(sd, relative_path)
-            if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+            local_path = _safe_join(sd, relative_path)
+            if local_path and os.path.exists(local_path) and os.path.getsize(local_path) > 0:
                 found_local = True
                 break
         if found_local:

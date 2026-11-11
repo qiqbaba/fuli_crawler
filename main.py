@@ -296,10 +296,8 @@ def main():
             db_manager.close()
             sys.exit(1)
         default_end = getattr(crawler_cls, "default_end_page", 1)
-        default_workers = getattr(crawler_cls, "default_workers", 8)
-        if args.workers is None:
-            args.workers = default_workers
-        
+
+        # 未显式指定并发数时交给爬虫按运行环境（CI / no_pdf）自行决策
         # 用命令行参数覆盖爬虫的重试与熔断设置
         if args.max_retries is not None:
             crawler.max_retries = args.max_retries
@@ -349,6 +347,7 @@ def main():
         logger.info("[*] 断点续爬模式已启用，将自动跳过已完成板块/页面")
     
     interrupted = False
+    exit_code = 0
     try:
         crawler.run(
             is_test=is_test,
@@ -390,12 +389,16 @@ def main():
                     logger.critical("\n" + "!" * 60)
                     logger.critical("🚨 [爬虫熔断退出] 爬虫 [%s] 触发连续失败熔断: %s", args.crawler, getattr(crawler, 'circuit_breaker_reason', ''))
                     logger.critical("!" * 60)
-                    sys.exit(1)
+                    exit_code = 1
         else:
             # 中断时仅释放资源，跳过统计
             logger.info("[*] 正在释放数据库资源...")
             db_manager.close()
             logger.info("[+] 数据库已安全关闭！")
+
+    # 在 finally 之外退出，避免 SystemExit 覆盖真正的运行异常
+    if exit_code:
+        sys.exit(exit_code)
 
 if __name__ == "__main__":
     main()

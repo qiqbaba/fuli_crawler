@@ -7,10 +7,13 @@ def create_browser_context(playwright, user_agent=None, viewport=None):
     自动检测和配置代理、设置 user_agent 以及注入 stealth 伪装脚本。
     返回: (browser, context)
     """
+    from config import is_headless_forced, is_local_mode, is_stealth_enabled
+
+    headless = is_headless_forced() or not is_local_mode()
     _, browser, context = browser_factory.create_browser_context(
-        headless=True,
+        headless=headless,
         browser_type='chromium',
-        enable_stealth=True,
+        enable_stealth=is_stealth_enabled(),
         use_persistent_context=False,
         user_agent=user_agent,
         viewport=viewport or {"width": 1920, "height": 1080}

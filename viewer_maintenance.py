@@ -187,7 +187,7 @@ def extract_metrics_from_log(text: str) -> Dict[str, str]:
         metrics['物理丢失死链'] = f"{int(m.group(1)):,} 条"
     elif re.search(r'发现\s*(\d+)\s*条记录引用的 PDF 文件在本地磁盘不存在', text):
         m2 = re.search(r'发现\s*(\d+)\s*条记录引用的 PDF 文件在本地磁盘不存在', text)
-        metrics['物理丢失死链'] = f"{int(m.group(1)):,} 条"
+        metrics['物理丢失死链'] = f"{int(m2.group(1)):,} 条"
 
     # 物理扫描文件数 (如果指标还少于4个)
     if len(metrics) < 4:
@@ -877,7 +877,7 @@ def render_tab_data_cleaner():
             import argparse
             args = argparse.Namespace(
                 limit=limit_val,
-                workers=workers_val,
+                concurrency=workers_val,
                 run=btn_fs_run,
                 apply=btn_fs_run,
                 watch=False,
@@ -1051,7 +1051,10 @@ def render_tab_record_filter():
         
         mode_act = st.radio("操作模式", ["preview (扫描与前缀分布统计)", "export (导出为全新独立 SQLite 数据库)", "delete (批量删除番号记录并级联清理关联 PDF)"], horizontal=True, key="fanhao_act_mode")
         mode_val = mode_act.split(" ")[0]
-        
+        if mode_val == "preview":
+            mode_val = "scan"
+        run_now = mode_val in ("export", "delete")
+
         b1, b2 = st.columns([1, 2])
         with b1:
             btn_fh_run = st.button(T("执行番号操作"), type="primary", use_container_width=True)
@@ -1061,8 +1064,8 @@ def render_tab_record_filter():
             import argparse
             args = argparse.Namespace(
                 mode=mode_val,
-                run=True,
-                yes=True,
+                run=run_now,
+                yes=(mode_val == "delete"),
                 db=db_path
             )
             with st.spinner(T("正在执行日本番号识别与处理...")):
@@ -1071,7 +1074,7 @@ def render_tab_record_filter():
                         run_fanhao_cli(args)
                     except SystemExit:
                         pass
-            render_operation_result(log.get_text(), default_label=T("番号处理完成！"), is_run=True)
+            render_operation_result(log.get_text(), default_label=T("番号处理完成！"), is_run=run_now)
 
 
 # ===================================================================
@@ -1104,8 +1107,8 @@ def render_tab_system_and_cache():
             cursor.execute("SELECT COUNT(*) FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
             total_pdf_recs = cursor.fetchone()[0]
             
-        cached_cnt = len(cached_flags)
-        warmup_pct = round((cached_cnt / total_pdf_recs * 100), 1) if total_pdf_recs > 0 else 0.0
+        cached_cnt = min(len(cached_flags), total_pdf_recs)
+        warmup_pct = min(100.0, round((cached_cnt / total_pdf_recs * 100), 1)) if total_pdf_recs > 0 else 0.0
         st.markdown(
             f"""
             <div class="kpi-scorecard-grid" style="margin-bottom: 20px;">
@@ -1223,7 +1226,7 @@ def render_tab_system_and_cache():
                 st.success(T(f"备份成功！备份文件位于：`{bak_path}` ({format_size(os.path.getsize(bak_path))})"))
                 
         st.markdown(T("##### 历史备份列表"))
-        bak_files = glob.glob(os.path.join(os.path.dirname(db_path), "*.bak"))
+        bak_files = glob.glob(os.path.join(os.path.dirname(db_path), "*.bak*"))
         if not bak_files:
             st.info("暂无历史备份文件。")
         else:

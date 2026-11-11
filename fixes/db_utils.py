@@ -382,6 +382,29 @@ def delete_records_cascade_pdf(
                     if p_val in raws:
                         safe_to_delete_pdf_keys.discard(norm_key)
 
+    # 2.1 兼容绝对/相对路径、斜杠方向、大小写等不同写法：按文件名回查后归一化比对
+    basenames = sorted({
+        os.path.basename(p.replace("\\", "/"))
+        for p in all_raw_paths
+        if p and os.path.basename(p.replace("\\", "/"))
+    })
+    for i in range(0, len(basenames), 100):
+        name_batch = basenames[i : i + 100]
+        like_clause = " OR ".join("pdf_path LIKE ?" for _ in name_batch)
+        cursor.execute(
+            f"SELECT id, pdf_path FROM {table_name} WHERE {like_clause}",
+            [f"%{name}" for name in name_batch],
+        )
+        for rid, p_val in cursor.fetchall():
+            if str(rid) in id_set or (str(rid).isdigit() and int(rid) in id_int_set):
+                continue
+            abs_p = resolve_pdf_path(p_val, root)
+            if not abs_p:
+                continue
+            norm_key = abs_p.lower().replace("\\", "/")
+            if norm_key in safe_to_delete_pdf_keys:
+                safe_to_delete_pdf_keys.discard(norm_key)
+
     pdf_paths_to_delete = [norm_to_abs[k] for k in safe_to_delete_pdf_keys if k in norm_to_abs]
 
     # 3. 物理删除无其他引用的 PDF 文件
@@ -401,6 +424,16 @@ def delete_records_cascade_pdf(
               f"级联清理 {deleted_pdfs} 个无共享引用的 PDF（未实际执行）")
         return len(id_list), deleted_pdfs, 0, freed_bytes
 
+    # 4. 先删除数据库记录并提交，再清理物理文件，避免文件已删而记录残留
+    total_deleted_records = 0
+    for i in range(0, len(id_list), batch_size):
+        batch = id_list[i : i + batch_size]
+        placeholders = ",".join("?" for _ in batch)
+        cursor.execute(f"DELETE FROM {table_name} WHERE id IN ({placeholders})", batch)
+        total_deleted_records += cursor.rowcount
+
+    conn.commit()
+
     for pdf_path in pdf_paths_to_delete:
         try:
             sz = os.path.getsize(pdf_path)
@@ -411,15 +444,6 @@ def delete_records_cascade_pdf(
             failed_pdfs += 1
             print(f"  [-] 级联删除物理 PDF 失败 {pdf_path}: {e}")
 
-    # 4. 批量删除数据库记录
-    total_deleted_records = 0
-    for i in range(0, len(id_list), batch_size):
-        batch = id_list[i : i + batch_size]
-        placeholders = ",".join("?" for _ in batch)
-        cursor.execute(f"DELETE FROM {table_name} WHERE id IN ({placeholders})", batch)
-        total_deleted_records += cursor.rowcount
-
-    conn.commit()
     return total_deleted_records, deleted_pdfs, failed_pdfs, freed_bytes
 
 

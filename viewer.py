@@ -177,16 +177,16 @@ def count_other_pdf_references(
     try:
         with sqlite3.connect(db_path, timeout=10.0) as conn:
             cursor = conn.cursor()
-            placeholders = ",".join("?" for _ in valid_paths)
+            path_json = json.dumps(list(valid_paths))
             if str_id.startswith("ORPHAN-"):
                 cursor.execute(
-                    f"SELECT COUNT(*) FROM resources WHERE pdf_path IN ({placeholders})",
-                    valid_paths
+                    "SELECT COUNT(*) FROM resources WHERE pdf_path IN (SELECT value FROM json_each(?))",
+                    (path_json,)
                 )
             else:
                 cursor.execute(
-                    f"SELECT COUNT(*) FROM resources WHERE id != ? AND pdf_path IN ({placeholders})",
-                    [record_id] + valid_paths
+                    "SELECT COUNT(*) FROM resources WHERE id != ? AND pdf_path IN (SELECT value FROM json_each(?))",
+                    [record_id, path_json]
                 )
             row = cursor.fetchone()
             return int(row[0]) if row else 0
@@ -930,17 +930,18 @@ class DBReader:
         if pdf == "本地 PDF 正常存在":
             missing_ids = get_missing_pdf_record_ids(self.db_path, PDF_BASE_DIR)
             if missing_ids:
-                placeholders = ",".join("?" for _ in missing_ids)
-                conditions.append(f"(r.pdf_path IS NOT NULL AND r.pdf_path != '' AND r.id NOT IN ({placeholders}))")
-                params.extend(missing_ids)
+                conditions.append(
+                    "(r.pdf_path IS NOT NULL AND r.pdf_path != '' "
+                    "AND r.id NOT IN (SELECT value FROM json_each(?)))"
+                )
+                params.append(json.dumps(list(missing_ids)))
             else:
                 conditions.append("r.pdf_path IS NOT NULL AND r.pdf_path != ''")
         elif pdf == "本地物理 PDF 缺失":
             missing_ids = get_missing_pdf_record_ids(self.db_path, PDF_BASE_DIR)
             if missing_ids:
-                placeholders = ",".join("?" for _ in missing_ids)
-                conditions.append(f"r.id IN ({placeholders})")
-                params.extend(missing_ids)
+                conditions.append("r.id IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(list(missing_ids)))
             else:
                 conditions.append("1 = 0")
         elif pdf == "数据库未关联 PDF":
@@ -950,9 +951,8 @@ class DBReader:
         elif pdf == "损坏/微小 PDF (<20KB)":
             tiny_ids = get_tiny_pdf_record_ids(self.db_path, PDF_BASE_DIR)
             if tiny_ids:
-                placeholders = ",".join("?" for _ in tiny_ids)
-                conditions.append(f"r.id IN ({placeholders})")
-                params.extend(tiny_ids)
+                conditions.append("r.id IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(list(tiny_ids)))
             else:
                 conditions.append("1 = 0")
 
@@ -960,9 +960,8 @@ class DBReader:
         if fix == "日本番号资源":
             fanhao_ids = get_fanhao_record_ids(self.db_path)
             if fanhao_ids:
-                placeholders = ",".join("?" for _ in fanhao_ids)
-                conditions.append(f"r.id IN ({placeholders})")
-                params.extend(fanhao_ids)
+                conditions.append("r.id IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(list(fanhao_ids)))
             else:
                 conditions.append("1 = 0")
         elif fix == "标题完全重复":
@@ -1012,9 +1011,8 @@ class DBReader:
         elif fix == "含推广广告噪声":
             noisy_ids = get_noisy_link_record_ids(self.db_path)
             if noisy_ids:
-                placeholders = ",".join("?" for _ in noisy_ids)
-                conditions.append(f"r.id IN ({placeholders})")
-                params.extend(noisy_ids)
+                conditions.append("r.id IN (SELECT value FROM json_each(?))")
+                params.append(json.dumps(list(noisy_ids)))
             else:
                 conditions.append("1 = 0")
 
@@ -1504,8 +1502,23 @@ class PDFRequestHandler(BaseHTTPRequestHandler):
                 return
             mtime = query.get("mtime", ["0"])[0]
 
-            if not file_path or not os.path.exists(file_path):
+            if not file_path or not file_path.lower().endswith(".pdf") or not os.path.exists(file_path):
                 self.send_error(404, "File not found")
+                return
+            real_path = os.path.realpath(file_path)
+            allowed_roots = (
+                os.path.realpath(PDF_BASE_DIR),
+                os.path.realpath(PROJECT_ROOT),
+            )
+            try:
+                allowed = any(
+                    os.path.commonpath([real_path, root]) == root
+                    for root in allowed_roots
+                )
+            except ValueError:
+                allowed = False
+            if not allowed:
+                self.send_error(403, "Forbidden")
                 return
 
             try:
@@ -1523,8 +1536,10 @@ class PDFRequestHandler(BaseHTTPRequestHandler):
                     if 0 <= page_num < len(doc):
                         pix = doc[page_num].get_pixmap(dpi=dpi)
                         img_bytes = pix.tobytes("jpeg", quality)
-                        with open(cpath, "wb") as f:
+                        tmp_path = f"{cpath}.{os.getpid()}.{threading.get_ident()}.tmp"
+                        with open(tmp_path, "wb") as f:
                             f.write(img_bytes)
+                        os.replace(tmp_path, cpath)
                     doc.close()
 
                 if img_bytes:
@@ -1543,35 +1558,32 @@ class PDFRequestHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
 
 
-_PDF_SERVER_PORT = None
-_PDF_SERVER_LOCK = threading.Lock()
-
-
-def ensure_pdf_server_started(start_port=8515) -> int:
-    """确保全局单例后台多线程 HTTP 静态服务已启动"""
-    global _PDF_SERVER_PORT
-    with _PDF_SERVER_LOCK:
-        if _PDF_SERVER_PORT is not None:
-            return _PDF_SERVER_PORT
-        for p in range(start_port, start_port + 50):
-            try:
-                server = ThreadingHTTPServer(('127.0.0.1', p), PDFRequestHandler)
-                t = threading.Thread(target=server.serve_forever, daemon=True)
-                t.start()
-                _PDF_SERVER_PORT = p
-                return p
-            except OSError:
-                continue
-        # 所有预设端口均被占用时，回退到系统分配的空闲端口
+def _start_pdf_server(start_port=8515) -> int:
+    """启动后台多线程 HTTP 静态服务并返回端口"""
+    for p in range(start_port, start_port + 50):
         try:
-            server = ThreadingHTTPServer(('127.0.0.1', 0), PDFRequestHandler)
+            server = ThreadingHTTPServer(('127.0.0.1', p), PDFRequestHandler)
             t = threading.Thread(target=server.serve_forever, daemon=True)
             t.start()
-            _PDF_SERVER_PORT = server.server_address[1]
-            return _PDF_SERVER_PORT
+            return p
         except OSError:
-            _PDF_SERVER_PORT = 0
-            return 0
+            continue
+    # 所有预设端口均被占用时，回退到系统分配的空闲端口
+    try:
+        server = ThreadingHTTPServer(('127.0.0.1', 0), PDFRequestHandler)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        return server.server_address[1]
+    except OSError:
+        return 0
+
+
+_cached_pdf_server = getattr(st, "cache_resource", None)
+if _cached_pdf_server is not None:
+    ensure_pdf_server_started = _cached_pdf_server(show_spinner=False)(_start_pdf_server)
+else:
+    def ensure_pdf_server_started(start_port=8515) -> int:
+        return _start_pdf_server(start_port)
 
 
 @st.cache_data(max_entries=3000, ttl=3600, show_spinner=False)

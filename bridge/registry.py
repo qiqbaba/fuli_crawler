@@ -687,7 +687,10 @@ def normalize_params(tool: Tool, raw: Dict[str, Any]) -> Dict[str, Any]:
     for spec in tool.params:
         value = raw.get(spec.name, spec.default)
         if spec.type == "bool":
-            value = bool(value)
+            if isinstance(value, str):
+                value = value.strip().lower() in ("1", "true", "yes", "on")
+            else:
+                value = bool(value)
         elif spec.type == "int":
             try:
                 value = int(value)

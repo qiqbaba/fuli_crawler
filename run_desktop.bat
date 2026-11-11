@@ -32,10 +32,13 @@ echo   Dev mode: http://127.0.0.1:4173
 echo   Frontend build not found, starting Vite dev server
 echo ========================================================
 start "Fuli API" /min "%PY%" -m uvicorn bridge.api:app --host 127.0.0.1 --port 8000
-timeout /t 2 /nobreak >nul
-start "" http://127.0.0.1:4173
 cd /d "%~dp0desktop"
-call npm run dev
+start "Fuli Vite" cmd /c "npm run dev"
+timeout /t 6 /nobreak >nul
+start "" http://127.0.0.1:4173
+echo.
+echo Frontend dev server runs in the window "Fuli Vite".
+pause
 goto end
 
 :end

@@ -277,11 +277,24 @@ def find_name_variant_duplicates(pdf_files: List[PDFFileInfo]) -> Dict[str, List
         if norm_key:
             variant_groups[norm_key].append(fi)
 
-    duplicate_variants = {k: v for k, v in variant_groups.items() if len(v) > 1}
+    # 同名变体必须再做内容校验，避免把 _1.pdf 等不同资源误判为副本
+    duplicate_variants: Dict[str, List[PDFFileInfo]] = {}
+    for key, flist in variant_groups.items():
+        if len(flist) < 2:
+            continue
+        content_groups: Dict[str, List[PDFFileInfo]] = defaultdict(list)
+        for fi in flist:
+            _, digest = _compute_full_md5(fi)
+            if digest:
+                content_groups[digest].append(fi)
+        for digest, same_content in content_groups.items():
+            if len(same_content) > 1:
+                duplicate_variants[f"{key}:{digest[:12]}"] = same_content
+
     t1 = time.time()
 
     total_variant_files = sum(len(v) for v in duplicate_variants.values())
-    print(f"[+] 文件名变体扫描完成，发现 {len(duplicate_variants)} 组同名/标题变体，涉及 {total_variant_files} 个物理文件 (耗时 {t1 - t0:.2f}s)")
+    print(f"[+] 文件名变体扫描完成，发现 {len(duplicate_variants)} 组同名且内容一致的变体，涉及 {total_variant_files} 个物理文件 (耗时 {t1 - t0:.2f}s)")
     return duplicate_variants
 
 
@@ -479,8 +492,14 @@ def execute_dedup_plans(
 
     print("[*] 正在执行物理文件清理...")
     for p in plans:
+        if not os.path.exists(p.primary.path):
+            print(f"[!] 主保留文件不存在，跳过该组: {p.primary.path}")
+            err_count += 1
+            continue
         for dup in p.duplicates:
             try:
+                if dup.path == p.primary.path:
+                    continue
                 if not os.path.exists(dup.path):
                     continue
                 if trash_dir:
@@ -510,17 +529,17 @@ def execute_dedup_plans(
         cursor = conn.cursor()
 
         updated_records = 0
-        # 批量更新数据库引用
+        # 批量更新数据库引用（同时兼容绝对路径、相对路径与斜杠差异）
+        cursor.execute("SELECT id, pdf_path FROM resources WHERE pdf_path IS NOT NULL AND pdf_path != ''")
+        path_rows = cursor.fetchall()
         for old_rel, new_rel in global_redirect_map.items():
-            # 考虑可能保存的反斜杠/斜杠格式
             old_rel_slash = old_rel.replace("\\", "/")
             old_rel_bslash = old_rel.replace("/", "\\")
-            
-            cursor.execute(
-                "UPDATE resources SET pdf_path = ? WHERE pdf_path = ? OR pdf_path = ?",
-                (new_rel, old_rel_slash, old_rel_bslash)
-            )
-            updated_records += cursor.rowcount
+
+            for rid, p_val in path_rows:
+                if p_val in (old_rel, old_rel_slash, old_rel_bslash) or to_relative_path(p_val) == old_rel:
+                    cursor.execute("UPDATE resources SET pdf_path = ? WHERE id = ?", (new_rel, rid))
+                    updated_records += cursor.rowcount
 
         conn.commit()
         stats["db_records_redirected"] = updated_records
@@ -744,12 +763,18 @@ def run_pdf_dedup(
         else:
             print_warning(f"数据库文件不存在: {effective_db}")
 
-    # 合并与去重 Plan（防止跨模式重复处理同一文件）
+    # 合并与去重 Plan（防止跨模式重复处理同一文件，并保护任一计划中的主保留文件）
     unique_plans: List[DedupActionPlan] = []
     seen_duplicate_paths: Set[str] = set()
+    protected_primary_paths = {p.primary.path for p in all_plans if p.duplicates}
 
     for p in all_plans:
-        filtered_dups = [d for d in p.duplicates if d.path not in seen_duplicate_paths]
+        if p.primary.path in seen_duplicate_paths:
+            continue
+        filtered_dups = [
+            d for d in p.duplicates
+            if d.path not in seen_duplicate_paths and d.path not in protected_primary_paths
+        ]
         if filtered_dups:
             for d in filtered_dups:
                 seen_duplicate_paths.add(d.path)

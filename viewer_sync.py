@@ -204,9 +204,16 @@ def live_sync_status(
                 # 最终刷新一次 UI
                 _on_update(runner.raw_text)
 
-                # 判断是否有显式错误标识
-                is_failed = runner.has_error or (
-                    runner.raw_text and ("[-] 错误" in runner.raw_text or "[-] 同步执行异常" in runner.raw_text)
+                # 判断是否有显式错误标识（各调用点会吞异常并打印，需要覆盖常见错误文案）
+                is_failed = runner.has_error or bool(
+                    runner.raw_text and any(
+                        marker in runner.raw_text
+                        for marker in (
+                            "[-] 错误", "[-] 同步执行异常", "[-] 清理执行异常",
+                            "[-] 导出异常", "[-] 上传异常", "[-] 下载异常",
+                            "[-] 执行中断异常",
+                        )
+                    )
                 )
 
                 if is_failed:
@@ -216,6 +223,7 @@ def live_sync_status(
                         expanded=True
                     )
                 else:
+                    st.session_state["pdf_cache_dirty"] = True
                     status_box.update(
                         label=f"{complete_label}（耗时 {dur:.2f} 秒）",
                         state="complete",
@@ -1186,6 +1194,9 @@ def render_tab_export_links():
 
         total_urls = 0
         total_mags = 0
+        src_conn = None
+        dst_conn = None
+        tmp_path = f"{d_p}.tmp"
         with live_sync_status(
             running_label=T("正在抽取 URL 与磁力链接并构建独立轻量数据库..."),
             complete_label=T("轻量独立库导出完成"),
@@ -1198,7 +1209,12 @@ def render_tab_export_links():
                         os.remove(d_p)
                         print(f"[*] 已清理旧的导出数据库文件: {d_p}")
                     except Exception as e:
-                        print(f"[!] 清理旧文件失败: {e}")
+                        raise RuntimeError(f"旧导出库无法删除（可能被占用）: {e}") from e
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
 
                 src_conn = sqlite3.connect(s_p)
                 src_cur = src_conn.cursor()
@@ -1213,7 +1229,7 @@ def render_tab_export_links():
                 target_parent = os.path.dirname(os.path.abspath(d_p))
                 if target_parent:
                     os.makedirs(target_parent, exist_ok=True)
-                dst_conn = sqlite3.connect(d_p)
+                dst_conn = sqlite3.connect(tmp_path)
                 dst_cur = dst_conn.cursor()
 
                 dst_cur.execute("""
@@ -1257,14 +1273,35 @@ def render_tab_export_links():
                 dst_conn.commit()
 
                 dst_conn.close()
+                dst_conn = None
                 src_conn.close()
+                src_conn = None
+                os.replace(tmp_path, d_p)
 
                 out_size = os.path.getsize(d_p) if os.path.exists(d_p) else 0
                 print(f"[✓] 导出成功！目标数据库: {d_p} (体积: {format_bytes_human(out_size)})")
                 print(f"[✓] 共导出 {total_urls} 条 url 记录与 {total_mags} 条磁力链接记录")
 
             except Exception as e:
-                print(f"[-] 导出异常: {e}")
+                runner.has_error = True
+                print(f"[-] 错误: 导出异常: {e}")
+                if dst_conn is not None:
+                    try:
+                        dst_conn.close()
+                    except Exception:
+                        pass
+                    dst_conn = None
+                if src_conn is not None:
+                    try:
+                        src_conn.close()
+                    except Exception:
+                        pass
+                    src_conn = None
+                if os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
 
         raw_text = runner.get_text()
         dur = runner.get_duration()

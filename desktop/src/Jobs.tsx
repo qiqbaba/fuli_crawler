@@ -133,6 +133,7 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
+  const requestSeq = useRef(0)
 
   const jobsQuery = useQuery({
     queryKey: ['jobs'],
@@ -183,7 +184,10 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
     }
     const readState = (event: Event) => {
       try {
-        setStatus(JSON.parse((event as MessageEvent).data) as JobState)
+        const payload = JSON.parse((event as MessageEvent).data) as Partial<JobState> & { reason?: string }
+        // done 帧在超时/任务被淘汰时只带 reason，不能覆盖已有状态
+        if (!payload || typeof payload.status !== 'string') return
+        setStatus(payload as JobState)
       } catch {
         // 忽略格式异常的状态帧
       }
@@ -194,8 +198,9 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
       source.close()
     })
     source.onerror = () => {
-      setError('日志连接中断，可从「最近任务」重新打开')
+      setError('日志连接中断，已切换到任务列表轮询')
       source.close()
+      void jobsQuery.refetch()
     }
     return () => source.close()
   }, [jobId])
@@ -246,16 +251,18 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
     setLogs([])
     setStatus(null)
     setJobId(null)
+    const seq = ++requestSeq.current
     try {
       const payload: Record<string, unknown> = { ...values, _ack: ack }
       const job = await api.createJob(selected.id, payload)
+      if (seq !== requestSeq.current) return
       setLogs(job.logs ?? [])
       setStatus(job)
       setJobId(job.id)
     } catch (cause) {
-      setError(String(cause))
+      if (seq === requestSeq.current) setError(String(cause))
     } finally {
-      setSubmitting(false)
+      if (seq === requestSeq.current) setSubmitting(false)
     }
   }
 
@@ -269,11 +276,11 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
   }
 
   const openJob = (id: string) => {
+    requestSeq.current += 1
     setLogs([])
     setStatus(null)
     setError('')
-    setJobId(null)
-    window.setTimeout(() => setJobId(id), 0)
+    setJobId(id)
   }
 
   return (

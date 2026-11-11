@@ -48,8 +48,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from utils.logger import get_logger
 
-# stats.py 作为纯查询工具，应始终尝试连接已配置的云服务
-config.set_run_mode('cloud')
+# 不在导入时修改全局运行模式；查询函数直接按凭证判断云端是否可用
+
 
 logger = get_logger(__name__)
 
@@ -73,7 +73,7 @@ def query_supabase():
     logger.info("📊 Supabase (PostgreSQL) 统计")
     logger.info("=" * 50)
 
-    if not config.use_supabase():
+    if not (config.SUPABASE_URL and config.SUPABASE_KEY):
         logger.info("[-] Supabase 未配置，跳过")
         return
 
@@ -202,7 +202,7 @@ def query_r2(year=None):
     logger.info("📊 Cloudflare R2 统计")
     logger.info("=" * 50)
 
-    if not config.use_r2():
+    if not (config.R2_ACCESS_KEY_ID and config.R2_SECRET_ACCESS_KEY and config.R2_BUCKET_NAME and config.R2_ENDPOINT_URL):
         logger.info("[-] R2 未配置，跳过")
         return
 

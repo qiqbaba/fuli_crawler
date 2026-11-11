@@ -112,9 +112,15 @@ class BloomFilter:
             'bit_array': self._bit_array,
             'count': self._count,
         }
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        with open(filepath, 'wb') as f:
+        parent = os.path.dirname(filepath)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        tmp_path = f"{filepath}.tmp"
+        with open(tmp_path, 'wb') as f:
             pickle.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, filepath)
 
     @classmethod
     def load(cls, filepath: str) -> 'BloomFilter':
@@ -176,6 +182,7 @@ class DynamoDBDeduplicationService:
         self._bloom_save_interval = 120        # 自动保存间隔（秒）
         self._bloom_last_save = time.time()
         self._bloom_save_timer = None           # 定时保存定时器
+        self._bloom_stop_event = threading.Event()
         self._executor = None                  # 线程池延迟加载
 
         if not self.aws_access_key_id or not self.aws_secret_access_key:
@@ -404,11 +411,11 @@ class DynamoDBDeduplicationService:
                             needs_scan = True
                     if needs_scan:
                         logger.info("正在执行 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
+                        scanned = self.get_all_resource_links_by_scan()
                         with self._lock:
-                            if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
-                                 self._scanned_resource_links = self.get_all_resource_links_by_scan()
-                                 self._scan_cache_time = time.time()
-                                 logger.info("扫描缓存同步完成，已加载 %s 条磁力链接，缓存 TTL %s 秒。", len(self._scanned_resource_links), self._scan_cache_ttl)
+                            self._scanned_resource_links = scanned
+                            self._scan_cache_time = time.time()
+                        logger.info("扫描缓存同步完成，已加载 %s 条磁力链接，缓存 TTL %s 秒。", len(scanned), self._scan_cache_ttl)
 
                     with self._lock:
                         for link in links_to_query:
@@ -429,11 +436,11 @@ class DynamoDBDeduplicationService:
                 needs_scan = True
         if needs_scan:
             logger.info("正在执行 AWS DynamoDB 全表扫描以同步磁力链接缓存...")
+            scanned = self.get_all_resource_links_by_scan()
             with self._lock:
-                if self._scanned_resource_links is None or (time.time() - self._scan_cache_time) > self._scan_cache_ttl:
-                     self._scanned_resource_links = self.get_all_resource_links_by_scan()
-                     self._scan_cache_time = time.time()
-                     logger.info("扫描缓存同步完成，已加载 %s 条磁力链接，缓存 TTL %s 秒。", len(self._scanned_resource_links), self._scan_cache_ttl)
+                self._scanned_resource_links = scanned
+                self._scan_cache_time = time.time()
+            logger.info("扫描缓存同步完成，已加载 %s 条磁力链接，缓存 TTL %s 秒。", len(scanned), self._scan_cache_ttl)
 
         with self._lock:
             for link in links_to_query:
@@ -576,8 +583,7 @@ class DynamoDBDeduplicationService:
     def _start_bloom_save_timer(self):
         """启动定时保存 Bloom Filter 的后台定时器"""
         def _timer_loop():
-            while True:
-                time.sleep(self._bloom_save_interval)
+            while not self._bloom_stop_event.wait(self._bloom_save_interval):
                 self._save_bloom_filter()
 
         self._bloom_save_timer = threading.Thread(
@@ -606,7 +612,8 @@ class DynamoDBDeduplicationService:
         
         在关闭前将 Bloom Filter 持久化到本地，避免数据丢失。
         """
-        # 关闭前确保 Bloom Filter 已持久化
+        # 关闭前确保 Bloom Filter 已持久化，并停止后台定时器
+        self._bloom_stop_event.set()
         if self._bloom_dirty:
             self._save_bloom_filter_sync()
         self._bloom_save_timer = None

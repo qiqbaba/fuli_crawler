@@ -61,6 +61,13 @@ class BaseDBManager(ABC):
             except Exception:
                 pass
         self.persistence.close()
+        try:
+            if getattr(self, 'conn', None) is not None:
+                self.conn.commit()
+                self.conn.close()
+                self.conn = None
+        except Exception:
+            pass
 
     # ========== 爬虫断点续爬状态管理 ==========
 

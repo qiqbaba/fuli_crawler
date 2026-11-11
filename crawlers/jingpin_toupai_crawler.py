@@ -292,11 +292,15 @@ class JingpinToupaiCrawler(PlaywrightBaseCrawler, DomainRotationMixin, DecryptMi
 
     def run(self, is_test=False, start_page=1, end_page=1, max_workers=None, **kwargs):
         """爬虫流程入口，使用基类的多板块爬取逻辑"""
+        self.no_pdf = bool(kwargs.get("no_pdf", getattr(self, "no_pdf", False)))
         if max_workers is None:
-            if getattr(self, 'no_pdf', False):
+            import os
+            if os.environ.get("GITHUB_ACTIONS") == "true":
+                max_workers = 4
+            elif self.no_pdf:
                 max_workers = 30
             else:
-                max_workers = 5  # 合理线程数，Playwright 不易卡死
-        
+                max_workers = 5
+
         super().run(is_test=is_test, start_page=start_page, end_page=end_page, 
                    max_workers=max_workers, **kwargs)

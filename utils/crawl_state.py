@@ -163,10 +163,8 @@ class SupabaseCrawlStateService:
             result = {}
             if resp.data:
                 for row in resp.data:
-                    if row["class_name"] == "__all__":
-                        continue
                     result[row["class_name"]] = {
-                        "page_num": row["page_num"],
+                        "page_num": row["page_num"] or 1,
                         "completed": bool(row["completed"])
                     }
             return result
