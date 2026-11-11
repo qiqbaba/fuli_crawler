@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   api,
@@ -7,6 +7,9 @@ import {
   type ToolParam,
   type ToolSpec,
 } from './api'
+import Artifacts from './Artifacts'
+import CloudUsage from './CloudUsage'
+import R2CleanupPreview from './R2CleanupPreview'
 
 type ParamValue = string | number | boolean
 type ParamValues = Record<string, ParamValue>
@@ -21,6 +24,16 @@ const STATUS_LABEL: Record<string, string> = {
 }
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled'])
 
+// 参数间的联动约束：与 registry.py 的 argv_builder 语义保持一致
+const DEPENDENCIES: Record<string, Record<string, string>> = {
+  'r2-download': { delete_missing: 'delete_after' },
+}
+// 会产生落盘文件的工具，展示「产物文件」面板
+const ARTIFACT_TOOLS = new Set([
+  'db-backup', 'export-links', 'pdf-dedup', 'clean-missing', 'clean-noise',
+  'record-duplicates', 'fanhao', 'check-dates',
+])
+
 function defaultValues(tool: ToolSpec | null): ParamValues {
   const values: ParamValues = {}
   for (const spec of tool?.params ?? []) values[spec.name] = spec.default
@@ -28,20 +41,20 @@ function defaultValues(tool: ToolSpec | null): ParamValues {
 }
 
 function ParamField({
-  spec,
-  value,
-  onChange,
+  spec, value, onChange, disabled,
 }: {
   spec: ToolParam
   value: ParamValue
   onChange: (next: ParamValue) => void
+  disabled: boolean
 }) {
   if (spec.type === 'bool') {
     return (
-      <label className="param-field param-check">
+      <label className={`param-field param-check ${disabled ? 'disabled' : ''}`}>
         <input
           type="checkbox"
           checked={Boolean(value)}
+          disabled={disabled}
           onChange={(event) => onChange(event.target.checked)}
         />
         <span title={spec.help}>{spec.label}</span>
@@ -52,7 +65,11 @@ function ParamField({
     return (
       <label className="param-field">
         <span title={spec.help}>{spec.label}</span>
-        <select value={String(value)} onChange={(event) => onChange(event.target.value)}>
+        <select
+          value={String(value)}
+          disabled={disabled}
+          onChange={(event) => onChange(event.target.value)}
+        >
           {spec.options.map((option) => (
             <option key={option} value={option}>{option}</option>
           ))}
@@ -69,6 +86,7 @@ function ParamField({
           min={spec.min ?? undefined}
           max={spec.max ?? undefined}
           value={Number(value)}
+          disabled={disabled}
           onChange={(event) => onChange(Number(event.target.value))}
         />
       </label>
@@ -76,10 +94,11 @@ function ParamField({
   }
   return (
     <label className="param-field">
-      <span>{spec.label}</span>
+      <span title={spec.help}>{spec.label}</span>
       <input
         type="text"
         value={String(value)}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
@@ -93,6 +112,17 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
     staleTime: 5 * 60_000,
   })
   const tools = (toolsQuery.data?.tools ?? []).filter((tool) => tool.group === group)
+  const grouped = useMemo(() => {
+    const sections = new Map<string, ToolSpec[]>()
+    for (const tool of tools) {
+      const list = sections.get(tool.section) ?? []
+      list.push(tool)
+      sections.set(tool.section, list)
+    }
+    return [...sections.entries()].sort(
+      ([, left], [, right]) => (left[0]?.section_order ?? 99) - (right[0]?.section_order ?? 99),
+    )
+  }, [tools])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const selected = tools.find((tool) => tool.id === selectedId) ?? tools[0] ?? null
   const [values, setValues] = useState<ParamValues>({})
@@ -113,11 +143,6 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
 
   const queryClient = useQueryClient()
   const statsQuery = useQuery({ queryKey: ['stats'], queryFn: api.stats })
-  const backupsQuery = useQuery({
-    queryKey: ['backups'],
-    queryFn: api.backups,
-    enabled: selected?.id === 'db-backup',
-  })
   const cacheQuery = useQuery({
     queryKey: ['cache-overview'],
     queryFn: api.cacheOverview,
@@ -126,7 +151,7 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
 
   useEffect(() => {
     if (!status || !TERMINAL.has(status.status)) return
-    queryClient.invalidateQueries({ queryKey: ['backups'] })
+    queryClient.invalidateQueries({ queryKey: ['artifacts'] })
     queryClient.invalidateQueries({ queryKey: ['cache-overview'] })
     queryClient.invalidateQueries({ queryKey: ['stats'] })
     queryClient.invalidateQueries({ queryKey: ['analytics'] })
@@ -180,6 +205,36 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
     if (element) element.scrollTop = element.scrollHeight
   }, [logs])
 
+  const hasDryRun = selected?.params.some(
+    (spec) => spec.name === 'run' && spec.default === false,
+  ) ?? false
+  const presets = selected?.presets
+
+  const setParam = (name: string, next: ParamValue) => {
+    setValues((previous) => {
+      const updated = { ...previous, [name]: next }
+      if (selected?.id === 'replace-domain' && name === 'preset' && presets) {
+        const pair = presets[String(next)]
+        if (pair) {
+          updated.old = pair.old
+          updated.new = pair.new
+        }
+      }
+      return updated
+    })
+  }
+
+  const isDisabled = (spec: ToolParam): boolean => {
+    const dependency = DEPENDENCIES[selected?.id ?? '']?.[spec.name]
+    if (dependency && !Boolean(values[dependency])) return true
+    if (
+      selected?.id === 'replace-domain' && presets &&
+      (spec.name === 'old' || spec.name === 'new') &&
+      presets[String(values.preset ?? '自定义')]
+    ) return true
+    return false
+  }
+
   const submit = async () => {
     if (!selected) return
     if (selected.danger && !ack) {
@@ -228,22 +283,28 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
           {group === 'maintenance' ? '批量管理工具' : '云端同步工具'} · {tools.length}
         </div>
         {toolsQuery.isError && <div className="panel-error">{String(toolsQuery.error)}</div>}
-        {tools.map((tool) => (
-          <button
-            key={tool.id}
-            className={`tool-item ${selected?.id === tool.id ? 'active' : ''}`}
-            onClick={() => setSelectedId(tool.id)}
-          >
-            <span className="tool-head">
-              <span className="tool-name">{tool.title}</span>
-              {tool.danger && <span className="tool-danger">需确认</span>}
-            </span>
-            <span className="tool-desc">{tool.description}</span>
-          </button>
+        {grouped.map(([section, list]) => (
+          <div className="tool-group" key={section}>
+            <div className="tool-group-title">{section} · {list.length}</div>
+            {list.map((tool) => (
+              <button
+                key={tool.id}
+                className={`tool-item ${selected?.id === tool.id ? 'active' : ''}`}
+                onClick={() => setSelectedId(tool.id)}
+              >
+                <span className="tool-head">
+                  <span className="tool-name">{tool.title}</span>
+                  {tool.danger && <span className="tool-danger">需确认</span>}
+                </span>
+                <span className="tool-desc">{tool.description}</span>
+              </button>
+            ))}
+          </div>
         ))}
       </aside>
 
       <section className="job-main">
+        {group === 'sync' && <CloudUsage />}
         {!selected ? (
           <div className="empty">工具目录加载中或为空</div>
         ) : (
@@ -257,14 +318,13 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
                 </p>
               )}
               <div className="param-grid">
-                {selected.params.filter((spec) => spec.name !== 'confirm').map((spec) => (
+                {selected.params.map((spec) => (
                   <ParamField
                     key={spec.name}
                     spec={spec}
                     value={values[spec.name] ?? spec.default}
-                    onChange={(next) =>
-                      setValues((previous) => ({ ...previous, [spec.name]: next }))
-                    }
+                    disabled={isDisabled(spec)}
+                    onChange={(next) => setParam(spec.name, next)}
                   />
                 ))}
               </div>
@@ -275,7 +335,9 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
                     checked={ack}
                     onChange={(event) => setAck(event.target.checked)}
                   />
-                  我已知晓该工具可能改动数据；默认仅以 Dry Run 预览
+                  {hasDryRun
+                    ? '我已知晓该工具可能改动数据；默认仅以 Dry Run 预览，需再勾选「正式执行」参数才会写入'
+                    : '我已知晓该工具没有预览模式，确认后会立即写入数据'}
                 </label>
               )}
               <div className="form-actions">
@@ -300,36 +362,13 @@ export default function JobsPanel({ group }: { group: 'maintenance' | 'sync' }) 
               </div>
             )}
 
-            {selected.id === 'db-backup' && (
-              <div className="aux-panel">
-                <div className="panel-title">历史备份（与主库同目录）</div>
-                {backupsQuery.isError && (
-                  <div className="panel-error">{String(backupsQuery.error)}</div>
-                )}
-                {backupsQuery.data && backupsQuery.data.backups.length === 0 && (
-                  <span className="hint">暂无备份文件</span>
-                )}
-                {backupsQuery.data && backupsQuery.data.backups.length > 0 && (
-                  <table className="aux-table">
-                    <thead>
-                      <tr>
-                        <th>备份文件</th>
-                        <th>体积</th>
-                        <th>时间</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {backupsQuery.data.backups.slice(0, 8).map((item) => (
-                        <tr key={item.path}>
-                          <td title={item.path}>{item.name}</td>
-                          <td>{item.size_mb} MB</td>
-                          <td>{new Date(item.mtime * 1000).toLocaleString('zh-CN')}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
+            {ARTIFACT_TOOLS.has(selected.id) && <Artifacts />}
+
+            {selected.id === 'r2-clean' && (
+              <R2CleanupPreview
+                prefix={String(values.prefix ?? 'pdf/')}
+                localDir={String(values.local_dir ?? '')}
+              />
             )}
 
             {selected.id === 'warmup-cache' && (

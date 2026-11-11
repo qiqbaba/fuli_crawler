@@ -319,13 +319,6 @@ def download_all_pdfs(output_dir, pdfs, resume=True, workers=30):
     start_time = time.time()
     stop_event = threading.Event()
     reporter = threading.Thread(target=_progress_reporter, args=(total, stop_event, start_time), daemon=True)
-    try:
-        from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
-        ctx = get_script_run_ctx()
-        if ctx:
-            add_script_run_ctx(reporter, ctx)
-    except Exception:
-        pass
     reporter.start()
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:

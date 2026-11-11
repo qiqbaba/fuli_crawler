@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from config import PROJECT_ROOT
 
-from . import db, jobs, thumbs
+from . import artifacts, cloud_probe, db, jobs, thumbs
 from .registry import tool_catalog
 
 app = FastAPI(title="资源库工作台 API", version="0.1.0")
@@ -101,20 +101,26 @@ class RevealRequest(BaseModel):
 
 @app.post("/api/reveal")
 def reveal(request: RevealRequest) -> Dict[str, Any]:
-    """在系统资源管理器中定位本地 PDF；路径必须落在允许的根目录内。"""
+    """在系统资源管理器中定位本地 PDF 或工作台产物文件 / 目录。"""
     real_path = thumbs.resolve_for_request(request.path)
+    if not real_path:
+        real_path = artifacts.resolve_for_request(request.path)
     if not real_path:
         raise HTTPException(status_code=404, detail="文件不存在或路径不被允许")
     import subprocess
     import sys
 
+    is_dir = os.path.isdir(real_path)
     try:
         if sys.platform.startswith("win"):
-            subprocess.Popen(["explorer", "/select,", os.path.normpath(real_path)])
+            args = ["explorer", os.path.normpath(real_path)] if is_dir else [
+                "explorer", "/select,", os.path.normpath(real_path),
+            ]
+            subprocess.Popen(args)
         elif sys.platform == "darwin":
-            subprocess.Popen(["open", "-R", real_path])
+            subprocess.Popen(["open", real_path] if is_dir else ["open", "-R", real_path])
         else:
-            subprocess.Popen(["xdg-open", os.path.dirname(real_path)])
+            subprocess.Popen(["xdg-open", real_path if is_dir else os.path.dirname(real_path)])
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"无法打开文件管理器: {exc}") from exc
     return {"ok": True, "path": real_path}
@@ -128,6 +134,51 @@ def backups() -> Dict[str, Any]:
 @app.get("/api/cache-overview")
 def cache_overview() -> Dict[str, Any]:
     return db.get_cache_overview()
+
+
+@app.get("/api/artifacts")
+def artifact_list() -> Dict[str, Any]:
+    """备份 / 导出库 / 审计表 / 报告清单，补齐旧版只在日志里打印路径的缺口。"""
+    return {
+        "artifacts": artifacts.list_artifacts(),
+        "roots": artifacts.allowed_roots(),
+    }
+
+
+@app.get("/api/artifacts/download")
+def artifact_download(path: str) -> Response:
+    """按白名单下载产物文件；FileResponse 会带 Content-Disposition: attachment。"""
+    real_path = artifacts.resolve_for_request(path)
+    if not real_path or not os.path.isfile(real_path):
+        raise HTTPException(status_code=404, detail="产物文件不存在或路径不被允许")
+    return FileResponse(
+        real_path,
+        filename=os.path.basename(real_path),
+        media_type="application/octet-stream",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/cloud-usage")
+def cloud_usage(
+    supabase: bool = True,
+    r2: bool = True,
+    dynamodb: bool = True,
+    year: str = "",
+) -> Dict[str, Any]:
+    """结构化多云用量快照（只读），对齐旧版「多云用量监控」面板的指标与明细表。"""
+    return cloud_probe.usage_report({
+        "supabase": supabase,
+        "r2": r2,
+        "dynamodb": dynamodb,
+        "year": year,
+    })
+
+
+@app.get("/api/r2-cleanup-preview")
+def r2_cleanup_preview(prefix: str = "pdf/", local_dir: str = "") -> Dict[str, Any]:
+    """只读预检 R2 待清理对象与本地副本情况（旧版两阶段确认区的结构化版本）。"""
+    return cloud_probe.cleanup_preview(prefix, local_dir)
 
 
 @app.get("/api/pdf-page")
@@ -186,6 +237,8 @@ def create_job(request: JobRequest) -> Dict[str, Any]:
         job = jobs.create_job(request.tool_id, request.params)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return job.to_dict(include_logs=True)

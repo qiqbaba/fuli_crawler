@@ -47,6 +47,7 @@ class Job:
     proc: Optional[subprocess.Popen] = None
     lock: threading.Lock = field(default_factory=threading.Lock)
     metrics: Optional[List[Dict[str, Any]]] = None
+    ack: bool = False
 
     def append(self, line: str) -> None:
         with self.lock:
@@ -110,7 +111,12 @@ def create_job(tool_id: str, raw_params: Dict[str, Any]) -> Job:
     tool = TOOLS.get(tool_id)
     if tool is None:
         raise KeyError(f"未注册的工具: {tool_id}")
-    params = normalize_params(tool, raw_params or {})
+    raw = raw_params or {}
+    ack = raw.get("_ack") is True
+    if tool.danger and not ack:
+        raise ValueError("该工具可能改动数据，请先在页面勾选风险确认")
+    # _ack 只作为任务级确认标志，不进入规范化后的工具参数白名单
+    params = normalize_params(tool, raw)
 
     with _GLOBAL_LOCK:
         active = sum(1 for job in _JOBS.values() if job.status not in TERMINAL_STATUSES)
@@ -120,7 +126,10 @@ def create_job(tool_id: str, raw_params: Dict[str, Any]) -> Job:
             finished = [j for j in _JOBS.values() if j.status in TERMINAL_STATUSES]
             for old in sorted(finished, key=lambda j: j.created_at)[: len(_JOBS) - MAX_JOBS + 1]:
                 _JOBS.pop(old.id, None)
-        job = Job(id=uuid.uuid4().hex[:12], tool_id=tool_id, title=tool.title, params=params)
+        job = Job(
+            id=uuid.uuid4().hex[:12], tool_id=tool_id, title=tool.title,
+            params=params, ack=ack,
+        )
         _JOBS[job.id] = job
 
     threading.Thread(target=_execute, args=(job,), daemon=True).start()
@@ -128,9 +137,12 @@ def create_job(tool_id: str, raw_params: Dict[str, Any]) -> Job:
 
 
 def _execute(job: Job) -> None:
+    # _ack 随任务下发，子进程据此做第二道风险确认；worker 的参数白名单
+    # 仍只接受注册表声明的字段，不会把它拼进 CLI。
+    payload = {**job.params, "_ack": job.ack}
     command = [
         sys.executable, "-m", "bridge.worker", job.tool_id,
-        json.dumps(job.params, ensure_ascii=False),
+        json.dumps(payload, ensure_ascii=False),
     ]
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"

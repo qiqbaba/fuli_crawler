@@ -313,10 +313,11 @@ def main() -> int:
     print(f"[任务] 工具: {tool.title} ({tool.id})")
     print(f"[任务] 参数: {json.dumps(params, ensure_ascii=False)}")
 
-    # 危险工具必须由前端显式携带风险确认，形成前端勾选之外的第二道拦截
+    # 危险工具必须由工作台显式携带风险确认，形成页面勾选之外的第二道拦截。
+    # 拒绝时返回非零退出码，避免「未执行」被误报为任务成功。
     if tool.danger and raw.get("_ack") is not True:
         print("[任务] 未通过风险确认，已拒绝执行（危险工具需携带 _ack）")
-        return 0
+        return 3
 
     if tool.mode == "module":
         argv = list(tool.command)

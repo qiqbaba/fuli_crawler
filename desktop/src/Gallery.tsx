@@ -309,6 +309,41 @@ interface TableProps {
   onReveal: (item: RecordItem) => void
 }
 
+function TableDeleteConfirm({
+  item, deleting, onConfirm, onCancel,
+}: {
+  item: RecordItem
+  deleting: boolean
+  onConfirm: (item: RecordItem) => void
+  onCancel: () => void
+}) {
+  const refsQuery = useQuery({
+    queryKey: ['pdf-refs', String(item.id), item.pdf_path],
+    queryFn: () => api.pdfRefs(item.id, item.pdf_path),
+    staleTime: 60_000,
+  })
+  const otherRefs = refsQuery.data?.other_refs ?? 0
+  const hint = otherRefs > 0
+    ? `本地 PDF 仍被其他 ${otherRefs} 条记录共享引用，确认后仅删除本条数据库记录，物理文件安全保留`
+    : item.has_pdf
+      ? '将永久删除本条记录及对应的本地 PDF 文件，此操作不可撤销'
+      : '将删除本条数据库记录，此操作不可撤销'
+  const label = otherRefs > 0 ? '仅删记录' : item.has_pdf ? '删记录+PDF' : '确认删除'
+  return (
+    <>
+      <button
+        className="mini danger"
+        title={hint}
+        disabled={deleting}
+        onClick={() => onConfirm(item)}
+      >
+        {deleting ? '删除中…' : label}
+      </button>
+      <button className="mini" onClick={onCancel}>取消</button>
+    </>
+  )
+}
+
 function RecordTable({
   items, pathMode, deletingId, confirmId, onAskDelete, onCancelDelete, onDelete, onReveal,
 }: TableProps) {
@@ -357,18 +392,20 @@ function RecordTable({
                   {link && (
                     <a href={link} target="_blank" rel="noreferrer">打开</a>
                   )}
-                  <button className="mini" onClick={() => onReveal(item)}>定位</button>
+                  <button
+                    className="mini"
+                    disabled={!item.has_pdf && !item.resolved_path}
+                    onClick={() => onReveal(item)}
+                  >
+                    定位
+                  </button>
                   {confirmId === String(item.id) ? (
-                    <>
-                      <button
-                        className="mini danger"
-                        disabled={deletingId === String(item.id)}
-                        onClick={() => onDelete(item)}
-                      >
-                        {deletingId === String(item.id) ? '删除中…' : '确认删除'}
-                      </button>
-                      <button className="mini" onClick={onCancelDelete}>取消</button>
-                    </>
+                    <TableDeleteConfirm
+                      item={item}
+                      deleting={deletingId === String(item.id)}
+                      onConfirm={onDelete}
+                      onCancel={onCancelDelete}
+                    />
                   ) : (
                     <button className="mini danger" onClick={() => onAskDelete(item.id)}>
                       删除
@@ -633,6 +670,16 @@ export default function Gallery() {
       {scrollArea}
 
       <footer className="pagination">
+        <span>共 {formatNumber(total)} 条</span>
+        <select
+          value={pageSize}
+          onChange={(event) => setPageSize(Number(event.target.value))}
+          title="每页条数（与顶部联动）"
+        >
+          {(options?.page_sizes ?? [10, 20, 30, 40, 50]).map((value) => (
+            <option key={value} value={value}>{value} 条/页</option>
+          ))}
+        </select>
         <button disabled={page <= 1} onClick={() => setPage(page - 1)}>
           ‹ 上一页
         </button>

@@ -75,6 +75,10 @@ export default function App() {
             <span className="stat-value">{statsQuery.data?.categories.length ?? 0}</span>
             <span className="stat-label">内容分类</span>
           </div>
+          <div className="stat">
+            <span className="stat-value">{formatNumber(statsQuery.data?.orphan_count ?? 0)}</span>
+            <span className="stat-label">磁盘孤儿</span>
+          </div>
         </div>
 
         <div className="theme-switch">

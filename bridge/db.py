@@ -402,12 +402,21 @@ def _order_clause(sort_by: str, dup_field: str) -> str:
     return f"d.max_id DESC, r.{dup_field} ASC, r.id ASC"
 
 
+def _orphan_count() -> int:
+    """顶栏展示的磁盘孤儿数，与旧版 get_db_stats 保持一致；复用扫描缓存。"""
+    try:
+        return _cached_scan("orphan_count", lambda: len(_orphan_records()))
+    except Exception:
+        return 0
+
+
 def get_stats() -> Dict[str, Any]:
     db_path = get_db_path()
     if not os.path.exists(db_path):
         return {
             "total": 0, "has_pdf_record": 0, "sources": [], "categories": [],
             "db_path": db_path, "db_size_mb": 0.0, "pdf_dir": PDF_BASE_DIR,
+            "orphan_count": 0,
         }
     with connect() as conn:
         total = conn.execute("SELECT COUNT(*) FROM resources").fetchone()[0]
@@ -428,6 +437,7 @@ def get_stats() -> Dict[str, Any]:
         "db_path": db_path,
         "db_size_mb": round(os.path.getsize(db_path) / (1024 * 1024), 2),
         "pdf_dir": PDF_BASE_DIR,
+        "orphan_count": _orphan_count(),
     }
 
 

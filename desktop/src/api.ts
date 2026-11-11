@@ -24,6 +24,7 @@ export interface Stats {
   db_path: string
   db_size_mb: number
   pdf_dir: string
+  orphan_count: number
 }
 
 export interface FilterOptions {
@@ -79,6 +80,15 @@ export interface BackupItem {
   path: string
 }
 
+export interface ArtifactItem {
+  name: string
+  path: string
+  dir: string
+  kind: string
+  size_mb: number
+  mtime: number
+}
+
 export interface CacheOverview {
   pdf_records: number
   warm_units: number
@@ -107,6 +117,60 @@ export interface AnalyticsData {
   matrix_data: AnalyticsMatrixRow[]
 }
 
+export interface R2CleanupPreviewData {
+  ok: boolean
+  reason?: string
+  prefix: string
+  local_dir: string
+  total: number
+  have_count: number
+  missing_count: number
+  missing_size_human: string
+  missing_preview: Array<{ key: string; size_human: string }>
+  elapsed_ms: number
+}
+
+export interface CloudUsageParams {
+  supabase: boolean
+  r2: boolean
+  dynamodb: boolean
+  year: string
+}
+
+export interface CloudUsageData {
+  generated_at: string
+  elapsed_ms: number
+  errors: string[]
+  supabase: {
+    ok: boolean
+    reason?: string
+    record_count?: number
+    pdf_count?: number
+    size_human?: string
+    size_rpc?: string
+    size_estimated?: boolean
+    sources: Array<{ source: string; count: number }>
+    quota_mb?: number
+  }
+  r2: {
+    ok: boolean
+    reason?: string
+    prefix?: string
+    file_count?: number
+    size_human?: string
+    years: Array<{ year: string; count: number; size_human: string }>
+    quota_gb?: number
+  }
+  dynamodb: {
+    ok: boolean
+    reason?: string
+    item_count?: number
+    size_human?: string
+    status?: string
+    quota_gb?: number
+  }
+}
+
 export interface ToolParam {
   name: string
   label: string
@@ -124,7 +188,10 @@ export interface ToolSpec {
   title: string
   description: string
   danger: boolean
+  section: string
+  section_order: number
   params: ToolParam[]
+  presets?: Record<string, { old: string; new: string }>
 }
 
 export interface ToolCatalog {
@@ -205,6 +272,9 @@ export const jobStreamUrl = (jobId: string) =>
 export const pdfFileUrl = (path: string) =>
   `/api/pdf-file?${new URLSearchParams({ path }).toString()}`
 
+export const artifactDownloadUrl = (path: string) =>
+  `/api/artifacts/download?${new URLSearchParams({ path }).toString()}`
+
 export const api = {
   stats: () => fetchJson<Stats>('/api/stats'),
   analytics: () => fetchJson<AnalyticsData>('/api/analytics'),
@@ -222,7 +292,16 @@ export const api = {
     ),
   reveal: (path: string) => postJson<{ ok: boolean; path: string }>('/api/reveal', { path }),
   backups: () => fetchJson<{ backups: BackupItem[] }>('/api/backups'),
+  artifacts: () =>
+    fetchJson<{ artifacts: ArtifactItem[]; roots: string[] }>('/api/artifacts'),
   cacheOverview: () => fetchJson<CacheOverview>('/api/cache-overview'),
+  cloudUsage: (params: CloudUsageParams) =>
+    fetchJson<CloudUsageData>('/api/cloud-usage', params),
+  r2CleanupPreview: (prefix: string, localDir: string) =>
+    fetchJson<R2CleanupPreviewData>('/api/r2-cleanup-preview', {
+      prefix,
+      local_dir: localDir,
+    }),
   tools: () => fetchJson<ToolCatalog>('/api/tools'),
   createJob: (toolId: string, params: Record<string, unknown>) =>
     postJson<JobState>('/api/jobs', { tool_id: toolId, params }),

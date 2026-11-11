@@ -55,12 +55,15 @@ class Tool:
     argv_builder: Callable[[Dict[str, Any]], List[str]] | None = None
 
     def to_dict(self) -> Dict[str, Any]:
+        section = SECTIONS.get(self.id, "其他")
         return {
             "id": self.id,
             "group": self.group,
             "title": self.title,
             "description": self.description,
             "danger": self.danger,
+            "section": section,
+            "section_order": SECTION_ORDER.index(section) if section in SECTION_ORDER else 99,
             "params": [p.to_dict() for p in self.params],
         }
 
@@ -499,7 +502,7 @@ _TOOL_LIST: Tuple[Tool, ...] = (
         id="db-vacuum", group="maintenance", title="数据库 VACUUM 压缩",
         description="压缩数据库文件、回收空间；大库可能耗时较长。",
         mode="callable", runner="db_vacuum", danger=True,
-        params=(Param("confirm", "我已知晓该操作会改写数据库文件", "bool", False),),
+        params=(),
     ),
     # ---------------- 云端同步 ----------------
     Tool(
@@ -532,7 +535,6 @@ _TOOL_LIST: Tuple[Tool, ...] = (
             Param("db", "本地 SQLite 路径（留空用主库）", "text", ""),
             Param("backup", "同步前备份本地数据库", "bool", True),
             Param("delete_cloud", "同步后清理云端已同步记录", "bool", False),
-            Param("confirm", "我已知晓该工具会写入本地数据库", "bool", False),
         ),
     ),
     Tool(
@@ -588,7 +590,6 @@ _TOOL_LIST: Tuple[Tool, ...] = (
         argv_builder=lambda p: ["--db", _db(p)], danger=True,
         params=(
             Param("db", "本地 SQLite 路径（留空用主库）", "text", ""),
-            Param("confirm", "我已知晓该工具会写入 DynamoDB", "bool", False),
         ),
     ),
     Tool(
@@ -616,11 +617,68 @@ _TOOL_LIST: Tuple[Tool, ...] = (
     ),
 )
 
+# 分组与旧工作台的子页签 / 卡片面板一一对应，便于迁移后按相同心智模型查找工具。
+SECTION_ORDER: Tuple[str, ...] = (
+    "PDF 维护与重建",
+    "PDF 多维查重去重",
+    "数据清洗与元数据",
+    "记录过滤与番号分离",
+    "缓存预热与系统运维",
+    "多云用量监控",
+    "Supabase 归档",
+    "R2 PDF 管理",
+    "DynamoDB 去重",
+    "纯链接独立导出",
+)
+
+SECTIONS: Dict[str, str] = {
+    "system-health": "缓存预热与系统运维",
+    "channel-probe": "缓存预热与系统运维",
+    "warmup-cache": "缓存预热与系统运维",
+    "db-backup": "缓存预热与系统运维",
+    "db-vacuum": "缓存预热与系统运维",
+    "check-dates": "PDF 维护与重建",
+    "fix-paths": "PDF 维护与重建",
+    "redownload-small": "PDF 维护与重建",
+    "rebuild-pdfs": "PDF 维护与重建",
+    "orphan-pdfs": "PDF 维护与重建",
+    "associate-pdfs": "PDF 维护与重建",
+    "clean-missing": "PDF 维护与重建",
+    "pdf-dedup": "PDF 多维查重去重",
+    "clean-noise": "数据清洗与元数据",
+    "replace-domain": "数据清洗与元数据",
+    "upgrade-db": "数据清洗与元数据",
+    "fetch-sizes": "数据清洗与元数据",
+    "fetch-empty-links": "数据清洗与元数据",
+    "record-duplicates": "记录过滤与番号分离",
+    "fanhao": "记录过滤与番号分离",
+    "cloud-connectivity": "多云用量监控",
+    "cloud-stats": "多云用量监控",
+    "supabase-sync": "Supabase 归档",
+    "supabase-clean": "Supabase 归档",
+    "r2-download": "R2 PDF 管理",
+    "r2-delete-preview": "R2 PDF 管理",
+    "r2-clean": "R2 PDF 管理",
+    "ddb-upload": "DynamoDB 去重",
+    "ddb-sync-keys": "DynamoDB 去重",
+    "export-links": "纯链接独立导出",
+}
+
 TOOLS: Dict[str, Tool] = {tool.id: tool for tool in _TOOL_LIST}
 
 
 def tool_catalog() -> List[Dict[str, Any]]:
-    return [tool.to_dict() for tool in _TOOL_LIST]
+    catalog = []
+    for tool in _TOOL_LIST:
+        spec = tool.to_dict()
+        if tool.id == "replace-domain":
+            # 与 argv_builder 使用的同一份预设，供前端选预设时自动填值
+            spec["presets"] = {
+                name: {"old": old, "new": new}
+                for name, (old, new) in _DOMAIN_PRESETS.items()
+            }
+        catalog.append(spec)
+    return catalog
 
 
 def normalize_params(tool: Tool, raw: Dict[str, Any]) -> Dict[str, Any]:
